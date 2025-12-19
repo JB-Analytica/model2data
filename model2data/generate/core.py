@@ -9,8 +9,8 @@ from faker import Faker
 
 from model2data.generate.faker import generate_column_values
 from model2data.generate.relationships import (
-    classify_refs,
     build_fk_lookup,
+    classify_refs,
 )
 from model2data.parse.dbml import TableDef
 
@@ -97,8 +97,7 @@ def generate_data_from_dbml(
                 (
                     r["source_column"]
                     for r in fk_refs
-                    if r["source_table"] == table_name
-                    and r["target_table"] == parent_table
+                    if r["source_table"] == table_name and r["target_table"] == parent_table
                 ),
                 None,
             )
@@ -106,11 +105,7 @@ def generate_data_from_dbml(
             if not fk_column or fk_column not in df.columns:
                 continue
 
-            lookup = (
-                parent_df.groupby("id")[parent_column]
-                .first()
-                .to_dict()
-            )
+            lookup = parent_df.groupby("id")[parent_column].first().to_dict()
 
             df[child_column] = df[fk_column].map(lookup)
 

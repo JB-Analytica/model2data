@@ -83,7 +83,7 @@ def generate_column_values(
     else:
         try:
             values = [fake.format(base_type) for _ in range(row_count)]
-        except:
+        except (AttributeError, TypeError):
             if column.name.lower().endswith("_id") or ensure_unique:
                 values = [str(uuid.uuid4()) for _ in range(row_count)]
             else:

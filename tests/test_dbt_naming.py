@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from model2data.parse.dbml import parse_dbml
 from model2data.generate.core import generate_data_from_dbml
+from model2data.parse.dbml import parse_dbml
 from model2data.utils import normalize_identifier
 
 

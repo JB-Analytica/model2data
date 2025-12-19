@@ -1,14 +1,14 @@
 from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
-from dataclasses import dataclass, field
-import re
-import json
-import uuid
 
 # -------------------------------
 # Dataclasses
 # -------------------------------
+
 
 @dataclass
 class ColumnDef:
@@ -17,23 +17,28 @@ class ColumnDef:
     settings: set[str] = field(default_factory=set)
     note: Optional[dict] = None
 
+
 @dataclass
 class TableDef:
     name: str
     columns: list[ColumnDef] = field(default_factory=list)
 
+
 # -------------------------------
 # Helpers
 # -------------------------------
 
+
 def _strip_quotes(value: str) -> str:
     return value.strip().strip('"').strip("'")
+
 
 def _parse_column_settings(raw: Optional[str]) -> set[str]:
     if not raw:
         return set()
     parts = [part.strip() for part in raw.split(",")]
     return {part.strip("'").strip('"').lower() for part in parts if part}
+
 
 def normalize_identifier(value: str) -> str:
     cleaned = re.sub(r"[^0-9A-Za-z]+", "_", value).strip("_").lower()
@@ -42,6 +47,7 @@ def normalize_identifier(value: str) -> str:
     if cleaned[0].isdigit():
         cleaned = f"t_{cleaned}"
     return cleaned
+
 
 def parse_dbml(dbml_path: Path) -> tuple[dict[str, TableDef], list[dict]]:
     text = dbml_path.read_text(encoding="utf-8")

@@ -1,5 +1,7 @@
-from pathlib import Path
 from collections import defaultdict
+from pathlib import Path
+from typing import Any, Union
+
 
 def generate_dbt_yml(dest: Path, tables: dict, refs: list[dict], source_name: str = "hackernews"):
     """
@@ -23,7 +25,7 @@ def generate_dbt_yml(dest: Path, tables: dict, refs: list[dict], source_name: st
     # Generate __sources.yml
     # -------------------------
     sources_lines = ["version: 2", "", "sources:"]
-    sources_lines.append(f"  - name: raw")
+    sources_lines.append("  - name: raw")
     sources_lines.append("    schema: raw")
     sources_lines.append(f"    description: {source_name.capitalize()} raw seed data")
     sources_lines.append("    tables:")
@@ -45,7 +47,7 @@ def generate_dbt_yml(dest: Path, tables: dict, refs: list[dict], source_name: st
         model_columns = []
 
         for col in table.columns:
-            tests = []
+            tests: list[Union[str, dict[str, dict[str, Any]]]] = []
             settings = col.settings or set()
 
             if "not null" in settings or "pk" in settings:
@@ -55,17 +57,16 @@ def generate_dbt_yml(dest: Path, tables: dict, refs: list[dict], source_name: st
 
             fk_refs = fk_map.get((table.name, col.name), [])
             for fk in fk_refs:
-                tests.append({
-                    "relationships": {
-                        "to": f"ref('stg_{fk['target_table']}')",
-                        "field": fk["target_column"]
+                tests.append(
+                    {
+                        "relationships": {
+                            "to": f"ref('stg_{fk['target_table']}')",
+                            "field": fk["target_column"],
+                        }
                     }
-                })
+                )
 
-            model_columns.append({
-                "name": col.name,
-                "tests": tests if tests else None
-            })
+            model_columns.append({"name": col.name, "tests": tests if tests else None})
 
         # Render model YAML
         lines = ["version: 2", "", "models:"]

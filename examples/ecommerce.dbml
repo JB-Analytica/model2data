@@ -1,0 +1,89 @@
+// E-Commerce Platform Schema
+// Showcases: Foreign keys, min/max constraints, Faker data types for realistic data
+// Example: model2data generate --file examples/ecommerce.dbml --rows 50 --seed 42
+
+Table customers {
+  id bigint [pk, not null]
+  email email [unique, not null]
+  first_name first_name [not null]
+  last_name last_name [not null]
+  phone phone_number
+  country country [not null]
+  created_at timestamp [not null]
+
+  Note {
+    'Customer master data. Data types: email, first_name, last_name, phone_number, country'
+  }
+}
+
+Table products {
+  id bigint [pk, not null]
+  name word [not null]
+  sku ean13 [unique, not null]
+  category word [not null]
+  price numeric [not null]
+  stock_quantity int [not null]
+  created_at timestamp [not null]
+
+  Note {
+    'Product catalog. Data types: word, ean13'
+  }
+}
+
+Table orders {
+  id bigint [pk, not null]
+  customer_id bigint [not null]
+  order_date timestamp [not null]
+  total_amount numeric [not null]
+  status text
+
+  Note {
+    'Orders: each order belongs to one customer, customer has many orders'
+  }
+}
+
+Table order_items {
+  id bigint [pk, not null]
+  order_id bigint [not null]
+  product_id bigint [not null]
+  quantity int [not null]
+  unit_price numeric [not null]
+
+  Note {
+    'Line items: demonstrates n-level nesting (customer -> order -> items)'
+  }
+}
+
+Table product_reviews {
+  id bigint [pk, not null]
+  product_id bigint [not null]
+  customer_id bigint [not null]
+  rating int [not null]
+  comment text
+
+  Note {
+    'Reviews: demonstrates multiple FKs to different parents'
+    'min': 1,
+    'max': 5
+  }
+}
+
+Ref {
+  orders.customer_id > customers.id
+}
+
+Ref {
+  order_items.order_id > orders.id
+}
+
+Ref {
+  order_items.product_id > products.id
+}
+
+Ref {
+  product_reviews.product_id > products.id
+}
+
+Ref {
+  product_reviews.customer_id > customers.id
+}

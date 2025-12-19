@@ -1,0 +1,145 @@
+// Advanced Features: Hierarchies, Self-Referential FKs, and Constraints
+// Showcases: Self-referential relationships, min/max constraints in notes, diverse Faker data types
+// Example: model2data generate --file examples/advanced_features.dbml --rows 15 --seed 42
+
+Table departments {
+  id bigint [pk, not null]
+  name word [not null]
+  budget_cents bigint [not null]
+
+  Note {
+    'Departments. Data type: word for realistic names'
+  }
+}
+
+Table employees {
+  id bigint [pk, not null]
+  department_id bigint [not null]
+  first_name first_name [not null]
+  last_name last_name [not null]
+  email email [not null]
+  salary_cents bigint [not null]
+  hire_date date [not null]
+  manager_id bigint
+
+  Note {
+    'Employee hierarchy. Data types: first_name, last_name, email'
+    'manager_id is self-referential (nullable for CEOs)'
+  }
+}
+
+Table projects {
+  id bigint [pk, not null]
+  name word [not null]
+  budget_cents bigint [not null]
+  priority int [not null]
+
+  Note {
+    'Projects. Data type: word for project names'
+    'priority: 1-5 scale'
+    'min': 1,
+    'max': 5
+  }
+}
+
+Table project_assignments {
+  id bigint [pk, not null]
+  project_id bigint [not null]
+  employee_id bigint [not null]
+  allocation_percent numeric [not null]
+
+  Note {
+    'Team assignments to projects. Data type: numeric'
+    'allocation_percent: 0-100'
+    'min': 0,
+    'max': 100
+  }
+}
+
+Table time_entries {
+  id bigint [pk, not null]
+  project_id bigint [not null]
+  employee_id bigint [not null]
+  entry_date date [not null]
+  hours_worked numeric [not null]
+  billable boolean
+
+  Note {
+    'Time tracking. Data type: numeric for hours'
+    'hours_worked: 0.5-8 per day'
+    'min': 0.5,
+    'max': 8
+  }
+}
+
+Table expenses {
+  id bigint [pk, not null]
+  project_id bigint [not null]
+  employee_id bigint [not null]
+  amount_cents bigint [not null]
+  description text
+  status text
+  approved_by bigint
+
+  Note {
+    'Demonstrates multiple FKs: project, employee, and self-reference (approved_by)'
+  }
+}
+
+Table performance_ratings {
+  id bigint [pk, not null]
+  employee_id bigint [not null]
+  reviewer_id bigint [not null]
+  rating int [not null]
+
+  Note {
+    'Performance reviews. employee_id and reviewer_id both reference employees (n:n pattern)'
+    'rating: 1-5 scale'
+    'min': 1,
+    'max': 5
+  }
+}
+
+Ref {
+  employees.department_id > departments.id
+}
+
+Ref {
+  employees.manager_id > employees.id [comment: 'Self-referential: manager is also an employee']
+}
+
+Ref {
+  project_assignments.project_id > projects.id
+}
+
+Ref {
+  project_assignments.employee_id > employees.id
+}
+
+Ref {
+  time_entries.project_id > projects.id
+}
+
+Ref {
+  time_entries.employee_id > employees.id
+}
+
+Ref {
+  expenses.project_id > projects.id
+}
+
+Ref {
+  expenses.employee_id > employees.id
+}
+
+Ref {
+  expenses.approved_by > employees.id
+}
+
+Ref {
+  performance_ratings.employee_id > employees.id
+}
+
+Ref {
+  performance_ratings.reviewer_id > employees.id
+}
