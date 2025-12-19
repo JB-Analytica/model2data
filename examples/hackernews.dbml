@@ -1,0 +1,79 @@
+Table "stories" {
+    "id" bigint [pk, not null]
+    "by" text
+    "title" text
+    "url" text
+    "score" bigint
+    "time" bigint
+    "descendants" bigint
+    "type" text
+    "text" text
+    "_dlt_load_id" uuid [not null]
+    "_dlt_id" uuid [pk, unique, not null]
+}
+
+Table "stories__kids" {
+    "value" bigint
+    "_dlt_root_id" text [not null]
+    "_dlt_parent_id" text [not null]
+    "_dlt_list_idx" bigint [not null]
+    "_dlt_id" uuid [pk, unique, not null]
+}
+
+Table "_dlt_version" {
+    "version" bigint [not null]
+    "engine_version" bigint [not null]
+    "inserted_at" timestamp [not null]
+    "schema_name" text [not null]
+    "version_hash" text [not null]
+    "schema" text [not null]
+    Note {
+        'Tracks schema versions for DLT pipelines'
+    }
+}
+
+Table "_dlt_loads" {
+    "load_id" uuid [pk, not null]
+    "schema_name" text
+    "status" bigint [not null]
+    "inserted_at" timestamp [not null]
+    "schema_version_hash" text
+    Note {
+        'Tracks completed DLT loads'
+    }
+}
+
+Table "_dlt_pipeline_state" {
+    "version" bigint [not null]
+    "engine_version" bigint [not null]
+    "pipeline_name" text [not null]
+    "state" text [not null]
+    "created_at" timestamp [not null]
+    "version_hash" text
+    "_dlt_load_id" uuid [not null]
+    "_dlt_id" uuid [pk, unique, not null]
+}
+
+Ref {
+    "stories"."_dlt_load_id" > "_dlt_loads"."load_id"
+}
+
+Ref {
+    "_dlt_pipeline_state"."_dlt_load_id" > "_dlt_loads"."load_id"
+}
+
+Ref {
+    "stories__kids"."_dlt_parent_id" > "stories"."_dlt_id"
+}
+
+Ref {
+    "stories__kids"."_dlt_root_id" > "stories"."_dlt_id"
+}
+
+Ref {
+    "_dlt_version"."version_hash" < "_dlt_loads"."schema_version_hash"
+}
+
+Ref {
+    "_dlt_version"."schema_name" <> "_dlt_loads"."schema_name"
+}
