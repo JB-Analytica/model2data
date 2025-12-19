@@ -132,7 +132,7 @@ def _topological_table_order(
     Order tables so parent tables are generated before children.
     """
     graph: dict[str, set[str]] = defaultdict(set)
-    indegree: dict[str, int] = {name: 0 for name in tables.keys()}
+    indegree: dict[str, int] = dict.fromkeys(tables.keys(), 0)
 
     for ref in fk_refs:
         parent = ref["target_table"]
