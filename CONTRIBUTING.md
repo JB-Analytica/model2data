@@ -13,7 +13,7 @@ Thank you for your interest in contributing to model2data! We welcome contributi
 ## Development Setup
 
 1. Fork the repository on GitHub.
-2. Clone your fork: `git clone https://github.com/yourusername/model2data.git`
+2. Clone your fork: `git clone https://github.com/JB-Analytica/model2data.git`
 3. Create a virtual environment: `python -m venv .venv`
 4. Activate it: `source .venv/bin/activate` (or equivalent)
 5. Install dependencies: `pip install -e ".[dev]"`
