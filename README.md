@@ -1,6 +1,8 @@
 # model2data
 
 [![PyPI](https://img.shields.io/pypi/v/model2data)](https://pypi.org/project/model2data/)
+[![CI](https://github.com/JB-Analytica/model2data/actions/workflows/ci.yml/badge.svg)](https://github.com/JB-Analytica/model2data/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/JB-Analytica/model2data/branch/main/graph/badge.svg)](https://codecov.io/gh/JB-Analytica/model2data)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 `model2data` turns **data models into analytics-ready datasets** in seconds.  
@@ -121,6 +123,12 @@ We welcome contributions!
 - Open issues for bugs or feature requests.
 - Submit PRs to add new DBML examples, custom data generators, or improvements.
 - Ensure all new features include tests if possible.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
+
+## Code of Conduct
+
+Please read our [Code of Conduct](CODE_OF_CONDUCT.md) to understand our community standards.
 
 ---
 
