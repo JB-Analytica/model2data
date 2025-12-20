@@ -7,7 +7,7 @@ name = "model2data"
 version = "0.1.1"
 description = "Generate analytics-ready datasets from DBML models"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
     "dbt-core>=1.5.0",
     "dbt-duckdb>=1.5.0",
@@ -59,11 +59,11 @@ known-first-party = ["model2data"]
 # Black configuration (code formatter)
 [tool.black]
 line-length = 100
-target-version = ["py39", "py310", "py311", "py312"]
+target-version = ["py310", "py311", "py312", "py313", "py314"]
 
 # mypy configuration (type checker)
 [tool.mypy]
-python_version = "3.9"
+python_version = "3.10"
 warn_return_any = true
 warn_unused_configs = true
 ignore_missing_imports = true
