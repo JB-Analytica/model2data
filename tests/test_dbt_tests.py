@@ -1,4 +1,3 @@
-from pathlib import Path
 from model2data.cli import main as generate_cli
 
 def test_dbt_tests_generation(tmp_path, monkeypatch):
