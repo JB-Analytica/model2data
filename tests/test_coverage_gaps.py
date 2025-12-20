@@ -1,4 +1,5 @@
 """Tests targeting coverage gaps in utils, faker, and dbml modules."""
+
 from pathlib import Path
 
 from model2data.generate.faker import generate_column_values

@@ -23,7 +23,5 @@ def test_parse_hackernews_dbml():
 
     # FK reference example
     assert any(
-        r["source_table"] == "stories__kids"
-        and r["target_table"] == "stories"
-        for r in refs
+        r["source_table"] == "stories__kids" and r["target_table"] == "stories" for r in refs
     )
