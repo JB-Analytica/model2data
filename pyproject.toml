@@ -74,8 +74,7 @@ addopts = [
 
 [tool.ty]
 python_version = "3.10"
-include = ["model2data"]
-exclude = ["tests", "*.egg-info"]
+src = ["model2data"]
 
 [tool.poe.tasks]
 # Linting tasks
