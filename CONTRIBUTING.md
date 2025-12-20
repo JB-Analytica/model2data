@@ -15,12 +15,17 @@ Thank you for your interest in contributing to model2data! We welcome contributi
 1. Fork the repository on GitHub.
 2. Clone your fork: `git clone https://github.com/JB-Analytica/model2data.git`
 3. Install [UV](https://github.com/astral-sh/uv) (recommended) or use Python 3.10+
-4. Install dependencies:
+4. Set up the development environment:
    ```bash
    # With UV (recommended)
+   uv venv                    # Create virtual environment
+   source .venv/bin/activate  # Activate on macOS/Linux
+   # or `.venv\Scripts\activate` on Windows
    uv pip install -e ".[dev]"
 
    # Or with pip
+   python -m venv .venv
+   source .venv/bin/activate  # or `.venv\Scripts\activate` on Windows
    pip install -e ".[dev]"
    ```
 5. Install pre-commit hooks: `pre-commit install`
