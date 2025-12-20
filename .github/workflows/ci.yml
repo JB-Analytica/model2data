@@ -23,8 +23,8 @@ jobs:
       run: uv run ruff check model2data/ tests/ --show-fixes
     - name: Format check with black
       run: uv run black --check model2data/ tests/
-    - name: Type check with mypy
-      run: uv run mypy model2data/
+    - name: Type check with ty
+      run: uv run ty check model2data/
 
   test:
     runs-on: ubuntu-latest

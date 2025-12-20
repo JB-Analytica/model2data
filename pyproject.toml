@@ -24,7 +24,7 @@ dev = [
   "pre-commit",
   "ruff>=0.1.0",
   "black>=23.0.0",
-  "mypy>=1.0.0",
+  "ty>=0.0.4",
   "types-pyyaml",
 ]
 
@@ -61,10 +61,6 @@ known-first-party = ["model2data"]
 line-length = 100
 target-version = ["py310", "py311", "py312", "py313", "py314"]
 
-# mypy configuration (type checker)
-[tool.mypy]
-python_version = "3.10"
-warn_return_any = true
-warn_unused_configs = true
-ignore_missing_imports = true
-disallow_untyped_defs = false
+# ty configuration (type checker)
+[tool.ty]
+python-version = "3.10"
