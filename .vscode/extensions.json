@@ -1,0 +1,10 @@
+{
+  "recommendations": [
+    "charliermarsh.ruff",
+    "ms-python.python",
+    "ms-python.vscode-pylance",
+    "astral-sh.ty",
+    "redhat.vscode-yaml",
+    "esbenp.prettier-vscode"
+  ]
+}

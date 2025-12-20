@@ -37,6 +37,9 @@ jobs:
       - name: Run typos
         run: uv run typos
 
+      - name: Run type check (ty)
+        run: uv run ty check
+
       - name: Run pre-commit
         run: uv run pre-commit run --all-files
 

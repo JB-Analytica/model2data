@@ -22,6 +22,7 @@ dev = [
   "pytest",
   "pytest-cov",
   "ruff>=0.1.0",
+  "ty>=0.0.1",
   "typos>=1.0.0",
   "poethepoet>=0.24.0",
   "pre-commit>=3.0.0",
@@ -55,17 +56,34 @@ ignore = [
 [tool.ruff.isort]
 known-first-party = ["model2data"]
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+]
+
 # Typos configuration - use .typos.toml or command-line args
 # typos doesn't support pyproject.toml config in the same way
+
+[tool.ty]
+python_version = "3.10"
+include = ["model2data"]
+exclude = ["tests", "*.egg-info"]
 
 [tool.poe.tasks]
 # Linting tasks
 lint = "ruff check ."
 format = "ruff format ."
 typos = "typos"
+typecheck = "ty check"
 
 # Combined tasks
-check = ["lint", "typos"]
+check = ["lint", "typecheck", "typos"]
 fix = ["format", "lint --fix", "typos --write"]
 
 # Test tasks
