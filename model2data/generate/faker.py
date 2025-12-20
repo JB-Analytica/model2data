@@ -3,7 +3,6 @@ from __future__ import annotations
 import random
 import uuid
 from datetime import datetime, timedelta
-from typing import Optional
 
 import pandas as pd
 from faker import Faker
@@ -19,7 +18,7 @@ fake = Faker()
 def generate_column_values(
     column: ColumnDef,
     row_count: int,
-    fk_series: Optional[pd.Series] = None,
+    fk_series: pd.Series | None = None,
     ensure_unique: bool = False,
 ) -> list:
     """
@@ -83,7 +82,7 @@ def generate_column_values(
     else:
         try:
             values = [fake.format(base_type) for _ in range(row_count)]
-        except:
+        except Exception:
             if column.name.lower().endswith("_id") or ensure_unique:
                 values = [str(uuid.uuid4()) for _ in range(row_count)]
             else:

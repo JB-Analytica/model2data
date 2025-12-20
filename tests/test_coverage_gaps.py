@@ -1,9 +1,9 @@
 """Tests targeting coverage gaps in utils, faker, and dbml modules."""
-import pytest
 from pathlib import Path
-from model2data.utils import normalize_identifier
+
 from model2data.generate.faker import generate_column_values
-from model2data.parse.dbml import parse_dbml, ColumnDef, TableDef, _strip_quotes
+from model2data.parse.dbml import ColumnDef, _strip_quotes, parse_dbml
+from model2data.utils import normalize_identifier
 
 
 class TestNormalizeIdentifier:
@@ -127,14 +127,14 @@ class TestDBMLParsing:
 
     def test_parse_dbml_with_schema_prefix(self):
         """Test parsing table with schema prefix (e.g., [schema].[table])."""
-        dbml_content = '''
+        dbml_content = """
 Table public.users {
   id int
 }
-'''
+"""
         dbml_file = Path("/tmp/test_schema.dbml")
         dbml_file.write_text(dbml_content)
-        
+
         try:
             tables, refs = parse_dbml(dbml_file)
             # Should handle schema prefix gracefully
@@ -144,20 +144,20 @@ Table public.users {
 
     def test_parse_dbml_with_indexes(self):
         """Test parsing table with indexes block (lines 59-61)."""
-        dbml_content = '''
+        dbml_content = """
 Table users {
   id int [primary key]
   email string [unique]
-  
+
   indexes {
     id [pk]
     email [unique]
   }
 }
-'''
+"""
         dbml_file = Path("/tmp/test_indexes.dbml")
         dbml_file.write_text(dbml_content)
-        
+
         try:
             tables, refs = parse_dbml(dbml_file)
             assert "users" in tables
@@ -168,15 +168,15 @@ Table users {
 
     def test_parse_dbml_with_comments(self):
         """Test parsing with inline comments."""
-        dbml_content = '''
+        dbml_content = """
 Table users {
   id int // primary key
   name string // user full name
 }
-'''
+"""
         dbml_file = Path("/tmp/test_comments.dbml")
         dbml_file.write_text(dbml_content)
-        
+
         try:
             tables, refs = parse_dbml(dbml_file)
             assert "users" in tables
@@ -188,7 +188,7 @@ Table users {
         dbml_content = """
 Table users {
   id int
-  
+
   Note: '''
     This is a multi-line note
     about the users table
@@ -197,7 +197,7 @@ Table users {
 """
         dbml_file = Path("/tmp/test_notes.dbml")
         dbml_file.write_text(dbml_content)
-        
+
         try:
             tables, refs = parse_dbml(dbml_file)
             assert "users" in tables
@@ -208,7 +208,7 @@ Table users {
         """Test parsing empty DBML file."""
         dbml_file = Path("/tmp/test_empty.dbml")
         dbml_file.write_text("")
-        
+
         try:
             tables, refs = parse_dbml(dbml_file)
             assert len(tables) == 0
@@ -218,13 +218,13 @@ Table users {
 
     def test_parse_dbml_with_only_comments(self):
         """Test parsing file with only comments."""
-        dbml_content = '''
+        dbml_content = """
 // This is a comment
 // Another comment
-'''
+"""
         dbml_file = Path("/tmp/test_only_comments.dbml")
         dbml_file.write_text(dbml_content)
-        
+
         try:
             tables, refs = parse_dbml(dbml_file)
             assert len(tables) == 0

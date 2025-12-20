@@ -1,19 +1,19 @@
-from pathlib import Path
-from typing import Optional
 import random
 import shutil
+from pathlib import Path
+from typing import Optional
 
 import typer
 from faker import Faker
 
-from model2data.parse.dbml import parse_dbml
-from model2data.generate.core import generate_data_from_dbml
 from model2data.dbt.project import (
-    create_project_scaffold,
     create_profiles_yml,
+    create_project_scaffold,
     create_staging_models,
 )
 from model2data.dbt.tests import generate_dbt_yml
+from model2data.generate.core import generate_data_from_dbml
+from model2data.parse.dbml import parse_dbml
 from model2data.utils import normalize_identifier
 
 app = typer.Typer(
@@ -30,7 +30,7 @@ app = typer.Typer(
 
 @app.command(help="Generate synthetic data and a dbt project from a DBML model.")
 def main(
-    file: Path = typer.Option(
+    file: Path = typer.Option(  # noqa: B008
         ...,
         "--file",
         "-f",
@@ -91,21 +91,13 @@ def main(
     # -------------------------
     # DBML → dbt name mapping
     # -------------------------
-    dbt_name_map = {
-        table_name: normalize_identifier(table_name)
-        for table_name in tables.keys()
-    }
-
     project_name = normalize_identifier(name or file.stem)
     dest = Path.cwd() / f"dbt_{project_name}"
     profile_name = f"{project_name}_profile"
 
     if dest.exists():
         if not force:
-            typer.echo(
-                f"❌ Destination {dest} already exists.\n"
-                "Use --force to overwrite."
-            )
+            typer.echo(f"❌ Destination {dest} already exists.\n" "Use --force to overwrite.")
             raise typer.Exit(1)
         shutil.rmtree(dest)
 
