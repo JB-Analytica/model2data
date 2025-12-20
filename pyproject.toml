@@ -7,7 +7,7 @@ name = "model2data"
 version = "0.1.1"
 description = "Generate analytics-ready datasets from DBML models"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10,<3.15"
 dependencies = [
     "dbt-core>=1.5.0",
     "dbt-duckdb>=1.5.0",
@@ -34,7 +34,7 @@ model2data = "model2data.cli:app"
 include = ["model2data"]
 
 [tool.ruff]
-target-version = "py39"
+target-version = "py310"
 line-length = 100
 select = [
     "E",   # pycodestyle errors
