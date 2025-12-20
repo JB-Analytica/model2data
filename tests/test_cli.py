@@ -1,4 +1,5 @@
 """Direct tests of CLI main function for proper coverage."""
+
 import os
 
 import pandas as pd
