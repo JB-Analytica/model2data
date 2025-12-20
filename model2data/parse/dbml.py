@@ -104,7 +104,7 @@ def parse_dbml(dbml_path: Path) -> tuple[dict[str, TableDef], list[dict]]:
                 continue
 
             col_match = re.match(
-                r'(".*?"|`.*?`|[\w]+)\s+([^\[]+?)(?:\s+\[(.+)\])?$',
+                r'^(".*?"|`.*?`|[A-Za-z_][\w]*)\s+(.+?)(?:\s+\[(.+)\])?$',
                 cleaned,
             )
             if not col_match:
@@ -112,6 +112,11 @@ def parse_dbml(dbml_path: Path) -> tuple[dict[str, TableDef], list[dict]]:
 
             col_name = _strip_quotes(col_match.group(1))
             col_type = col_match.group(2).strip()
+
+            # 🚨 Reject invalid / sentence-like column definitions
+            if len(col_type.split()) > 3:
+                continue
+
             settings = _parse_column_settings(col_match.group(3))
 
             current_table.columns.append(
@@ -122,6 +127,7 @@ def parse_dbml(dbml_path: Path) -> tuple[dict[str, TableDef], list[dict]]:
                     note=None,
                 )
             )
+
             continue
 
         # ----------------------

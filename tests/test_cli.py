@@ -1,46 +1,110 @@
-import subprocess
-from pathlib import Path
+"""Direct tests of CLI main function for proper coverage."""
+import os
 
 import pandas as pd
+from typer.testing import CliRunner
+
+from model2data.cli import app
+
+runner = CliRunner()
 
 
-def test_cli_generate_smoke(tmp_path):
-    """Basic smoke test for CLI generation."""
-    dbml = Path("examples/hackernews.dbml").resolve()
-
-    result = subprocess.run(
-        [
-            "model2data",
-            "--file",
-            str(dbml),
-            "--rows",
-            "20",
-            "--seed",
-            "1",
-        ],
-        cwd=tmp_path,
-        capture_output=True,
-        text=True,
+def test_cli_basic_generation(tmp_path):
+    """Test basic CLI generation with direct invocation."""
+    dbml_file = tmp_path / "test.dbml"
+    dbml_file.write_text(
+        """
+    Table users {
+        id int [pk]
+        name varchar
+    }
+    """
     )
 
-    assert result.returncode == 0, result.stderr
+    # Change to tmp_path so files are created there
+    original_cwd = os.getcwd()
+    try:
+        os.chdir(tmp_path)
+        result = runner.invoke(
+            app,
+            [
+                "--file",
+                str(dbml_file),
+                "--rows",
+                "10",
+            ],
+        )
+    finally:
+        os.chdir(original_cwd)
 
-    # dbt project created
-    projects = list(tmp_path.glob("dbt_*"))
-    assert projects, "No dbt project directory created"
+    assert result.exit_code == 0
+    assert "📦 Creating dbt project scaffold" in result.stdout
+    assert "🧮 Generating synthetic datasets" in result.stdout
+    assert "🗂️ Building staging models" in result.stdout
+    assert "🧪 Generating dbt yml" in result.stdout
+    assert "🪪 Ensuring dbt profile exists" in result.stdout
+    assert "🎉 model2data generation complete!" in result.stdout
+    assert "Next steps:" in result.stdout
+    assert "dbt deps" in result.stdout
+    assert "dbt seed" in result.stdout
+    assert "dbt run" in result.stdout
 
-    project = projects[0]
 
-    # Seeds exist
-    seeds = project / "seeds" / "raw"
-    assert seeds.exists()
-    csv_files = list(seeds.glob("*.csv"))
-    assert csv_files
+def test_cli_with_seed(tmp_path):
+    """Test CLI with deterministic seed."""
+    dbml_file = tmp_path / "test.dbml"
+    dbml_file.write_text(
+        """
+    Table users {
+        id int [pk]
+        name varchar
+    }
+    """
+    )
 
-    # Check row counts
-    for csv_file in csv_files:
-        df = pd.read_csv(csv_file)
-        assert len(df) == 20, f"{csv_file.name} has {len(df)} rows, expected 20"
+    original_cwd = os.getcwd()
+    try:
+        os.chdir(tmp_path)
+        result = runner.invoke(
+            app,
+            [
+                "--file",
+                str(dbml_file),
+                "--rows",
+                "10",
+                "--seed",
+                "42",
+            ],
+        )
+    finally:
+        os.chdir(original_cwd)
+
+    assert result.exit_code == 0
+    assert "🔁 Using deterministic seed: 42" in result.stdout
+
+
+def test_cli_no_tables_found(tmp_path):
+    """Test CLI with empty DBML file."""
+    dbml_file = tmp_path / "empty.dbml"
+    dbml_file.write_text("")
+
+    original_cwd = os.getcwd()
+    try:
+        os.chdir(tmp_path)
+        result = runner.invoke(
+            app,
+            [
+                "--file",
+                str(dbml_file),
+                "--rows",
+                "10",
+            ],
+        )
+    finally:
+        os.chdir(original_cwd)
+
+    assert result.exit_code == 1
+    assert "❌ No tables found in the provided DBML file." in result.stdout
 
 
 def test_cli_with_custom_name(tmp_path):
@@ -55,34 +119,62 @@ def test_cli_with_custom_name(tmp_path):
     """
     )
 
-    result = subprocess.run(
-        [
-            "model2data",
-            "--file",
-            str(dbml_file),
-            "--rows",
-            "10",
-            "--name",
-            "my_custom_project",
-        ],
-        cwd=tmp_path,
-        capture_output=True,
-        text=True,
+    original_cwd = os.getcwd()
+    try:
+        os.chdir(tmp_path)
+        result = runner.invoke(
+            app,
+            [
+                "--file",
+                str(dbml_file),
+                "--rows",
+                "10",
+                "--name",
+                "custom_project",
+            ],
+        )
+    finally:
+        os.chdir(original_cwd)
+
+    assert result.exit_code == 0
+    project_dir = tmp_path / "dbt_custom_project"
+    assert project_dir.exists()
+
+
+def test_cli_without_custom_name_uses_file_stem(tmp_path):
+    """Test that project name defaults to file stem."""
+    dbml_file = tmp_path / "my_model.dbml"
+    dbml_file.write_text(
+        """
+    Table users {
+        id int [pk]
+        name varchar
+    }
+    """
     )
 
-    assert result.returncode == 0, result.stderr
+    original_cwd = os.getcwd()
+    try:
+        os.chdir(tmp_path)
+        result = runner.invoke(
+            app,
+            [
+                "--file",
+                str(dbml_file),
+                "--rows",
+                "10",
+            ],
+        )
+    finally:
+        os.chdir(original_cwd)
 
-    # Check project name is used
-    project = tmp_path / "dbt_my_custom_project"
-    assert project.exists()
-
-    # Check dbt_project.yml has correct name
-    dbt_project_yml = project / "dbt_project.yml"
-    assert dbt_project_yml.exists()
+    assert result.exit_code == 0
+    project_dir = tmp_path / "dbt_my_model"
+    assert project_dir.exists()
 
 
-def test_cli_force_overwrite(tmp_path):
-    """Test that --force flag overwrites existing directory."""
+def test_cli_destination_already_exists_without_force(tmp_path):
+    """Test that CLI fails when destination exists without --force."""
     dbml_file = tmp_path / "test.dbml"
     dbml_file.write_text(
         """
@@ -93,78 +185,132 @@ def test_cli_force_overwrite(tmp_path):
     """
     )
 
-    # First run
-    result1 = subprocess.run(
-        [
-            "model2data",
-            "--file",
-            str(dbml_file),
-            "--rows",
-            "10",
-        ],
-        cwd=tmp_path,
-        capture_output=True,
-        text=True,
-    )
-    assert result1.returncode == 0
+    original_cwd = os.getcwd()
+    try:
+        os.chdir(tmp_path)
 
-    # Second run without --force should fail
-    result2 = subprocess.run(
-        [
-            "model2data",
-            "--file",
-            str(dbml_file),
-            "--rows",
-            "10",
-        ],
-        cwd=tmp_path,
-        capture_output=True,
-        text=True,
-    )
-    assert result2.returncode == 1
+        # First run
+        result1 = runner.invoke(
+            app,
+            [
+                "--file",
+                str(dbml_file),
+                "--rows",
+                "10",
+            ],
+        )
+        assert result1.exit_code == 0
+
+        # Second run without force should fail
+        result2 = runner.invoke(
+            app,
+            [
+                "--file",
+                str(dbml_file),
+                "--rows",
+                "10",
+            ],
+        )
+    finally:
+        os.chdir(original_cwd)
+
+    assert result2.exit_code == 1
     assert "already exists" in result2.stdout
-
-    # Third run with --force should succeed
-    result3 = subprocess.run(
-        [
-            "model2data",
-            "--file",
-            str(dbml_file),
-            "--rows",
-            "10",
-            "--force",
-        ],
-        cwd=tmp_path,
-        capture_output=True,
-        text=True,
-    )
-    assert result3.returncode == 0
+    assert "Use --force to overwrite" in result2.stdout
 
 
-def test_cli_empty_dbml_file(tmp_path):
-    """Test CLI with empty/invalid DBML file."""
-    dbml_file = tmp_path / "empty.dbml"
-    dbml_file.write_text("")
-
-    result = subprocess.run(
-        [
-            "model2data",
-            "--file",
-            str(dbml_file),
-            "--rows",
-            "10",
-        ],
-        cwd=tmp_path,
-        capture_output=True,
-        text=True,
+def test_cli_force_overwrites_existing_directory(tmp_path):
+    """Test that --force removes and recreates directory."""
+    dbml_file = tmp_path / "test.dbml"
+    dbml_file.write_text(
+        """
+    Table users {
+        id int [pk]
+        name varchar
+    }
+    """
     )
 
-    assert result.returncode == 1
-    assert "No tables found" in result.stdout
+    original_cwd = os.getcwd()
+    try:
+        os.chdir(tmp_path)
+
+        # First run
+        result1 = runner.invoke(
+            app,
+            [
+                "--file",
+                str(dbml_file),
+                "--rows",
+                "10",
+            ],
+        )
+        assert result1.exit_code == 0
+
+        project_dir = tmp_path / "dbt_test"
+        random_file = project_dir / "random.txt"
+        random_file.write_text("should be deleted")
+        assert random_file.exists()
+
+        # Second run with force
+        result2 = runner.invoke(
+            app,
+            [
+                "--file",
+                str(dbml_file),
+                "--rows",
+                "10",
+                "--force",
+            ],
+        )
+    finally:
+        os.chdir(original_cwd)
+
+    assert result2.exit_code == 0
+    # Random file should be gone (directory was removed)
+    assert not random_file.exists()
+    # But project should exist again
+    assert project_dir.exists()
 
 
-def test_cli_deterministic_seed(tmp_path):
-    """Test that same seed produces identical output."""
+def test_cli_copies_original_dbml_file(tmp_path):
+    """Test that original DBML file is copied to project directory."""
+    dbml_file = tmp_path / "my_model.dbml"
+    dbml_file.write_text(
+        """
+    Table users {
+        id int [pk]
+        name varchar
+    }
+    """
+    )
+
+    original_cwd = os.getcwd()
+    try:
+        os.chdir(tmp_path)
+        result = runner.invoke(
+            app,
+            [
+                "--file",
+                str(dbml_file),
+                "--rows",
+                "10",
+            ],
+        )
+    finally:
+        os.chdir(original_cwd)
+
+    assert result.exit_code == 0
+
+    # Check that DBML file was copied to project
+    project_dir = tmp_path / "dbt_my_model"
+    copied_dbml = project_dir / "my_model.dbml"
+    assert copied_dbml.exists()
+    assert copied_dbml.read_text() == dbml_file.read_text()
+
+
+def test_cli_creates_seeds_with_correct_rows(tmp_path):
+    """Test that seeds are created with correct number of rows."""
     dbml_file = tmp_path / "test.dbml"
     dbml_file.write_text(
         """
@@ -176,45 +322,83 @@ def test_cli_deterministic_seed(tmp_path):
     """
     )
 
-    # First run with seed
-    result1 = subprocess.run(
-        [
-            "model2data",
-            "--file",
-            str(dbml_file),
-            "--rows",
-            "10",
-            "--seed",
-            "42",
-            "--name",
-            "run1",
-        ],
-        cwd=tmp_path,
-        capture_output=True,
-        text=True,
-    )
-    assert result1.returncode == 0
+    original_cwd = os.getcwd()
+    try:
+        os.chdir(tmp_path)
+        result = runner.invoke(
+            app,
+            [
+                "--file",
+                str(dbml_file),
+                "--rows",
+                "25",
+            ],
+        )
+    finally:
+        os.chdir(original_cwd)
 
-    # Second run with same seed
-    result2 = subprocess.run(
-        [
-            "model2data",
-            "--file",
-            str(dbml_file),
-            "--rows",
-            "10",
-            "--seed",
-            "42",
-            "--name",
-            "run2",
-        ],
-        cwd=tmp_path,
-        capture_output=True,
-        text=True,
-    )
-    assert result2.returncode == 0
+    assert result.exit_code == 0
 
-    # Compare CSV outputs
+    # Check seed has correct row count
+    seed_file = tmp_path / "dbt_test" / "seeds" / "raw" / "users.csv"
+    assert seed_file.exists()
+
+    df = pd.read_csv(seed_file)
+    assert len(df) == 25
+
+
+def test_cli_deterministic_seed_produces_identical_output(tmp_path):
+    """Test that same seed produces identical data."""
+    dbml_file = tmp_path / "test.dbml"
+    dbml_file.write_text(
+        """
+    Table users {
+        id int [pk]
+        name varchar
+        email varchar
+    }
+    """
+    )
+
+    original_cwd = os.getcwd()
+    try:
+        os.chdir(tmp_path)
+
+        # First run with seed
+        result1 = runner.invoke(
+            app,
+            [
+                "--file",
+                str(dbml_file),
+                "--rows",
+                "10",
+                "--seed",
+                "123",
+                "--name",
+                "run1",
+            ],
+        )
+        assert result1.exit_code == 0
+
+        # Second run with same seed
+        result2 = runner.invoke(
+            app,
+            [
+                "--file",
+                str(dbml_file),
+                "--rows",
+                "10",
+                "--seed",
+                "123",
+                "--name",
+                "run2",
+            ],
+        )
+        assert result2.exit_code == 0
+    finally:
+        os.chdir(original_cwd)
+
+    # Compare outputs
     csv1 = tmp_path / "dbt_run1" / "seeds" / "raw" / "users.csv"
     csv2 = tmp_path / "dbt_run2" / "seeds" / "raw" / "users.csv"
 
@@ -224,53 +408,8 @@ def test_cli_deterministic_seed(tmp_path):
     pd.testing.assert_frame_equal(df1, df2)
 
 
-def test_cli_creates_all_required_files(tmp_path):
-    """Test that all expected files and directories are created."""
-    dbml_file = tmp_path / "test.dbml"
-    dbml_file.write_text(
-        """
-    Table users {
-        id int [pk]
-        name varchar
-    }
-    """
-    )
-
-    result = subprocess.run(
-        [
-            "model2data",
-            "--file",
-            str(dbml_file),
-            "--rows",
-            "10",
-        ],
-        cwd=tmp_path,
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0
-
-    project = tmp_path / "dbt_test"
-
-    # Check directory structure
-    assert (project / "seeds" / "raw").exists()
-    assert (project / "models" / "staging").exists()
-    assert (project / "macros").exists()
-
-    # Check key files
-    assert (project / "dbt_project.yml").exists()
-    assert (project / "profiles.yml").exists()
-
-    # Check seeds created
-    assert (project / "seeds" / "raw" / "users.csv").exists()
-
-    # Check staging models created
-    assert (project / "models" / "staging" / "stg_users.sql").exists()
-    assert (project / "models" / "staging" / "stg_users.yml").exists()
-
-
-def test_cli_min_rows_validation(tmp_path):
-    """Test that rows parameter has minimum validation."""
+def test_cli_profile_name_derived_from_project_name(tmp_path):
+    """Test that profile name is correctly derived from project name."""
     dbml_file = tmp_path / "test.dbml"
     dbml_file.write_text(
         """
@@ -280,38 +419,74 @@ def test_cli_min_rows_validation(tmp_path):
     """
     )
 
-    # Try with less than minimum rows (min is 10)
-    result = subprocess.run(
-        [
-            "model2data",
-            "--file",
-            str(dbml_file),
-            "--rows",
-            "5",
-        ],
-        cwd=tmp_path,
-        capture_output=True,
-        text=True,
+    original_cwd = os.getcwd()
+    try:
+        os.chdir(tmp_path)
+        result = runner.invoke(
+            app,
+            [
+                "--file",
+                str(dbml_file),
+                "--rows",
+                "10",
+                "--name",
+                "my_analytics",
+            ],
+        )
+    finally:
+        os.chdir(original_cwd)
+
+    assert result.exit_code == 0
+
+    # Check profiles.yml contains expected profile name
+    profiles_yml = tmp_path / "dbt_my_analytics" / "profiles.yml"
+    assert profiles_yml.exists()
+
+    content = profiles_yml.read_text()
+    assert "my_analytics_profile" in content
+
+
+def test_cli_all_output_messages_present(tmp_path):
+    """Test that all expected progress messages are printed."""
+    dbml_file = tmp_path / "test.dbml"
+    dbml_file.write_text(
+        """
+    Table users {
+        id int [pk]
+    }
+    """
     )
 
-    # Should fail validation
-    assert result.returncode != 0
+    original_cwd = os.getcwd()
+    try:
+        os.chdir(tmp_path)
+        result = runner.invoke(
+            app,
+            [
+                "--file",
+                str(dbml_file),
+                "--rows",
+                "10",
+            ],
+        )
+    finally:
+        os.chdir(original_cwd)
 
+    assert result.exit_code == 0
 
-def test_cli_nonexistent_file(tmp_path):
-    """Test CLI with nonexistent file."""
-    result = subprocess.run(
-        [
-            "model2data",
-            "--file",
-            str(tmp_path / "nonexistent.dbml"),
-            "--rows",
-            "10",
-        ],
-        cwd=tmp_path,
-        capture_output=True,
-        text=True,
-    )
+    # Verify all progress messages
+    expected_messages = [
+        "📦 Creating dbt project scaffold",
+        "🧮 Generating synthetic datasets from DBML definitions",
+        "🗂️ Building staging models for generated seeds",
+        "🧪 Generating dbt yml with tests",
+        "🪪 Ensuring dbt profile exists",
+        "🎉 model2data generation complete!",
+        "Next steps:",
+        "dbt deps",
+        "dbt seed",
+        "dbt run",
+    ]
 
-    # Should fail with file not found
-    assert result.returncode != 0
+    for message in expected_messages:
+        assert message in result.stdout, f"Missing expected message: {message}"

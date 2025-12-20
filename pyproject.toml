@@ -59,7 +59,7 @@ known-first-party = ["model2data"]
 # Black configuration (code formatter)
 [tool.black]
 line-length = 100
-target-version = ["py310", "py311", "py312", "py313", "py314"]
+target-version = ["py310", "py311", "py312"]
 
 # ty configuration (type checker)
 [tool.ty]
