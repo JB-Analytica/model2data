@@ -1,7 +1,6 @@
 import random
 import shutil
 from pathlib import Path
-from typing import Optional
 
 import typer
 from faker import Faker
@@ -48,7 +47,7 @@ def main(
         min=10,
         help="Number of rows to generate per table.",
     ),
-    seed: Optional[int] = typer.Option(
+    seed: int | None = typer.Option(
         None,
         "--seed",
         help=(
@@ -56,7 +55,7 @@ def main(
             "Using the same seed will always produce identical datasets."
         ),
     ),
-    name: Optional[str] = typer.Option(
+    name: str | None = typer.Option(
         None,
         "--name",
         "-n",
