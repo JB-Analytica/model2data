@@ -73,7 +73,6 @@ addopts = [
 # typos doesn't support pyproject.toml config in the same way
 
 [tool.ty]
-python_version = "3.10"
 src = ["model2data"]
 
 [tool.poe.tasks]
