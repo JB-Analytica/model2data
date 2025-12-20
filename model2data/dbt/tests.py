@@ -23,7 +23,7 @@ def generate_dbt_yml(dest: Path, tables: dict, refs: list[dict], source_name: st
     # Generate __sources.yml
     # -------------------------
     sources_lines = ["version: 2", "", "sources:"]
-    sources_lines.append(f"  - name: raw")
+    sources_lines.append("  - name: raw")
     sources_lines.append("    schema: raw")
     sources_lines.append(f"    description: {source_name.capitalize()} raw seed data")
     sources_lines.append("    tables:")

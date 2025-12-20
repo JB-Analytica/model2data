@@ -7,7 +7,7 @@ name = "model2data"
 version = "0.1.1"
 description = "Generate analytics-ready datasets from DBML models"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
     "dbt-core>=1.5.0",
     "dbt-duckdb>=1.5.0",
@@ -28,5 +28,21 @@ model2data = "model2data.cli:app"
 
 [tool.setuptools.packages.find]
 include = ["model2data"]
+
+[dependency-groups]
+dev = [
+    "poethepoet>=0.38.0",
+    "pytest>=8.0.0",
+    "pytest-cov>=4.0.0",
+    "ruff>=0.14.10",
+    "ty>=0.0.4",
+]
+
+[tool.poe.tasks]
+lint = "ruff check ."
+fix = "ruff check . --fix --exit-zero"
+type = "ty check"
+test-quick = "pytest -q --no-header -p no:warnings --no-cov"
+check = ["fix", "lint", "type", "test-quick"]
 
 

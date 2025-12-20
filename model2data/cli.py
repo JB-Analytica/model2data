@@ -88,14 +88,6 @@ def main(
         typer.echo("❌ No tables found in the provided DBML file.")
         raise typer.Exit(1)
 
-    # -------------------------
-    # DBML → dbt name mapping
-    # -------------------------
-    dbt_name_map = {
-        table_name: normalize_identifier(table_name)
-        for table_name in tables.keys()
-    }
-
     project_name = normalize_identifier(name or file.stem)
     dest = Path.cwd() / f"dbt_{project_name}"
     profile_name = f"{project_name}_profile"

@@ -1,9 +1,8 @@
 """Tests targeting coverage gaps in utils, faker, and dbml modules."""
-import pytest
 from pathlib import Path
 from model2data.utils import normalize_identifier
 from model2data.generate.faker import generate_column_values
-from model2data.parse.dbml import parse_dbml, ColumnDef, TableDef, _strip_quotes
+from model2data.parse.dbml import parse_dbml, ColumnDef, _strip_quotes
 
 
 class TestNormalizeIdentifier:
