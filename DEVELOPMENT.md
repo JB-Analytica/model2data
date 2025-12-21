@@ -2,20 +2,29 @@
 
 ## Setting Up Your Development Environment
 
-### 1. Install Development Dependencies
+### 1. Install uv
 
+If you haven't already, install uv:
 ```bash
-# Install dev tools (ruff, black, mypy, pytest, etc.)
-pip install -e ".[dev]"
+# On macOS and Linux
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# On Windows
+powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
-### 2. Set Up Pre-commit Hooks (Optional but Recommended)
+### 2. Install Development Dependencies
+```bash
+# Install the project with dev dependencies
+uv sync --extra dev
+```
+
+### 3. Set Up Pre-commit Hooks (Optional but Recommended)
 
 Pre-commit hooks automatically lint and format your code before each commit:
-
 ```bash
 # Install pre-commit
-pip install pre-commit
+uv tool install pre-commit
 
 # Set up the git hooks
 pre-commit install
@@ -26,27 +35,31 @@ pre-commit run --all-files
 
 Now whenever you run `git commit`, the hooks will automatically:
 - Check for linting issues (ruff)
-- Format code (black)
-- Run type checks (mypy)
+- Format code (ruff format)
 - Fix trailing whitespace, line endings, etc.
 
 ---
 
 ## Code Quality Tools
 
-### Ruff - Fast Linter
+### Ruff - Fast Linter and Formatter
 
-Ruff checks for common Python errors and style issues.
-
+Ruff checks for common Python errors, style issues, and formats your code.
 ```bash
 # Check for linting issues
-ruff check model2data/
+uv run ruff check
 
 # Show detailed fixes
-ruff check model2data/ --show-fixes
+uv run ruff check --show-fixes
 
 # Automatically fix issues
-ruff check model2data/ --fix
+uv run ruff check --fix
+
+# Check formatting
+uv run ruff format --check
+
+# Format code
+uv run ruff format
 ```
 
 **What it checks**:
@@ -55,39 +68,19 @@ ruff check model2data/ --fix
 - Unused imports
 - Code style violations
 - Complexity issues
+- Consistent code formatting
 
 ---
 
-### Black - Code Formatter
+### ty - Type Checker
 
-Black automatically formats Python code to a consistent style.
-
-```bash
-# Check if code matches Black's style
-black --check model2data/
-
-# Automatically format code
-black model2data/
-```
-
-**Why use it**:
-- Consistent style across the codebase
-- Removes style debates in code reviews
-- All code looks the same
-- No need to discuss spacing, quotes, etc.
-
----
-
-### mypy - Type Checker
-
-mypy checks for type errors without running the code.
-
+ty is Astral's fast type checker that analyzes Python code for type errors.
 ```bash
 # Type check the codebase
-mypy model2data/
+uv run ty check model2data/
 
-# Detailed output
-mypy model2data/ --show-error-codes --show-error-context
+# More detailed output
+uv run ty check model2data/ --verbose
 ```
 
 **Why use it**:
@@ -95,28 +88,25 @@ mypy model2data/ --show-error-codes --show-error-context
 - Better IDE support and autocomplete
 - Self-documenting code (types are inline docs)
 - Refactoring safety
+- Faster than traditional type checkers
 
 ---
 
 ### pytest - Testing
 
 Run unit tests and coverage reports.
-
 ```bash
 # Run all tests
-pytest
+uv run pytest
 
 # Run with coverage
-pytest --cov=model2data --cov-report=html
+uv run pytest --cov=model2data --cov-report=html
 
 # Run specific test file
-pytest tests/test_generation.py
+uv run pytest tests/test_generation.py
 
 # Run specific test
-pytest tests/test_generation.py::test_some_function
-
-# Watch mode (re-run on file changes)
-pytest-watch
+uv run pytest tests/test_generation.py::test_some_function
 ```
 
 ---
@@ -127,10 +117,10 @@ The GitHub Actions workflow runs three jobs:
 
 1. **Lint Job** (runs once on Python 3.12)
    - `ruff check` — Catches style and error issues
-   - `black --check` — Ensures consistent formatting
-   - `mypy` — Checks for type errors
+   - `ruff format --check` — Ensures consistent formatting
+   - `ty check` — Checks for type errors
 
-2. **Test Job** (runs on Python 3.9-3.12)
+2. **Test Job** (runs on Python 3.10-3.14)
    - `pytest` — Runs unit tests
    - Collects coverage reports
    - Uploads to Codecov
@@ -142,35 +132,31 @@ The GitHub Actions workflow runs three jobs:
 ## Workflow for Contributing
 
 ### 1. Create a Branch
-
 ```bash
 git checkout -b feature/my-feature
 ```
 
 ### 2. Make Changes
-
 ```bash
 # Edit your code
 ```
 
 ### 3. Format and Lint (if pre-commit not set up)
-
 ```bash
 # Format code
-black model2data/
+uv run ruff format
 
 # Fix linting issues
-ruff check model2data/ --fix
+uv run ruff check --fix
 
 # Type check
-mypy model2data/
+uv run ty check model2data/
 
 # Run tests
-pytest --cov=model2data
+uv run pytest --cov=model2data
 ```
 
 ### 4. Commit and Push
-
 ```bash
 git add .
 git commit -m "Add my feature"
@@ -188,19 +174,16 @@ git push origin feature/my-feature
 
 ## Common Issues and Fixes
 
-### Issue: Black and ruff disagree on formatting
+### Issue: Ruff formatting issues
 
-**Solution**: They're configured to work together. Just run:
+**Solution**: Just run the formatter:
 ```bash
-ruff check model2data/ --fix
-black model2data/
+uv run ruff format
 ```
 
-### Issue: mypy says "error: Skipping analyzing 'X': module not found"
+### Issue: ty reports type errors
 
-**Solution**: Some type stubs are not installed. Check `.pre-commit-config.yaml` and `pyproject.toml` for missing type packages. Common ones:
-- `types-pyyaml` — for YAML type hints
-- `types-requests` — for requests type hints
+**Solution**: Fix the type annotations in your code. ty will give you specific line numbers and error messages.
 
 ### Issue: "Pre-commit hooks not running"
 
@@ -211,13 +194,11 @@ pre-commit install
 
 ### Issue: "Lint passes locally but fails in CI"
 
-**Solution**: Make sure you're using the same Python version:
+**Solution**: Make sure you're running all the checks:
 ```bash
-# Check your Python version
-python --version
-
-# Or run in a specific version (if using pyenv/conda)
-pyenv shell 3.9  # Use same as CI
+uv run ruff check --show-fixes
+uv run ruff format --check
+uv run ty check model2data/
 ```
 
 ---
@@ -233,25 +214,22 @@ Install these extensions for a better development experience:
    - Autocomplete
    - Go to definition
 
-2. **Black Formatter**
-   - `ms-python.black-formatter`
-   - Auto-format on save
-
-3. **Ruff**
+2. **Ruff**
    - `charliermarsh.ruff`
    - Real-time linting with quick fixes
+   - Auto-format on save
 
 Settings (`.vscode/settings.json`):
 ```json
 {
   "[python]": {
-    "editor.defaultFormatter": "ms-python.black-formatter",
+    "editor.defaultFormatter": "charliermarsh.ruff",
     "editor.formatOnSave": true,
     "editor.codeActionsOnSave": {
-      "source.organizeImports": "explicit"
+      "source.organizeImports": "explicit",
+      "source.fixAll": "explicit"
     }
-  },
-  "pylance.typeCheckingMode": "basic"
+  }
 }
 ```
 
@@ -259,13 +237,9 @@ Settings (`.vscode/settings.json`):
 
 1. **Settings → Tools → Python Integrated Tools**
    - Default test runner: pytest
-   - Default linter: Ruff
 
-2. **Settings → Editor → Code Style → Python**
-   - Enable "Black" formatter
-
-3. **Settings → Tools → Black**
-   - Enable Black integration
+2. **Settings → Tools → Ruff**
+   - Enable Ruff integration for linting and formatting
 
 ---
 
@@ -273,9 +247,9 @@ Settings (`.vscode/settings.json`):
 
 For more information:
 
+- **uv**: https://docs.astral.sh/uv/
 - **Ruff**: https://docs.astral.sh/ruff/
-- **Black**: https://black.readthedocs.io/
-- **mypy**: https://mypy.readthedocs.io/
+- **ty**: https://docs.astral.sh/ty/
 - **pytest**: https://docs.pytest.org/
 - **Pre-commit**: https://pre-commit.com/
 

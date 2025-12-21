@@ -20,9 +20,9 @@ jobs:
     - name: Install dependencies
       run: uv sync --extra dev
     - name: Lint with ruff
-      run: uv run ruff check model2data/ tests/ --show-fixes
-    - name: Format check with black
-      run: uv run black --check model2data/ tests/
+      run: uv run ruff check --show-fixes
+    - name: Format check with ruff
+      run: uv run ruff format --check
     - name: Type check with ty
       run: uv run ty check model2data/
 
