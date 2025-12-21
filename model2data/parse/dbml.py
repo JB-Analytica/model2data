@@ -1,14 +1,15 @@
 from __future__ import annotations
+
+import json
+import re
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
-from dataclasses import dataclass, field
-import re
-import json
-import uuid
 
 # -------------------------------
 # Dataclasses
 # -------------------------------
+
 
 @dataclass
 class ColumnDef:
@@ -17,23 +18,71 @@ class ColumnDef:
     settings: set[str] = field(default_factory=set)
     note: Optional[dict] = None
 
+
 @dataclass
 class TableDef:
     name: str
     columns: list[ColumnDef] = field(default_factory=list)
 
+
 # -------------------------------
 # Helpers
 # -------------------------------
 
+
 def _strip_quotes(value: str) -> str:
     return value.strip().strip('"').strip("'")
 
-def _parse_column_settings(raw: Optional[str]) -> set[str]:
+
+def _parse_column_settings(raw: Optional[str]) -> tuple[set[str], Optional[dict]]:
+    """Parse column settings and extract note if present."""
     if not raw:
-        return set()
-    parts = [part.strip() for part in raw.split(",")]
-    return {part.strip("'").strip('"').lower() for part in parts if part}
+        return set(), None
+
+    settings = set()
+    note_dict = None
+
+    # Split by comma, but be careful with nested structures
+    parts = []
+    current = []
+    depth = 0
+
+    for char in raw:
+        if char in "{[":
+            depth += 1
+        elif char in "}]":
+            depth -= 1
+        elif char == "," and depth == 0:
+            parts.append("".join(current).strip())
+            current = []
+            continue
+        current.append(char)
+
+    if current:
+        parts.append("".join(current).strip())
+
+    for part in parts:
+        part = part.strip()
+        if not part:
+            continue
+
+        # Check if this is a note
+        if part.lower().startswith("note:"):
+            note_str = part[5:].strip()
+            # Remove surrounding quotes if present
+            note_str = _strip_quotes(note_str)
+            try:
+                # Try to parse as JSON
+                note_dict = json.loads(note_str)
+            except json.JSONDecodeError:
+                # If JSON parsing fails, ignore the note
+                pass
+        else:
+            # Regular setting (pk, not null, unique, etc.)
+            settings.add(part.strip("'").strip('"').lower())
+
+    return settings, note_dict
+
 
 def normalize_identifier(value: str) -> str:
     cleaned = re.sub(r"[^0-9A-Za-z]+", "_", value).strip("_").lower()
@@ -42,6 +91,7 @@ def normalize_identifier(value: str) -> str:
     if cleaned[0].isdigit():
         cleaned = f"t_{cleaned}"
     return cleaned
+
 
 def parse_dbml(dbml_path: Path) -> tuple[dict[str, TableDef], list[dict]]:
     text = dbml_path.read_text(encoding="utf-8")
@@ -52,7 +102,7 @@ def parse_dbml(dbml_path: Path) -> tuple[dict[str, TableDef], list[dict]]:
     current_table: Optional[TableDef] = None
     in_indexes_block = False
     note_block_depth = 0
-    in_ref_block = False  # NEW
+    in_ref_block = False
 
     for raw_line in lines:
         line = raw_line.strip()
@@ -98,7 +148,7 @@ def parse_dbml(dbml_path: Path) -> tuple[dict[str, TableDef], list[dict]]:
                 continue
 
             col_match = re.match(
-                r'(".*?"|`.*?`|[\w]+)\s+([^\[]+?)(?:\s+\[(.+)\])?$',
+                r'^(".*?"|`.*?`|[A-Za-z_][\w]*)\s+(.+?)(?:\s+\[(.+)\])?$',
                 cleaned,
             )
             if not col_match:
@@ -106,16 +156,22 @@ def parse_dbml(dbml_path: Path) -> tuple[dict[str, TableDef], list[dict]]:
 
             col_name = _strip_quotes(col_match.group(1))
             col_type = col_match.group(2).strip()
-            settings = _parse_column_settings(col_match.group(3))
+
+            # 🚨 Reject invalid / sentence-like column definitions
+            if len(col_type.split()) > 3:
+                continue
+
+            settings, note_dict = _parse_column_settings(col_match.group(3))
 
             current_table.columns.append(
                 ColumnDef(
                     name=col_name,
                     data_type=col_type,
                     settings=settings,
-                    note=None,
+                    note=note_dict,
                 )
             )
+
             continue
 
         # ----------------------

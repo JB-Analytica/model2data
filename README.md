@@ -5,7 +5,7 @@
 [![codecov](https://codecov.io/gh/JB-Analytica/model2data/branch/main/graph/badge.svg)](https://codecov.io/gh/JB-Analytica/model2data)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-`model2data` turns **data models into analytics-ready datasets** in seconds.  
+`model2data` turns **data models into analytics-ready datasets** in seconds.
 
 Given a **DBML file**, it generates synthetic but realistic data, a complete dbt project scaffold, and everything you need to start analyzing or testing data pipelines.
 

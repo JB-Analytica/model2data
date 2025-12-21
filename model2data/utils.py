@@ -1,5 +1,6 @@
 import re
 
+
 def normalize_identifier(value: str) -> str:
     cleaned = re.sub(r"[^0-9A-Za-z]+", "_", value).strip("_").lower()
     if not cleaned:

@@ -7,7 +7,7 @@ name = "model2data"
 version = "0.1.1"
 description = "Generate analytics-ready datasets from DBML models"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
     "dbt-core>=1.5.0",
     "dbt-duckdb>=1.5.0",
@@ -21,6 +21,11 @@ dependencies = [
 dev = [
   "pytest",
   "pytest-cov",
+  "pre-commit",
+  "ruff>=0.1.0",
+  "black>=23.0.0",
+  "ty>=0.0.4",
+  "types-pyyaml",
 ]
 
 [project.scripts]
@@ -29,4 +34,32 @@ model2data = "model2data.cli:app"
 [tool.setuptools.packages.find]
 include = ["model2data"]
 
+# Ruff configuration (fast Python linter)
+[tool.ruff]
+target-version = "py39"
+line-length = 100
 
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort (import sorting)
+    "C",    # flake8-comprehensions
+    "B",    # flake8-bugbear
+]
+ignore = [
+    "E501",  # line too long (handled by black)
+    "C901",  # complexity (handled with noqa when needed)
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["model2data"]
+
+# Black configuration (code formatter)
+[tool.black]
+line-length = 100
+target-version = ["py310", "py311", "py312"]
+
+# ty configuration (type checker)
+[tool.ty]

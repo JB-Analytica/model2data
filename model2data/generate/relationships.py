@@ -1,4 +1,5 @@
-from typing import Tuple, List, Dict
+from typing import Dict, List, Tuple
+
 from model2data.parse.dbml import TableDef
 
 
@@ -21,7 +22,9 @@ def classify_refs(
         target_table = tables.get(ref["target_table"])
         target_col = None
         if target_table:
-            target_col = next((c for c in target_table.columns if c.name == ref["target_column"]), None)
+            target_col = next(
+                (c for c in target_table.columns if c.name == ref["target_column"]), None
+            )
 
         # FK if target column is a primary key or named "id"
         if target_col and ("pk" in target_col.settings or target_col.name.lower() == "id"):

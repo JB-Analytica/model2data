@@ -1,0 +1,96 @@
+// SaaS Multi-Tenant Platform Schema
+// Showcases: Multi-tenant isolation, Faker data types, min/max constraints for numeric fields
+// Example: model2data generate --file examples/saas_platform.dbml --rows 20 --seed 42
+
+Table organizations {
+  id bigint [pk, not null]
+  name company [not null]
+  slug slug [unique, not null]
+  is_active boolean [default: true]
+  created_at timestamp [not null]
+}
+
+Table users {
+  id bigint [pk, not null]
+  organization_id bigint [not null]
+  email email [not null]
+  first_name first_name [not null]
+  last_name last_name [not null]
+  role user_name
+}
+
+Table subscriptions {
+  id bigint [pk, not null]
+  organization_id bigint [not null]
+  plan_tier text [not null]
+  monthly_price numeric [not null, note: '{"min": 0, "max": 999}']
+  status text
+  current_period_start timestamp [not null]
+  current_period_end timestamp
+}
+
+Table invoices {
+  id bigint [pk, not null]
+  organization_id bigint [not null]
+  subscription_id bigint [not null]
+  amount numeric [not null, note: '{"min": 0, "max": 999}']
+  status text
+  created_at timestamp [not null]
+}
+
+Table feature_limits {
+  id bigint [pk, not null]
+  organization_id bigint [not null]
+  api_calls_monthly int [not null, note: '{"min": 1000, "max": 1000000}']
+  storage_gb int [not null, note: '{"min": 5, "max": 1000}']
+  users_allowed int [not null, note: '{"min": 1, "max": 500}']
+}
+
+Table api_usage {
+  id bigint [pk, not null]
+  organization_id bigint [not null]
+  month int [not null, note: '{"min": 1, "max": 12}']
+  api_calls_used int [not null, note: '{"min": 0, "max": 1000000}']
+}
+
+Table audit_events {
+  id bigint [pk, not null]
+  organization_id bigint [not null]
+  user_id bigint
+  event_type text [not null]
+  resource_id text
+  resource_type text
+  created_at timestamp [not null]
+}
+
+Ref {
+  users.organization_id > organizations.id
+}
+
+Ref {
+  subscriptions.organization_id > organizations.id
+}
+
+Ref {
+  invoices.organization_id > organizations.id
+}
+
+Ref {
+  invoices.subscription_id > subscriptions.id
+}
+
+Ref {
+  feature_limits.organization_id > organizations.id
+}
+
+Ref {
+  api_usage.organization_id > organizations.id
+}
+
+Ref {
+  audit_events.organization_id > organizations.id
+}
+
+Ref {
+  audit_events.user_id > users.id
+}

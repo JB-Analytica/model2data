@@ -1,0 +1,104 @@
+// Advanced Features: Hierarchies, Self-Referential FKs, and Constraints
+// Showcases: Self-referential relationships, min/max constraints in inline notes, diverse Faker data types
+// Example: model2data generate --file examples/advanced_features.dbml --rows 15 --seed 42
+
+Table departments {
+  id bigint [pk, not null]
+  name word [not null]
+  budget_cents bigint [not null, note: '{"min": 100000, "max": 5000000}']
+}
+
+Table employees {
+  id bigint [pk, not null]
+  department_id bigint [not null]
+  first_name first_name [not null]
+  last_name last_name [not null]
+  email email [not null]
+  salary_cents bigint [not null, note: '{"min": 30000, "max": 200000}']
+  hire_date date [not null]
+  manager_id bigint
+}
+
+Table projects {
+  id bigint [pk, not null]
+  name word [not null]
+  budget_cents bigint [not null, note: '{"min": 50000, "max": 2000000}']
+  priority int [not null, note: '{"min": 1, "max": 5}']
+}
+
+Table project_assignments {
+  id bigint [pk, not null]
+  project_id bigint [not null]
+  employee_id bigint [not null]
+  allocation_percent numeric [not null, note: '{"min": 0, "max": 100}']
+}
+
+Table time_entries {
+  id bigint [pk, not null]
+  project_id bigint [not null]
+  employee_id bigint [not null]
+  entry_date date [not null]
+  hours_worked numeric [not null, note: '{"min": 0.5, "max": 8}']
+  billable boolean
+}
+
+Table expenses {
+  id bigint [pk, not null]
+  project_id bigint [not null]
+  employee_id bigint [not null]
+  amount_cents bigint [not null, note: '{"min": 100, "max": 50000}']
+  description text
+  status text
+  approved_by bigint
+}
+
+Table performance_ratings {
+  id bigint [pk, not null]
+  employee_id bigint [not null]
+  reviewer_id bigint [not null]
+  rating int [not null, note: '{"min": 1, "max": 5}']
+}
+
+Ref {
+  employees.department_id > departments.id
+}
+
+Ref {
+  employees.manager_id > employees.id
+}
+
+Ref {
+  project_assignments.project_id > projects.id
+}
+
+Ref {
+  project_assignments.employee_id > employees.id
+}
+
+Ref {
+  time_entries.project_id > projects.id
+}
+
+Ref {
+  time_entries.employee_id > employees.id
+}
+
+Ref {
+  expenses.project_id > projects.id
+}
+
+Ref {
+  expenses.employee_id > employees.id
+}
+
+Ref {
+  expenses.approved_by > employees.id
+}
+
+Ref {
+  performance_ratings.employee_id > employees.id
+}
+
+Ref {
+  performance_ratings.reviewer_id > employees.id
+}

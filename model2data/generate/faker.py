@@ -34,6 +34,13 @@ def generate_column_values(
     base_type = dtype.split("(")[0].strip()
     values: list = []
 
+    # Extract min/max from note if present
+    min_val = None
+    max_val = None
+    if column.note:
+        min_val = column.note.get("min")
+        max_val = column.note.get("max")
+
     # -----------------------------------------------------
     # UUIDs / hashes
     # -----------------------------------------------------
@@ -44,20 +51,22 @@ def generate_column_values(
     # Integers
     # -----------------------------------------------------
     elif any(key in base_type for key in ["int", "integer", "bigint", "smallint"]):
-        min_val = 0
-        max_val = 100
-        if column.note:
-            if "min" in column.note:
-                min_val = column.note["min"]
-            if "max" in column.note:
-                max_val = column.note["max"]
+        # Use note values if present, otherwise defaults
+        if min_val is None:
+            min_val = 0
+        if max_val is None:
+            max_val = 100
         values = [random.randint(min_val, max_val) for _ in range(row_count)]
 
     # -----------------------------------------------------
     # Floats / decimals
     # -----------------------------------------------------
     elif any(key in base_type for key in ["decimal", "numeric", "float", "double"]):
-        values = [round(random.uniform(0, 10_000), 2) for _ in range(row_count)]
+        if min_val is None:
+            min_val = 0
+        if max_val is None:
+            max_val = 10_000
+        values = [round(random.uniform(min_val, max_val), 2) for _ in range(row_count)]
 
     # -----------------------------------------------------
     # Booleans
@@ -83,7 +92,7 @@ def generate_column_values(
     else:
         try:
             values = [fake.format(base_type) for _ in range(row_count)]
-        except:
+        except (AttributeError, TypeError):
             if column.name.lower().endswith("_id") or ensure_unique:
                 values = [str(uuid.uuid4()) for _ in range(row_count)]
             else:
