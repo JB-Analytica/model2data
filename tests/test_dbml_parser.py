@@ -178,27 +178,41 @@ def test_strip_quotes_helper():
 def test_parse_column_settings_helper():
     """Test the _parse_column_settings helper function."""
     # Single setting
-    settings = _parse_column_settings("pk")
+    settings, note = _parse_column_settings("pk")
     assert "pk" in settings
+    assert note is None
 
     # Multiple settings
-    settings = _parse_column_settings("pk, not null")
+    settings, note = _parse_column_settings("pk, not null, unique")
     assert "pk" in settings
     assert "not null" in settings
+    assert "unique" in settings
+    assert note is None
 
-    # With quotes
-    settings = _parse_column_settings("'pk', 'not null'")
+    # Settings with note
+    settings, note = _parse_column_settings('pk, not null, note: \'{"min": 1, "max": 5}\'')
     assert "pk" in settings
     assert "not null" in settings
+    assert note is not None
+    assert note["min"] == 1
+    assert note["max"] == 5
 
-    # Empty/None
-    assert _parse_column_settings(None) == set()
-    assert _parse_column_settings("") == set()
+    # Just a note
+    settings, note = _parse_column_settings('note: \'{"min": 0, "max": 100}\'')
+    assert len(settings) == 0
+    assert note is not None
+    assert note["min"] == 0
+    assert note["max"] == 100
 
-    # Settings should be lowercase
-    settings = _parse_column_settings("PK, NOT NULL")
-    assert "pk" in settings
-    assert "not null" in settings
+    # Empty
+    settings, note = _parse_column_settings("")
+    assert len(settings) == 0
+    assert note is None
+
+    # None
+    settings, note = _parse_column_settings(None)
+    assert len(settings) == 0
+    assert note is None
 
 
 def test_normalize_identifier_helper():

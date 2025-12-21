@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -33,11 +34,54 @@ def _strip_quotes(value: str) -> str:
     return value.strip().strip('"').strip("'")
 
 
-def _parse_column_settings(raw: Optional[str]) -> set[str]:
+def _parse_column_settings(raw: Optional[str]) -> tuple[set[str], Optional[dict]]:
+    """Parse column settings and extract note if present."""
     if not raw:
-        return set()
-    parts = [part.strip() for part in raw.split(",")]
-    return {part.strip("'").strip('"').lower() for part in parts if part}
+        return set(), None
+
+    settings = set()
+    note_dict = None
+
+    # Split by comma, but be careful with nested structures
+    parts = []
+    current = []
+    depth = 0
+
+    for char in raw:
+        if char in "{[":
+            depth += 1
+        elif char in "}]":
+            depth -= 1
+        elif char == "," and depth == 0:
+            parts.append("".join(current).strip())
+            current = []
+            continue
+        current.append(char)
+
+    if current:
+        parts.append("".join(current).strip())
+
+    for part in parts:
+        part = part.strip()
+        if not part:
+            continue
+
+        # Check if this is a note
+        if part.lower().startswith("note:"):
+            note_str = part[5:].strip()
+            # Remove surrounding quotes if present
+            note_str = _strip_quotes(note_str)
+            try:
+                # Try to parse as JSON
+                note_dict = json.loads(note_str)
+            except json.JSONDecodeError:
+                # If JSON parsing fails, ignore the note
+                pass
+        else:
+            # Regular setting (pk, not null, unique, etc.)
+            settings.add(part.strip("'").strip('"').lower())
+
+    return settings, note_dict
 
 
 def normalize_identifier(value: str) -> str:
@@ -58,7 +102,7 @@ def parse_dbml(dbml_path: Path) -> tuple[dict[str, TableDef], list[dict]]:
     current_table: Optional[TableDef] = None
     in_indexes_block = False
     note_block_depth = 0
-    in_ref_block = False  # NEW
+    in_ref_block = False
 
     for raw_line in lines:
         line = raw_line.strip()
@@ -117,14 +161,14 @@ def parse_dbml(dbml_path: Path) -> tuple[dict[str, TableDef], list[dict]]:
             if len(col_type.split()) > 3:
                 continue
 
-            settings = _parse_column_settings(col_match.group(3))
+            settings, note_dict = _parse_column_settings(col_match.group(3))
 
             current_table.columns.append(
                 ColumnDef(
                     name=col_name,
                     data_type=col_type,
                     settings=settings,
-                    note=None,
+                    note=note_dict,
                 )
             )
 

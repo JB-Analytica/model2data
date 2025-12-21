@@ -49,25 +49,26 @@ dbt seed && dbt run
 
 ### 2. **ecommerce.dbml** — E-Commerce / Retail Platform
 - **Domain**: Online retail store
-- **Focus**: Transactional data, multi-table relationships, Faker data types
+- **Focus**: Transactional data, multi-table relationships, Faker data types, min/max constraints
 - **Features Showcased**:
   - Faker provider data types (email, first_name, last_name, phone_number, country, word, ean13)
   - Customer master data with realistic naming and contact info
   - Product catalog with inventory tracking
   - Order-to-fulfillment workflows (orders → order_items)
-  - Customer reviews and ratings
+  - Customer reviews and ratings with min/max constraints
   - Business constraints: unique emails, foreign key relationships
-  - Foreign key relationships: customers → orders → order_items; product_reviews → products & customers
+  - **Inline note constraints**: Price ranges, stock levels, quantities, ratings
 
 **Tables**: 5 tables with 5 relationships
 - `customers` — Customer directory with realistic names, emails, phone numbers
-- `products` — Product catalog with names and EANs
-- `orders` — Order headers with customer references
-- `order_items` — Line items for orders
-- `product_reviews` — Customer product reviews
+- `products` — Product catalog with constrained prices (5.99-999.99) and stock levels (0-1000)
+- `orders` — Order headers with total amount constraints (10-5000)
+- `order_items` — Line items with quantity (1-10) and unit price constraints
+- `product_reviews` — Customer reviews with ratings (1-5)
 
 **Advanced Features**:
 - **Faker data types**: Uses `email`, `first_name`, `last_name`, `phone_number`, `country`, `word`, `ean13`
+- **Inline note constraints**: `price numeric [not null, note: '{"min": 5.99, "max": 999.99}']`
 - **Foreign keys**: Transactional relationships between customers, orders, and products
 - **Unique constraints**: Email uniqueness per customer
 - **Realistic data generation**: Names, emails, phone numbers generated via Faker library
@@ -95,30 +96,32 @@ dbt run-operation select_from_seed --args '{"table": "customers"}'
 
 ### 3. **saas_platform.dbml** — SaaS / Multi-Tenant Application
 - **Domain**: Multi-tenant SaaS platform
-- **Focus**: Multi-tenancy patterns, Faker data types, audit trails
+- **Focus**: Multi-tenancy patterns, Faker data types, audit trails, min/max constraints
 - **Features Showcased**:
   - Faker provider data types (company, slug, email, first_name, last_name, word)
   - Multi-tenancy: Organization-based isolation
   - User hierarchies with role-based access
-  - Subscription and billing tracking
-  - API usage monitoring and limits
+  - Subscription and billing tracking with price constraints
+  - API usage monitoring with realistic limits and constraints
   - Audit logging of events
+  - **Inline note constraints**: Pricing, feature limits, usage tracking
 
 **Tables**: 7 tables with 8 relationships
 - `organizations` — Tenant root entity (using `company` type for realistic names)
 - `users` — Users per org with `email`, `first_name`, `last_name` types
-- `subscriptions` — Billing subscriptions and plan tiers
-- `invoices` — Invoice tracking and payment status
-- `feature_limits` — Feature allocation per organization
-- `api_usage` — API call tracking with min/max month constraints (1-12)
+- `subscriptions` — Billing subscriptions with monthly price constraints (0-999)
+- `invoices` — Invoice tracking with amount constraints (0-999)
+- `feature_limits` — API calls (1K-1M), storage (5-1000 GB), users (1-500) with realistic constraints
+- `api_usage` — API call tracking with month constraints (1-12) and usage limits (0-1M)
 - `audit_events` — Audit trail of system events
 
 **Advanced Features**:
 - **Faker data types**: `company`, `slug`, `email`, `first_name`, `last_name`, `word`
 - **Multi-tenancy**: Every table references `organization_id` for isolation
-- **Min/Max constraints**: Month field constrained to 1-12 in api_usage
+- **Inline note constraints**: `month int [not null, note: '{"min": 1, "max": 12}']`
 - **Foreign keys**: Nested relationships (organizations → users, subscriptions, audit_events)
 - **Status tracking**: Subscription and invoice status enumeration
+- **Realistic SaaS metrics**: API limits, storage quotas, user caps per plan tier
 
 **Use case**: Essential for building SaaS platforms, understanding multi-tenancy patterns, subscription billing, and compliance. Run this to generate realistic tenant, user, subscription, and billing data.
 
@@ -153,31 +156,33 @@ dbt run
 - **Features Showcased**:
   - Faker provider data types (first_name, last_name, email, word)
   - Self-referential foreign keys (employees.manager_id → employees.id)
-  - Min/max constraints in notes for realistic data bounds
+  - **Inline note constraints** for realistic data bounds across all numeric fields
   - Multiple numeric types (bigint, int, numeric) with constraints
   - Complex multi-table relationships (employees → projects → time entries)
 
 **Tables**: 7 tables with 11 relationships
-- `departments` — Department master with `word` type for realistic names
-- `employees` — Employee directory with self-referential manager hierarchy
-- `projects` — Project master with priority constraints (1-5)
-- `project_assignments` — Employee-to-project mappings with allocation % constraints (0-100%)
+- `departments` — Department master with `word` type and budget constraints (100K-5M)
+- `employees` — Employee directory with self-referential manager hierarchy and salary constraints (30K-200K)
+- `projects` — Project master with budget (50K-2M) and priority constraints (1-5)
+- `project_assignments` — Employee-to-project mappings with allocation % constraints (0-100)
 - `time_entries` — Daily time tracking with hours constraints (0.5-8 per day)
-- `expenses` — Project expense tracking with approval workflow
+- `expenses` — Project expense tracking with amount constraints (100-50K) and approval workflow
 - `performance_ratings` — Performance reviews with rating constraints (1-5)
 
 **Advanced Features**:
 - **Self-referential FK**: `employees.manager_id → employees.id` (builds org hierarchies)
 - **Faker data types**: `first_name`, `last_name`, `email` for realistic employee data, `word` for project/department names
-- **Min/Max constraints in notes**:
+- **Inline note constraints**:
+  - Budget amounts: Department (100K-5M), Project (50K-2M), Salary (30K-200K)
   - Priority: 1-5
   - Allocation: 0-100%
   - Hours worked: 0.5-8 per day
   - Rating: 1-5
+  - Expenses: 100-50,000
 - **Complex hierarchies**: Departments → Employees (with managers) → Projects → Time tracking
 - **Multiple relationship types**: Parent-child (dept→emp), hierarchy (mgr→emp), assignment (emp→proj)
 
-**Use case**: Learn how to model organizational data, complex relationships, and min/max constraints. Run this to generate HR/payroll data, project allocation data, and training records.
+**Use case**: Learn how to model organizational data, complex relationships, and min/max constraints. Run this to generate HR/payroll data, project allocation data, and performance tracking.
 
 **Try it**:
 ```bash
@@ -191,9 +196,8 @@ head -20 seeds/advanced_features/employees.csv
 head -20 seeds/advanced_features/projects.csv
 head -20 seeds/advanced_features/time_entries.csv
 
-# Explore performance and training
-head -20 seeds/advanced_features/performance_reviews.csv
-head -20 seeds/advanced_features/employee_training.csv
+# Explore performance reviews
+head -20 seeds/advanced_features/performance_ratings.csv
 
 dbt seed
 dbt run
@@ -201,7 +205,6 @@ dbt run
 # Now you can build dbt models for:
 # - Org charts and reporting lines
 # - Project profitability (budget vs spent vs time tracked)
-# - Skills inventory and training gaps
 # - Performance evaluation aggregations
 # - Expense approval workflows
 ```
@@ -214,19 +217,65 @@ dbt run
 |---------|-----------|-----------|---------------|-------------------|
 | **Foreign Keys** | ✓ | ✓ | ✓ | ✓ |
 | **Self-referential FKs** | - | - | - | ✓ (manager hierarchy) |
-| **Unique Constraints** | ✓ | ✓ | - | - |
-| **Min/Max in Notes** | - | - | ✓ | ✓ |
+| **Unique Constraints** | ✓ | ✓ | ✓ | - |
+| **Inline Note Constraints** | - | ✓ | ✓ | ✓ |
 | **Faker Data Types** | - | ✓ | ✓ | ✓ |
 | **Multi-tenancy** | - | - | ✓ | - |
 | **Nested Tables** | ✓ | - | - | - |
 | **Date Types** | - | ✓ | ✓ | ✓ |
-| **Boolean Flags** | - | ✓ | ✓ | ✓ |
+| **Boolean Flags** | - | ✓ | ✓ | - |
+
+---
+
+## Understanding Inline Note Constraints
+
+The examples showcase **inline note constraints** for controlling generated data ranges. This is done using JSON in the column definition:
+
+```dbml
+Table products {
+  id bigint [pk, not null]
+  price numeric [not null, note: '{"min": 5.99, "max": 999.99}']
+  stock_quantity int [not null, note: '{"min": 0, "max": 1000}']
+  rating int [note: '{"min": 1, "max": 5}']
+}
+```
+
+### Supported Constraint Types
+
+**Integer constraints:**
+```dbml
+age int [note: '{"min": 18, "max": 65}']
+priority int [note: '{"min": 1, "max": 5}']
+quantity int [note: '{"min": 1, "max": 100}']
+```
+
+**Numeric/Decimal constraints:**
+```dbml
+price numeric [note: '{"min": 9.99, "max": 999.99}']
+percentage numeric [note: '{"min": 0, "max": 100}']
+allocation numeric [note: '{"min": 0.5, "max": 8}']
+```
+
+### When to Use Constraints
+
+- **Ratings/Scores**: Always constrain to realistic ranges (1-5, 0-100)
+- **Percentages**: Use 0-100 for allocation, completion, etc.
+- **Prices**: Set realistic price ranges for your domain
+- **Quantities**: Limit inventory, order quantities to reasonable ranges
+- **Time periods**: Constrain hours, days, months to valid ranges
+- **Business metrics**: API calls, storage limits, user counts
+
+### Examples from This Directory
+
+- **ecommerce.dbml**: Price (5.99-999.99), stock (0-1000), quantity (1-10), rating (1-5)
+- **saas_platform.dbml**: Monthly price (0-999), API calls (1K-1M), storage (5-1000 GB), month (1-12)
+- **advanced_features.dbml**: Budget (100K-5M), salary (30K-200K), priority (1-5), allocation (0-100%), hours (0.5-8)
 
 ---
 
 ## Understanding Faker Data Types
 
-All three updated examples use **Faker provider names** as column data types. This is a powerful feature of `model2data` that allows you to generate realistic synthetic data:
+All updated examples use **Faker provider names** as column data types. This is a powerful feature of `model2data` that allows you to generate realistic synthetic data:
 
 ### Common Faker Data Types
 
@@ -283,6 +332,7 @@ Table products {
   name word [not null]                     // Uses Faker's word()
   ean ean13 [unique]                       // Uses Faker's ean13()
   website_url url                          // Uses Faker's url()
+  price numeric [not null, note: '{"min": 5.99, "max": 999.99}']  // With constraints
 }
 
 Table organizations {
@@ -295,15 +345,15 @@ Table organizations {
 
 When you run `model2data generate --file your_schema.dbml --rows 100`, it will:
 1. Use Faker to generate realistic values for each column type
-2. Preserve all foreign key relationships (parent IDs before child IDs)
-3. Respect min/max constraints (via notes)
+2. Respect min/max constraints from inline notes
+3. Preserve all foreign key relationships (parent IDs before child IDs)
 4. Handle nullability properly (~20% null for optional columns)
 
 ### Examples from This Directory
 
-- **ecommerce.dbml**: Uses `email`, `first_name`, `last_name`, `phone_number`, `country`, `word`, `ean13`
-- **saas_platform.dbml**: Uses `company`, `slug`, `email`, `first_name`, `last_name`, `word`
-- **advanced_features.dbml**: Uses `first_name`, `last_name`, `email`, `word`
+- **ecommerce.dbml**: Uses `email`, `first_name`, `last_name`, `phone_number`, `country`, `word`, `ean13` with price/quantity constraints
+- **saas_platform.dbml**: Uses `company`, `slug`, `email`, `first_name`, `last_name`, `word` with subscription/billing constraints
+- **advanced_features.dbml**: Uses `first_name`, `last_name`, `email`, `word` with budget/salary/time constraints
 
 ---
 
@@ -345,8 +395,15 @@ head -5 dbt_ecommerce/seeds/ecommerce/customers.csv
 Copy an example and customize it for your own use case:
 ```bash
 cp examples/ecommerce.dbml examples/my_store.dbml
-# Edit my_store.dbml with your custom tables...
+# Edit my_store.dbml with your custom tables and constraints...
 model2data generate --file examples/my_store.dbml --rows 100 --seed 42
+```
+
+### 6. **Experiment with Constraints**
+```bash
+# Try different constraint ranges to see their effect
+# Edit the note constraints in the DBML file, then regenerate
+model2data generate --file examples/ecommerce.dbml --rows 100 --seed 42
 ```
 
 ---
@@ -359,6 +416,7 @@ model2data generate --file examples/my_store.dbml --rows 100 --seed 42
 4. **API Testing**: Use the generated data to test integrations
 5. **Performance Testing**: Generate large datasets to test query performance
 6. **Training & Demos**: Show stakeholders how their data can be structured and analyzed
+7. **Data Quality Testing**: Validate that constraints are enforced correctly
 
 ---
 
@@ -369,9 +427,10 @@ Have a domain or pattern you'd like to showcase? Create a new `.dbml` file and s
 Examples should:
 - ✓ Showcase a clear use case or domain
 - ✓ Include meaningful relationships (2+ tables)
-- ✓ Demonstrate one or more advanced features
-- ✓ Have helpful table and column comments
-- ✓ Include a brief comment at the top explaining the purpose
+- ✓ Demonstrate one or more advanced features (Faker types, constraints, etc.)
+- ✓ Have helpful comments at the top explaining the purpose
+- ✓ Use inline note constraints where appropriate for realistic data ranges
+- ✓ Include a variety of Faker data types for realistic generation
 
 ---
 

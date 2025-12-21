@@ -1,15 +1,11 @@
 // Advanced Features: Hierarchies, Self-Referential FKs, and Constraints
-// Showcases: Self-referential relationships, min/max constraints in notes, diverse Faker data types
+// Showcases: Self-referential relationships, min/max constraints in inline notes, diverse Faker data types
 // Example: model2data generate --file examples/advanced_features.dbml --rows 15 --seed 42
 
 Table departments {
   id bigint [pk, not null]
   name word [not null]
-  budget_cents bigint [not null]
-
-  Note {
-    'Departments. Data type: word for realistic names'
-  }
+  budget_cents bigint [not null, note: '{"min": 100000, "max": 5000000}']
 }
 
 Table employees {
@@ -18,42 +14,23 @@ Table employees {
   first_name first_name [not null]
   last_name last_name [not null]
   email email [not null]
-  salary_cents bigint [not null]
+  salary_cents bigint [not null, note: '{"min": 30000, "max": 200000}']
   hire_date date [not null]
   manager_id bigint
-
-  Note {
-    'Employee hierarchy. Data types: first_name, last_name, email'
-    'manager_id is self-referential (nullable for CEOs)'
-  }
 }
 
 Table projects {
   id bigint [pk, not null]
   name word [not null]
-  budget_cents bigint [not null]
-  priority int [not null]
-
-  Note {
-    'Projects. Data type: word for project names'
-    'priority: 1-5 scale'
-    'min': 1,
-    'max': 5
-  }
+  budget_cents bigint [not null, note: '{"min": 50000, "max": 2000000}']
+  priority int [not null, note: '{"min": 1, "max": 5}']
 }
 
 Table project_assignments {
   id bigint [pk, not null]
   project_id bigint [not null]
   employee_id bigint [not null]
-  allocation_percent numeric [not null]
-
-  Note {
-    'Team assignments to projects. Data type: numeric'
-    'allocation_percent: 0-100'
-    'min': 0,
-    'max': 100
-  }
+  allocation_percent numeric [not null, note: '{"min": 0, "max": 100}']
 }
 
 Table time_entries {
@@ -61,43 +38,25 @@ Table time_entries {
   project_id bigint [not null]
   employee_id bigint [not null]
   entry_date date [not null]
-  hours_worked numeric [not null]
+  hours_worked numeric [not null, note: '{"min": 0.5, "max": 8}']
   billable boolean
-
-  Note {
-    'Time tracking. Data type: numeric for hours'
-    'hours_worked: 0.5-8 per day'
-    'min': 0.5,
-    'max': 8
-  }
 }
 
 Table expenses {
   id bigint [pk, not null]
   project_id bigint [not null]
   employee_id bigint [not null]
-  amount_cents bigint [not null]
+  amount_cents bigint [not null, note: '{"min": 100, "max": 50000}']
   description text
   status text
   approved_by bigint
-
-  Note {
-    'Demonstrates multiple FKs: project, employee, and self-reference (approved_by)'
-  }
 }
 
 Table performance_ratings {
   id bigint [pk, not null]
   employee_id bigint [not null]
   reviewer_id bigint [not null]
-  rating int [not null]
-
-  Note {
-    'Performance reviews. employee_id and reviewer_id both reference employees (n:n pattern)'
-    'rating: 1-5 scale'
-    'min': 1,
-    'max': 5
-  }
+  rating int [not null, note: '{"min": 1, "max": 5}']
 }
 
 Ref {
@@ -105,7 +64,7 @@ Ref {
 }
 
 Ref {
-  employees.manager_id > employees.id [comment: 'Self-referential: manager is also an employee']
+  employees.manager_id > employees.id
 }
 
 Ref {
