@@ -94,7 +94,7 @@ def main(
 
     if dest.exists():
         if not force:
-            typer.echo(f"❌ Destination {dest} already exists.\n" "Use --force to overwrite.")
+            typer.echo(f"❌ Destination {dest} already exists.\nUse --force to overwrite.")
             raise typer.Exit(1)
         shutil.rmtree(dest)
 

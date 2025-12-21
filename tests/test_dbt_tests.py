@@ -57,7 +57,7 @@ def test_dbt_tests_generation(tmp_path, monkeypatch):
     assert "not_null" in posts_content
     # The relationship test should be on user_id column
     assert "user_id" in posts_content
-    assert (
-        "relationships" in posts_content
-    ), f"Expected 'relationships' in content:\n{posts_content}"
+    assert "relationships" in posts_content, (
+        f"Expected 'relationships' in content:\n{posts_content}"
+    )
     assert "ref('stg_users')" in posts_content
