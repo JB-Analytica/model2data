@@ -26,6 +26,7 @@ dev = [
   "black>=23.0.0",
   "ty>=0.0.4",
   "types-pyyaml",
+  "poethepoet>=0.38.0",
 ]
 
 [project.scripts]
@@ -63,3 +64,11 @@ target-version = ["py310", "py311", "py312"]
 
 # ty configuration (type checker)
 [tool.ty]
+
+# Poe the Poet task runner
+[tool.poe.tasks]
+lint = "ruff check ."
+fix = "ruff check . --fix --exit-zero"
+type = "ty check"
+test-quick = "pytest -q --no-header -p no:warnings --no-cov"
+check = ["fix", "lint", "type", "test-quick"]
