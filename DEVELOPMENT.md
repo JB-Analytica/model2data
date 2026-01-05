@@ -19,7 +19,19 @@ powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
 uv sync --extra dev
 ```
 
-### 3. Set Up Pre-commit Hooks (Optional but Recommended)
+### 3. Quick Commands with Poe
+
+[Poe the Poet](https://poethepoet.natn.io/) provides simple task shortcuts:
+
+```bash
+uv run poe check       # Run all checks (fix, lint, type, test)
+uv run poe lint        # Run ruff linter
+uv run poe fix         # Auto-fix linting issues
+uv run poe type        # Run ty type checker
+uv run poe test-quick  # Run tests without coverage
+```
+
+### 4. Set Up Pre-commit Hooks (Optional but Recommended)
 
 Pre-commit hooks automatically lint and format your code before each commit:
 ```bash
@@ -141,19 +153,18 @@ git checkout -b feature/my-feature
 # Edit your code
 ```
 
-### 3. Format and Lint (if pre-commit not set up)
+### 3. Run All Checks
 ```bash
-# Format code
-uv run ruff format
+# One command to run everything
+uv run poe check
+```
 
-# Fix linting issues
-uv run ruff check --fix
-
-# Type check
-uv run ty check model2data/
-
-# Run tests
-uv run pytest --cov=model2data
+Or run individual checks manually:
+```bash
+uv run ruff format              # Format code
+uv run ruff check --fix         # Fix linting issues
+uv run ty check model2data/     # Type check
+uv run pytest --cov=model2data  # Run tests
 ```
 
 ### 4. Commit and Push
@@ -252,6 +263,7 @@ For more information:
 - **ty**: https://docs.astral.sh/ty/
 - **pytest**: https://docs.pytest.org/
 - **Pre-commit**: https://pre-commit.com/
+- **Poe the Poet**: https://poethepoet.natn.io/
 
 ---
 
