@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "model2data"
-version = "0.1.1"
+version = "0.2.0"
 description = "Generate analytics-ready datasets from DBML models"
 readme = "README.md"
 requires-python = ">=3.10"
