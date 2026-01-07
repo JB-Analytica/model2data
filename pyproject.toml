@@ -36,6 +36,12 @@ model2data = "model2data.cli:app"
 where = ["."]
 include = ["model2data*"]
 
+[tool.setuptools.package-data]
+model2data = [
+    "dbt/templates/**/*",
+    "examples/**/*",
+]
+
 # Ruff configuration (fast Python linter)
 [tool.ruff]
 target-version = "py39"
