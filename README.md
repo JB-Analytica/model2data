@@ -125,7 +125,6 @@ dbt_{project_name}/
 - [x] Post-run generation summary (tables, rows, relationships, unmapped columns)
 - [ ] Additional database adapters (e.g., Snowflake, BigQuery).
 - [ ] Enhanced data type handling and custom generators.
-- [ ] Integration with more dbt features like incremental models.
 - [ ] Web-based DBML editor and data preview.
 
 ---
