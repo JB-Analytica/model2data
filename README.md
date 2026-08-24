@@ -45,6 +45,17 @@ access required.
 - **A real dbt project, not just CSVs.** Seeds, staging models, sources, schema tests, and a
   ready-to-use profile — the thing you'd otherwise spend an afternoon scaffolding by hand.
 
+## Who is model2data for?
+
+- **Analytics engineers** — generate realistic datasets and a working dbt project without
+  waiting on production access.
+- **Data engineers** — produce deterministic test data from an existing schema for pipeline and
+  migration testing.
+- **Software & data teams** — prototype integrations and analytics workflows without exposing
+  production data.
+- **Consultants & architects** — spin up realistic environments for demos, workshops, and
+  architecture validation in minutes, not hours.
+
 ## How it works
 
 ```mermaid
@@ -191,7 +202,7 @@ dbt_{project_name}/
 - [x] Post-run generation summary (tables, rows, relationships, unmapped columns)
 - [ ] Additional database adapters (e.g., Snowflake, BigQuery).
 - [ ] Enhanced data type handling and custom generators.
-- [ ] Web-based DBML editor and data preview.
+- [ ] Improved schema exploration and developer tooling.
 
 ---
 
@@ -223,5 +234,5 @@ MIT License. See LICENSE for details.
   </a>
   <br>
   Built and maintained by <a href="https://www.jbanalytica.com"><strong>JB Analytica</strong></a> —
-  data platform consulting: Snowflake, dbt, and the modern data stack.
+  Data & Analytics Engineering · Data Platform Architecture · Modern BI.
 </p>
