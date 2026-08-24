@@ -108,6 +108,89 @@ def test_cli_no_tables_found(tmp_path):
     assert "❌ No tables found in the provided DBML file." in result.stdout
 
 
+def test_cli_rejects_unsupported_adapter(tmp_path):
+    """Test CLI exits cleanly on an unknown --adapter value."""
+    dbml_file = tmp_path / "test.dbml"
+    dbml_file.write_text(
+        """
+    Table users {
+        id int [pk]
+    }
+    """
+    )
+
+    original_cwd = os.getcwd()
+    try:
+        os.chdir(tmp_path)
+        result = runner.invoke(
+            app,
+            ["--file", str(dbml_file), "--adapter", "snowflake"],
+        )
+    finally:
+        os.chdir(original_cwd)
+
+    assert result.exit_code == 1
+    assert "Unsupported adapter" in result.stdout
+
+
+def test_cli_postgres_adapter_generates_postgres_profile(tmp_path):
+    """Test that --adapter postgres produces a postgres profiles.yml."""
+    dbml_file = tmp_path / "test.dbml"
+    dbml_file.write_text(
+        """
+    Table users {
+        id int [pk]
+        email varchar
+    }
+    """
+    )
+
+    original_cwd = os.getcwd()
+    try:
+        os.chdir(tmp_path)
+        result = runner.invoke(
+            app,
+            ["--file", str(dbml_file), "--rows", "10", "--adapter", "postgres"],
+        )
+    finally:
+        os.chdir(original_cwd)
+
+    assert result.exit_code == 0
+    profiles_yml = tmp_path / "dbt_test" / "profiles.yml"
+    content = profiles_yml.read_text()
+    assert "type: postgres" in content
+    assert "env_var('MODEL2DATA_PG_HOST'" in content
+
+
+def test_cli_prints_generation_summary(tmp_path):
+    """Test that the post-run summary reports table/row/relationship counts."""
+    dbml_file = tmp_path / "test.dbml"
+    dbml_file.write_text(
+        """
+    Table users {
+        id int [pk]
+        weird_field custom_unmapped_type
+    }
+    """
+    )
+
+    original_cwd = os.getcwd()
+    try:
+        os.chdir(tmp_path)
+        result = runner.invoke(
+            app,
+            ["--file", str(dbml_file), "--rows", "10"],
+        )
+    finally:
+        os.chdir(original_cwd)
+
+    assert result.exit_code == 0
+    assert "📊 Summary" in result.stdout
+    assert "Tables generated:        1" in result.stdout
+    assert "Rows generated:          10" in result.stdout
+    assert "weird_field" in result.stdout
+
+
 def test_cli_with_custom_name(tmp_path):
     """Test CLI with custom project name."""
     dbml_file = tmp_path / "test.dbml"

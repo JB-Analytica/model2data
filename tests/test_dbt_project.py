@@ -3,6 +3,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
+import yaml
 
 from model2data.dbt.project import (
     TEMPLATES_DIR,
@@ -35,6 +36,21 @@ def test_create_project_scaffold_creates_directories(temp_dir):
     assert (temp_dir / "macros").exists()
     assert (temp_dir / "tests").exists()
     assert (temp_dir / "snapshots").exists()
+
+
+def test_create_project_scaffold_copies_schema_macro_regardless_of_cwd(temp_dir, monkeypatch):
+    """Regression test: macro copy used to rely on a CWD-relative path, so it
+    silently copied nothing when model2data was run from anywhere outside the
+    repo checkout (e.g. after a normal `pip install`). Without the macro,
+    generated projects fail at `dbt run` with a schema-not-found error.
+    """
+    monkeypatch.chdir(temp_dir.parent)
+
+    create_project_scaffold(temp_dir, "test_project", "test_profile")
+
+    macro_file = temp_dir / "macros" / "generate_schema_name.sql"
+    assert macro_file.exists()
+    assert "generate_schema_name" in macro_file.read_text()
 
 
 def test_create_project_scaffold_creates_dbt_project_yml(temp_dir):
@@ -178,6 +194,45 @@ def test_create_profiles_yml_appends_if_different_profile(temp_dir):
     create_profiles_yml(temp_dir, "new_profile")
 
     assert profiles_file.exists()
+
+
+def test_create_profiles_yml_defaults_to_duckdb(temp_dir):
+    """Test that omitting adapter still produces a duckdb profile."""
+    profile_name = "duck_profile"
+
+    create_profiles_yml(temp_dir, profile_name)
+
+    content = (temp_dir / "profiles.yml").read_text()
+    parsed = yaml.safe_load(content)
+    assert parsed[profile_name]["outputs"]["dev"]["type"] == "duckdb"
+    assert parsed[profile_name]["outputs"]["dev"]["path"] == f"{profile_name}.duckdb"
+
+
+def test_create_profiles_yml_postgres_adapter(temp_dir):
+    """Test that the postgres adapter renders a valid, env-var-driven profile."""
+    profile_name = "pg_profile"
+
+    create_profiles_yml(temp_dir, profile_name, adapter="postgres")
+
+    content = (temp_dir / "profiles.yml").read_text()
+    parsed = yaml.safe_load(content)
+    dev_output = parsed[profile_name]["outputs"]["dev"]
+
+    assert dev_output["type"] == "postgres"
+    assert dev_output["schema"] == profile_name
+    # Connection details are sourced from env vars, not hardcoded secrets.
+    assert "env_var('MODEL2DATA_PG_HOST'" in content
+    assert "env_var('MODEL2DATA_PG_PORT'" in content
+    assert "env_var('MODEL2DATA_PG_USER'" in content
+    assert "env_var('MODEL2DATA_PG_PASSWORD'" in content
+    assert "env_var('MODEL2DATA_PG_DATABASE'" in content
+
+
+def test_create_profiles_yml_rejects_no_hardcoded_duckdb_type_for_postgres(temp_dir):
+    """Guard against the postgres branch accidentally falling through to duckdb."""
+    create_profiles_yml(temp_dir, "mixed_profile", adapter="postgres")
+    content = (temp_dir / "profiles.yml").read_text()
+    assert "type: duckdb" not in content
 
 
 def test_render_template_creates_output(temp_dir):

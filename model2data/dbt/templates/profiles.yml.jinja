@@ -2,6 +2,17 @@
   target: dev
   outputs:
     dev:
+{% if adapter == "postgres" %}
+      type: postgres
+      threads: 4
+      host: "{% raw %}{{ env_var('MODEL2DATA_PG_HOST', 'localhost') }}{% endraw %}"
+      port: "{% raw %}{{ env_var('MODEL2DATA_PG_PORT', '5432') | as_number }}{% endraw %}"
+      user: "{% raw %}{{ env_var('MODEL2DATA_PG_USER', 'postgres') }}{% endraw %}"
+      pass: "{% raw %}{{ env_var('MODEL2DATA_PG_PASSWORD', 'postgres') }}{% endraw %}"
+      dbname: "{% raw %}{{ env_var('MODEL2DATA_PG_DATABASE', 'postgres') }}{% endraw %}"
+      schema: "{{ profile_name }}"
+{% else %}
       type: duckdb
       threads: 1
       path: "{{ profile_name }}.duckdb"
+{% endif %}

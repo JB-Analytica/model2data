@@ -20,8 +20,8 @@ Building analytics or testing dbt pipelines often requires realistic data, but u
 ## How it works (high level)
 
 1. **Parse DBML**: Reads your database schema from a DBML file, extracting tables, columns, types, and relationships.
-2. **Generate Data**: Uses Faker and custom logic to create realistic synthetic data, respecting foreign keys and constraints.
-3. **Scaffold dbt Project**: Creates a dbt project with seeds (CSV files), staging models, profiles, and tests, ready to run with DuckDB.
+2. **Generate Data**: Uses Faker and custom logic to create realistic synthetic data, respecting foreign keys and constraints. Column names are matched against common patterns (`email`, `first_name`, `city`, `phone`, `company`, ...) so a column called `email` gets real-looking emails instead of generic text.
+3. **Scaffold dbt Project**: Creates a dbt project with seeds (CSV files), staging models, profiles, and tests, ready to run with DuckDB or Postgres.
 
 ---
 
@@ -40,7 +40,7 @@ We provide an example Hacker News dataset in `examples/hackernews.dbml`.
 Generate a project with synthetic data:
 
 ```bash
-model2data generate --file examples/hackernews.dbml --rows 200 --seed 42
+model2data --file examples/hackernews.dbml --rows 200 --seed 42
 ```
 
 This creates a `dbt_hackernews/` folder with your data and dbt setup.
@@ -55,6 +55,17 @@ dbt run
 ```
 
 Your analytics-ready dataset is now in DuckDB!
+
+To target Postgres instead, install the extra and pass `--adapter postgres`:
+
+```bash
+pip install "model2data[postgres]"
+model2data --file examples/hackernews.dbml --rows 200 --seed 42 --adapter postgres
+```
+
+Connection details are read from environment variables (`MODEL2DATA_PG_HOST`, `MODEL2DATA_PG_PORT`, `MODEL2DATA_PG_USER`, `MODEL2DATA_PG_PASSWORD`, `MODEL2DATA_PG_DATABASE`), defaulting to `localhost:5432` with a `postgres`/`postgres` user for local development.
+
+After generation, the CLI prints a short summary — tables and rows generated, relationships found in the DBML, and any columns that fell back to generic placeholder text because neither their type nor name could be matched.
 
 ---
 
@@ -78,20 +89,20 @@ dbt_{project_name}/
 ├── macros/
 │   └── generate_schema_name.sql
 ├── dbt_project.yml
-├── profiles.yml  # DuckDB config
-└── {project_name}.duckdb
+├── profiles.yml  # DuckDB or Postgres config, depending on --adapter
+└── {project_name}.duckdb  # DuckDB adapter only
 ```
 
 - **Seeds**: CSV files with generated synthetic data.
 - **Staging Models**: Basic dbt models that load from seeds.
 - **Sources & Tests**: YAML configs defining sources and basic tests (not_null, unique).
-- **Profiles**: Pre-configured for DuckDB with schema handling.
+- **Profiles**: Pre-configured for DuckDB (file-based) or Postgres (via env vars), with schema handling.
 
 ---
 
 ## Design decisions / non-goals
 
-- **DuckDB Default**: Chosen for its zero-config, file-based nature, making it easy to get started without database setup. Other adapters can be configured manually.
+- **DuckDB Default**: Chosen for its zero-config, file-based nature, making it easy to get started without database setup. Postgres is supported via `--adapter postgres`; other adapters can be configured manually.
 - **dbt Integration**: Leverages dbt's transformation capabilities for a familiar workflow in analytics engineering.
 - **Synthetic Data**: Uses deterministic generation for reproducibility; not intended for production use or as a replacement for real data.
 - **Non-goals**: This is not a data migration tool, ETL pipeline, or real-time data generator. It focuses on static, synthetic datasets for testing and prototyping.
@@ -102,17 +113,20 @@ dbt_{project_name}/
 
 - Supports basic DBML features; complex constraints or advanced SQL types may not be fully handled.
 - Synthetic data generation is heuristic-based and may not perfectly mimic real-world distributions or edge cases.
-- Currently optimized for DuckDB; other databases require manual profile adjustments.
+- DuckDB and Postgres are supported today; other databases require manual profile adjustments.
 - No support for incremental models or advanced dbt features in generated projects.
 
 ---
 
 ## Roadmap
 
-- Support for additional database adapters (e.g., Snowflake, BigQuery).
-- Enhanced data type handling and custom generators.
-- Integration with more dbt features like incremental models.
-- Web-based DBML editor and data preview.
+- [x] Postgres adapter support (`--adapter postgres`)
+- [x] Name-aware synthetic data (email, name, address, phone, etc. instead of generic text)
+- [x] Post-run generation summary (tables, rows, relationships, unmapped columns)
+- [ ] Additional database adapters (e.g., Snowflake, BigQuery).
+- [ ] Enhanced data type handling and custom generators.
+- [ ] Integration with more dbt features like incremental models.
+- [ ] Web-based DBML editor and data preview.
 
 ---
 
