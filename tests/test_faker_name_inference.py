@@ -3,6 +3,7 @@
 import re
 
 from model2data.generate.faker import (
+    _deduplicate,
     generate_column_values,
     get_unmapped_columns,
     reset_stats,
@@ -65,3 +66,14 @@ class TestNameInference:
         col = ColumnDef(name="email", data_type="varchar", settings={"not null", "pk"})
         values = generate_column_values(col, row_count=50, ensure_unique=True)
         assert len(values) == len(set(values)) == 50
+
+    def test_deduplicate_retries_on_collision(self):
+        # Value space of 2 with 3 requested values forces at least one retry.
+        pool = iter(["a", "a", "b", "c", "a"])
+        result = _deduplicate(["a", "a", "b"], generator=lambda: next(pool))
+        assert len(result) == len(set(result)) == 3
+
+    def test_deduplicate_gives_up_after_max_attempts_on_tiny_value_space(self):
+        # Only one possible value: dedup can't succeed, but must terminate.
+        result = _deduplicate(["x", "x", "x"], generator=lambda: "x", max_attempts=3)
+        assert result == ["x", "x", "x"]
