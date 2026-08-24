@@ -137,7 +137,36 @@ The GitHub Actions workflow runs three jobs:
    - Collects coverage reports
    - Uploads to Codecov
 
-**Pull requests must pass both jobs before merging.**
+3. **Postgres Integration Job**
+   - Generates a project with `--adapter postgres` against a live `postgres:16` service
+     container, then runs `dbt seed && dbt run` against it — a real end-to-end check of the
+     Postgres adapter, not just unit tests of the template.
+
+**Pull requests must pass all three jobs before merging** (branch protection on `main` enforces this).
+
+---
+
+## Releasing
+
+Releases are published to PyPI automatically when a GitHub Release is published — see
+`.github/workflows/release.yml`.
+
+1. Bump the version in `pyproject.toml` and add an entry to [CHANGELOG.md](CHANGELOG.md)
+   describing what changed.
+2. Merge that to `main` (via a normal PR).
+3. Tag and publish a GitHub Release from `main`:
+   ```bash
+   gh release create vX.Y.Z --target main --title "vX.Y.Z" --notes "..."
+   ```
+   Publishing the release triggers the `Release` workflow, which builds the package with
+   `uv build` and publishes it to PyPI with `pypa/gh-action-pypi-publish`.
+4. Confirm the new version is live: `pip index versions model2data`, or check
+   `https://pypi.org/project/model2data/<version>/` (the PyPI JSON API can lag the actual
+   upload by a minute or two — the version page itself is the more immediate check).
+
+This project follows [Semantic Versioning](https://semver.org/): bump the minor version for new
+features (new adapters, new generation capabilities), the patch version for bug fixes, and the
+major version only for breaking changes to the CLI or generated project structure.
 
 ---
 
