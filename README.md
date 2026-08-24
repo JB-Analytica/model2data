@@ -5,23 +5,89 @@
 [![codecov](https://codecov.io/gh/JB-Analytica/model2data/branch/main/graph/badge.svg)](https://codecov.io/gh/JB-Analytica/model2data)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-`model2data` turns **data models into analytics-ready datasets** in seconds.
+**Turn a data model into a running analytics stack in one command.**
 
-Given a **DBML file**, it generates synthetic but realistic data, a complete dbt project scaffold, and everything you need to start analyzing or testing data pipelines.
+Give `model2data` a [DBML](https://dbml.dbdiagram.io/docs/) schema — hand-written or exported
+from an existing database — and it generates realistic, relationship-preserving synthetic data
+*and* a complete, runnable dbt project around it: seeds, staging models, sources, tests, and a
+DuckDB or Postgres profile. No sample data to hunt down, no dbt boilerplate to hand-write, no
+production data to risk exposing.
+
+```bash
+pip install model2data
+model2data --file examples/hackernews.dbml --rows 200 --seed 42
+cd dbt_hackernews && dbt seed && dbt run
+```
+
+That's a working analytics stack — real (synthetic) data, tested dbt models, queryable in
+DuckDB — from a schema file, in seconds:
+
+![model2data generating a project and running it with dbt](assets/demo.gif)
 
 ---
 
-## What problem does it solve?
+## Why this exists
 
-Building analytics or testing dbt pipelines often requires realistic data, but using real data raises privacy concerns, and creating mock data manually is time-consuming. `model2data` automates this by generating synthetic datasets from your data model definitions, ensuring privacy-safe, deterministic, and relationship-preserving data for development and testing.
+Analytics engineers hit the same wall constantly: you need realistic data to build or test a
+pipeline, but production data is off-limits (privacy, access, scale), and hand-rolling mock CSVs
+is tedious and doesn't scale past two tables. `model2data` closes that gap — from a schema
+definition to a seeded, tested dbt project you can actually run, with no database or production
+access required.
 
----
+- **Privacy-safe.** Nothing but a schema definition goes in; nothing but synthetic data comes out.
+- **Realistic, not random.** Column names are matched against ~35 common patterns — `email`,
+  `first_name`, `city`, `phone`, `company`, ... — so a column called `email` gets real-looking
+  emails, not `Lorem ipsum` text.
+- **Relationship-preserving.** Foreign keys resolve to real parent rows; tables are generated in
+  dependency order.
+- **Deterministic.** Pass `--seed` and the same schema always produces the same data — safe to
+  commit fixtures, safe to diff across CI runs.
+- **A real dbt project, not just CSVs.** Seeds, staging models, sources, schema tests, and a
+  ready-to-use profile — the thing you'd otherwise spend an afternoon scaffolding by hand.
 
-## How it works (high level)
+## How it works
 
-1. **Parse DBML**: Reads your database schema from a DBML file, extracting tables, columns, types, and relationships.
-2. **Generate Data**: Uses Faker and custom logic to create realistic synthetic data, respecting foreign keys and constraints. Column names are matched against common patterns (`email`, `first_name`, `city`, `phone`, `company`, ...) so a column called `email` gets real-looking emails instead of generic text.
-3. **Scaffold dbt Project**: Creates a dbt project with seeds (CSV files), staging models, profiles, and tests, ready to run with DuckDB or Postgres.
+```mermaid
+flowchart LR
+    subgraph input [" "]
+        A["📄 DBML schema"]
+    end
+
+    subgraph m2d ["model2data"]
+        direction LR
+        B["Parse\ntables, columns,\nrelationships"] --> C["Generate\nFaker + name-aware\ninference, FK-aware"]
+        C --> D["Scaffold\nseeds · staging models\ntests · profile"]
+    end
+
+    subgraph output ["Generated dbt project"]
+        direction TB
+        E["seeds/*.csv"]
+        F["models/staging/*.sql + *.yml"]
+        G["profiles.yml\n(DuckDB or Postgres)"]
+    end
+
+    A --> B
+    D --> E
+    D --> F
+    D --> G
+    E & F & G --> H["dbt seed && dbt run"]
+    H --> I[("Analytics-ready\ndataset")]
+
+    classDef m2dStyle fill:#0A3866,stroke:#2196F0,color:#F6F8FB
+    classDef outStyle fill:#182333,stroke:#A8C9EE,color:#F6F8FB
+    classDef endStyle fill:#FA9306,stroke:#FA9306,color:#182333
+    class B,C,D m2dStyle
+    class E,F,G outStyle
+    class H,I endStyle
+```
+
+1. **Parse.** Reads tables, columns, types, and `Ref` relationships from a DBML file.
+2. **Generate.** Produces synthetic values per column — typed generation for known SQL types
+   (int, date, timestamp, ...), name-aware inference for everything else (`email`, `phone`,
+   `city`, ...), foreign keys resolved against already-generated parent rows.
+3. **Scaffold.** Writes a complete dbt project around that data: CSV seeds, staging models with
+   `source`/`not_null`/`unique`/`relationships` tests, and a profile for DuckDB (zero-config,
+   file-based) or Postgres.
 
 ---
 
@@ -137,7 +203,7 @@ We welcome contributions!
 - Submit PRs to add new DBML examples, custom data generators, or improvements.
 - Ensure all new features include tests if possible.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines, and [DEVELOPMENT.md](DEVELOPMENT.md) for the local dev setup and release process.
 
 ## Code of Conduct
 
@@ -148,3 +214,14 @@ Please read our [Code of Conduct](CODE_OF_CONDUCT.md) to understand our communit
 ## License
 
 MIT License. See LICENSE for details.
+
+---
+
+<p align="center">
+  <a href="https://www.jbanalytica.com">
+    <img src="assets/jba-icon-dark-bg.svg" alt="JB Analytica" height="40">
+  </a>
+  <br>
+  Built and maintained by <a href="https://www.jbanalytica.com"><strong>JB Analytica</strong></a> —
+  data platform consulting: Snowflake, dbt, and the modern data stack.
+</p>

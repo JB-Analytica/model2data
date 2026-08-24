@@ -1,0 +1,62 @@
+<svg viewBox="0 0 800 800" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <radialGradient id="orangeGrad" cx="32%" cy="26%" r="80%">
+      <stop offset="0%" stop-color="#FFDCA3"/>
+      <stop offset="28%" stop-color="#FFAA33"/>
+      <stop offset="65%" stop-color="#F99000"/>
+      <stop offset="100%" stop-color="#C96E00"/>
+    </radialGradient>
+    <radialGradient id="blueGrad" cx="32%" cy="26%" r="80%">
+      <stop offset="0%" stop-color="#B9E1FF"/>
+      <stop offset="28%" stop-color="#4CA9EE"/>
+      <stop offset="65%" stop-color="#0B7FD1"/>
+      <stop offset="100%" stop-color="#054373"/>
+    </radialGradient>
+    <radialGradient id="navyGrad" cx="32%" cy="26%" r="80%">
+      <stop offset="0%" stop-color="#9AB6DC"/>
+      <stop offset="28%" stop-color="#4E77AC"/>
+      <stop offset="65%" stop-color="#1F4B7D"/>
+      <stop offset="100%" stop-color="#122F52"/>
+    </radialGradient>
+    <radialGradient id="lightGrad" cx="32%" cy="26%" r="80%">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="45%" stop-color="#F2F5F8"/>
+      <stop offset="75%" stop-color="#DCE3EB"/>
+      <stop offset="100%" stop-color="#B8C4D2"/>
+    </radialGradient>
+    <linearGradient id="swooshDark" x1="5%" y1="10%" x2="100%" y2="70%">
+      <stop offset="0%" stop-color="#2C5D93"/>
+      <stop offset="100%" stop-color="#10283F"/>
+    </linearGradient>
+    <linearGradient id="swooshLight" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#2196F0"/>
+      <stop offset="100%" stop-color="#3E6FA8"/>
+    </linearGradient>
+    <filter id="softShadow" x="-50%" y="-50%" width="200%" height="200%">
+      <feDropShadow dx="0" dy="4" stdDeviation="5" flood-color="#020810" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+
+  <!-- swoosh: thin light sliver underneath -->
+  <path d="M 218,548 C 340,612 470,610 575,552 C 648,510 715,455 762,404
+           C 706,452 630,486 552,470 C 440,500 320,494 222,470 Z"
+        fill="url(#swooshLight)" opacity="0.6"/>
+
+  <!-- swoosh: main ribbon, lightened + thin halo so it separates from a navy background -->
+  <path d="M 208,540 C 330,624 478,630 588,562 C 656,520 718,462 764,408
+           C 704,458 626,490 548,472 C 434,508 316,500 220,472 Z"
+        fill="url(#swooshDark)" stroke="#A8C9EE" stroke-width="1.5" stroke-opacity="0.35"/>
+
+  <!-- connecting lines (behind nodes), lightened for dark-bg contrast -->
+  <line x1="440" y1="178" x2="298" y2="330" stroke="#3E6FA8" stroke-width="15" stroke-linecap="round"/>
+  <line x1="440" y1="178" x2="602" y2="380" stroke="#4E77AC" stroke-width="17" stroke-linecap="round"/>
+  <line x1="298" y1="330" x2="602" y2="380" stroke="#2196F0" stroke-width="8" stroke-linecap="round"/>
+  <line x1="298" y1="330" x2="228" y2="500" stroke="#3E6FA8" stroke-width="15" stroke-linecap="round"/>
+  <line x1="228" y1="500" x2="602" y2="380" stroke="#4E77AC" stroke-width="19" stroke-linecap="round"/>
+
+  <!-- nodes -->
+  <circle cx="440" cy="178" r="72" fill="url(#orangeGrad)" filter="url(#softShadow)"/>
+  <circle cx="298" cy="330" r="66" fill="url(#lightGrad)" stroke="#AFBDCC" stroke-width="3.5" filter="url(#softShadow)"/>
+  <circle cx="602" cy="380" r="70" fill="url(#navyGrad)" stroke="#A8C9EE" stroke-width="2.5" stroke-opacity="0.5" filter="url(#softShadow)"/>
+  <circle cx="228" cy="500" r="80" fill="url(#blueGrad)" filter="url(#softShadow)"/>
+</svg>

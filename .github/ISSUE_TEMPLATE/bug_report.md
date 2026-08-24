@@ -2,7 +2,7 @@
 name: Bug report
 about: Create a report to help us improve
 title: ''
-labels: ''
+labels: bug
 assignees: ''
 
 ---
@@ -10,29 +10,24 @@ assignees: ''
 **Describe the bug**
 A clear and concise description of what the bug is.
 
-**To Reproduce**
-Steps to reproduce the behavior:
-1. Go to '...'
-2. Click on '....'
-3. Scroll down to '....'
-4. See error
+**To reproduce**
+Steps to reproduce the behavior, ideally including the DBML schema (or a minimal snippet) and
+the exact command you ran, e.g.:
+```bash
+model2data --file schema.dbml --rows 100 --seed 42
+```
 
 **Expected behavior**
 A clear and concise description of what you expected to happen.
 
-**Screenshots**
-If applicable, add screenshots to help explain your problem.
+**Actual behavior**
+What actually happened — the error message or incorrect output, if any.
 
-**Desktop (please complete the following information):**
- - OS: [e.g. iOS]
- - Browser [e.g. chrome, safari]
- - Version [e.g. 22]
-
-**Smartphone (please complete the following information):**
- - Device: [e.g. iPhone6]
- - OS: [e.g. iOS8.1]
- - Browser [e.g. stock browser, safari]
- - Version [e.g. 22]
+**Environment**
+ - model2data version: [e.g. 0.3.0, from `pip show model2data`]
+ - Python version: [e.g. 3.12]
+ - OS: [e.g. macOS 15, Ubuntu 22.04]
+ - Adapter: [DuckDB / Postgres]
 
 **Additional context**
 Add any other context about the problem here.
