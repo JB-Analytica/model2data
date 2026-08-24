@@ -24,7 +24,7 @@ def create_project_scaffold(dest: Path, project_name: str, profile_name: str) ->
     )
 
     # Copy over any macros from templates
-    template_macros_dir = Path("model2data/dbt/templates/macros")
+    template_macros_dir = TEMPLATES_DIR / "macros"
     if template_macros_dir.exists():
         for macro_file in template_macros_dir.glob("*.sql"):
             target_file = dest / "macros" / macro_file.name
@@ -53,7 +53,7 @@ from {{{{ source('raw', '{table_name}') }}}}
             model_file.write_text(sql_content)
 
 
-def create_profiles_yml(dest: Path, profile_name: str) -> None:
+def create_profiles_yml(dest: Path, profile_name: str, adapter: str = "duckdb") -> None:
     profiles_file = dest / "profiles.yml"
     if profiles_file.exists():
         content = profiles_file.read_text()
@@ -62,7 +62,7 @@ def create_profiles_yml(dest: Path, profile_name: str) -> None:
     _render_template(
         template_name="profiles.yml.jinja",
         output_path=profiles_file,
-        context={"profile_name": profile_name},
+        context={"profile_name": profile_name, "adapter": adapter},
     )
 
 

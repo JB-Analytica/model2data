@@ -33,6 +33,7 @@ def test_dbt_tests_generation(tmp_path, monkeypatch):
         seed=42,
         name="test_project",
         force=True,
+        adapter="duckdb",
     )
 
     project_dir = tmp_path / "dbt_test_project"

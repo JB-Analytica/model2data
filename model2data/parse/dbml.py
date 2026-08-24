@@ -101,6 +101,7 @@ def parse_dbml(dbml_path: Path) -> tuple[dict[str, TableDef], list[dict]]:
 
     current_table: Optional[TableDef] = None
     in_indexes_block = False
+    in_note_block = False
     note_block_depth = 0
     in_ref_block = False
 
@@ -140,11 +141,19 @@ def parse_dbml(dbml_path: Path) -> tuple[dict[str, TableDef], list[dict]]:
                 if cleaned.endswith("}"):
                     in_indexes_block = False
                 continue
+            if in_note_block:
+                if cleaned.endswith("}"):
+                    in_note_block = False
+                continue
             if cleaned.startswith("}"):
                 tables[current_table.name] = current_table
                 current_table = None
                 continue
             if cleaned.startswith("Note:"):
+                continue
+            # Multi-line table note: `Note {` ... `}` (not a column definition)
+            if cleaned.startswith("Note") and cleaned.rstrip().endswith("{"):
+                in_note_block = True
                 continue
 
             col_match = re.match(

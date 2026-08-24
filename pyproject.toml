@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "model2data"
-version = "0.2.3"
+version = "0.3.0"
 description = "Generate analytics-ready datasets from DBML models"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -18,6 +18,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+postgres = [
+  "dbt-postgres>=1.5.0",
+]
 dev = [
   "pytest",
   "pytest-cov",

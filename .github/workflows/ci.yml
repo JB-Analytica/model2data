@@ -48,3 +48,59 @@ jobs:
       uses: codecov/codecov-action@v5
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
+
+  postgres-integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        enable-cache: true
+    - name: Set up Python
+      run: uv python install 3.12
+    - name: Install dependencies
+      run: uv sync --extra dev --extra postgres
+    - name: Generate a project targeting Postgres
+      run: >
+        uv run model2data --file examples/hackernews.dbml --rows 50 --seed 1
+        --adapter postgres --name pg_ci
+      env:
+        MODEL2DATA_PG_HOST: localhost
+        MODEL2DATA_PG_PORT: "5432"
+        MODEL2DATA_PG_USER: postgres
+        MODEL2DATA_PG_PASSWORD: postgres
+        MODEL2DATA_PG_DATABASE: postgres
+    - name: dbt seed
+      working-directory: dbt_pg_ci
+      run: uv run dbt seed --profiles-dir .
+      env:
+        MODEL2DATA_PG_HOST: localhost
+        MODEL2DATA_PG_PORT: "5432"
+        MODEL2DATA_PG_USER: postgres
+        MODEL2DATA_PG_PASSWORD: postgres
+        MODEL2DATA_PG_DATABASE: postgres
+    - name: dbt run
+      working-directory: dbt_pg_ci
+      run: uv run dbt run --profiles-dir .
+      env:
+        MODEL2DATA_PG_HOST: localhost
+        MODEL2DATA_PG_PORT: "5432"
+        MODEL2DATA_PG_USER: postgres
+        MODEL2DATA_PG_PASSWORD: postgres
+        MODEL2DATA_PG_DATABASE: postgres

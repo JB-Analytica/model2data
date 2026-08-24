@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import random
+import re
 import uuid
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Callable, Optional
 
 import pandas as pd
 from faker import Faker
@@ -11,6 +12,78 @@ from faker import Faker
 from model2data.parse.dbml import ColumnDef
 
 fake = Faker()
+
+
+# ---------------------------------------------------------
+# Column-name -> Faker provider inference
+# ---------------------------------------------------------
+# Ordered most-specific first: a column like "first_name" must match
+# "first_name" before any looser pattern gets a chance. There is
+# deliberately no generic "name" pattern, since "product_name" or
+# "company_name" would otherwise be filled with a person's name.
+_NAME_PATTERNS: list[tuple[str, Callable[[], object]]] = [
+    ("first_name", lambda: fake.first_name()),
+    ("last_name", lambda: fake.last_name()),
+    ("full_name", lambda: fake.name()),
+    ("user_name", lambda: fake.user_name()),
+    ("username", lambda: fake.user_name()),
+    ("password", lambda: fake.password()),
+    ("email", lambda: fake.email()),
+    ("phone", lambda: fake.phone_number()),
+    ("mobile", lambda: fake.phone_number()),
+    ("fax", lambda: fake.phone_number()),
+    ("street", lambda: fake.street_address()),
+    ("address", lambda: fake.address().replace("\n", ", ")),
+    ("city", lambda: fake.city()),
+    ("province", lambda: fake.state()),
+    ("state", lambda: fake.state()),
+    ("country", lambda: fake.country()),
+    ("zip", lambda: fake.postcode()),
+    ("postal", lambda: fake.postcode()),
+    ("homepage", lambda: fake.url()),
+    ("website", lambda: fake.url()),
+    ("url", lambda: fake.url()),
+    ("domain", lambda: fake.domain_name()),
+    ("employer", lambda: fake.company()),
+    ("company", lambda: fake.company()),
+    ("job_title", lambda: fake.job()),
+    ("ip_address", lambda: fake.ipv4()),
+    ("colour", lambda: fake.color_name()),
+    ("color", lambda: fake.color_name()),
+    ("currency", lambda: fake.currency_code()),
+    ("latitude", lambda: fake.latitude()),
+    ("longitude", lambda: fake.longitude()),
+    ("slug", lambda: fake.slug()),
+    ("avatar", lambda: fake.image_url()),
+    ("image", lambda: fake.image_url()),
+    ("bio", lambda: fake.text(max_nb_chars=160)),
+    ("description", lambda: fake.text(max_nb_chars=160)),
+    ("comment", lambda: fake.text(max_nb_chars=160)),
+    ("summary", lambda: fake.text(max_nb_chars=160)),
+]
+
+# Column/table introspection helpers used by both generation and the
+# CLI's post-run summary, so the two stay in sync.
+_stats_state: dict[str, list[tuple[str, str]]] = {"unmapped": []}
+
+
+def reset_stats() -> None:
+    """Clear the record of columns that fell back to generic text."""
+    _stats_state["unmapped"] = []
+
+
+def get_unmapped_columns() -> list[tuple[str, str]]:
+    """Return (column_name, data_type) pairs generated with a generic fallback."""
+    return list(_stats_state["unmapped"])
+
+
+def _infer_by_name(column_name: str) -> Optional[Callable[[], object]]:
+    normalized = re.sub(r"[^a-z0-9]+", "_", column_name.lower())
+    padded = f"_{normalized}_"
+    for pattern, generator in _NAME_PATTERNS:
+        if f"_{pattern}_" in padded:
+            return generator
+    return None
 
 
 # ---------------------------------------------------------
@@ -87,16 +160,24 @@ def generate_column_values(
         values = [_random_datetime().isoformat(sep=" ") for _ in range(row_count)]
 
     # -----------------------------------------------------
-    # Fallback to Faker providers
+    # Untyped / generic string columns: infer intent from the
+    # column name first (email, city, phone...), then fall back
+    # to a literal Faker provider name, then to a generic value.
     # -----------------------------------------------------
     else:
-        try:
-            values = [fake.format(base_type) for _ in range(row_count)]
-        except (AttributeError, TypeError):
-            if column.name.lower().endswith("_id") or ensure_unique:
-                values = [str(uuid.uuid4()) for _ in range(row_count)]
-            else:
-                values = [fake.sentence(nb_words=3) for _ in range(row_count)]
+        name_generator = _infer_by_name(column.name)
+        if name_generator is not None:
+            values = [name_generator() for _ in range(row_count)]
+            values = _deduplicate(values, name_generator) if ensure_unique else values
+        else:
+            try:
+                values = [fake.format(base_type) for _ in range(row_count)]
+            except (AttributeError, TypeError):
+                if column.name.lower().endswith("_id") or ensure_unique:
+                    values = [str(uuid.uuid4()) for _ in range(row_count)]
+                else:
+                    _stats_state["unmapped"].append((column.name, column.data_type))
+                    values = [fake.sentence(nb_words=3) for _ in range(row_count)]
 
     # -----------------------------------------------------
     # Nullability
@@ -114,6 +195,24 @@ def generate_column_values(
 # ---------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------
+def _deduplicate(values: list, generator: Callable[[], object], max_attempts: int = 20) -> list:
+    """
+    Best-effort de-duplication for name-inferred values (e.g. unique emails).
+    Retries collisions a bounded number of times, then accepts remaining
+    duplicates rather than looping forever on a small value space.
+    """
+    seen: set = set()
+    result = []
+    for value in values:
+        attempts = 0
+        while value in seen and attempts < max_attempts:
+            value = generator()
+            attempts += 1
+        seen.add(value)
+        result.append(value)
+    return result
+
+
 def _random_datetime(start_days: int = -365, end_days: int = 0) -> datetime:
     start = datetime.now() + timedelta(days=start_days)
     end = datetime.now() + timedelta(days=end_days)

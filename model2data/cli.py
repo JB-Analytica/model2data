@@ -13,8 +13,11 @@ from model2data.dbt.project import (
 )
 from model2data.dbt.tests import generate_dbt_yml
 from model2data.generate.core import generate_data_from_dbml
+from model2data.generate.faker import get_unmapped_columns, reset_stats
 from model2data.parse.dbml import parse_dbml
 from model2data.utils import normalize_identifier
+
+SUPPORTED_ADAPTERS = ("duckdb", "postgres")
 
 app = typer.Typer(
     help=(
@@ -67,10 +70,26 @@ def main(
         "--force",
         help="Overwrite the destination directory if it already exists.",
     ),
+    adapter: str = typer.Option(
+        "duckdb",
+        "--adapter",
+        "-a",
+        help=f"dbt warehouse adapter to target. One of: {', '.join(SUPPORTED_ADAPTERS)}.",
+    ),
 ):
     """
     Generate synthetic data and a dbt project from a DBML model.
     """
+
+    # -------------------------
+    # Validate adapter
+    # -------------------------
+    adapter = adapter.lower()
+    if adapter not in SUPPORTED_ADAPTERS:
+        typer.echo(
+            f"❌ Unsupported adapter '{adapter}'. Choose one of: {', '.join(SUPPORTED_ADAPTERS)}."
+        )
+        raise typer.Exit(1)
 
     # -------------------------
     # Deterministic seed
@@ -108,6 +127,7 @@ def main(
     # Generate synthetic data
     # -------------------------
     typer.echo("🧮 Generating synthetic datasets from DBML definitions...")
+    reset_stats()
     generated_tables = generate_data_from_dbml(
         tables=tables,
         refs=refs,
@@ -132,11 +152,28 @@ def main(
     typer.echo("🧪 Generating dbt yml with tests...")
     generate_dbt_yml(dest, tables, refs, project_name)
 
-    typer.echo("🪪 Ensuring dbt profile exists...")
-    create_profiles_yml(dest, profile_name)
+    typer.echo(f"🪪 Ensuring dbt profile exists ({adapter})...")
+    create_profiles_yml(dest, profile_name, adapter=adapter)
 
     # Keep original DBML for reference
     shutil.copy(file, dest / file.name)
+
+    # -------------------------
+    # Summary
+    # -------------------------
+    total_rows = sum(len(df) for df in generated_tables.values())
+    unmapped = get_unmapped_columns()
+
+    typer.echo("\n📊 Summary")
+    typer.echo(f"  Tables generated:        {len(generated_tables)}")
+    typer.echo(f"  Rows generated:          {total_rows}")
+    typer.echo(f"  Relationships in DBML:   {len(refs)}")
+    if unmapped:
+        typer.echo(f"  Columns using generic fallback text: {len(unmapped)}")
+        for col_name, data_type in unmapped:
+            typer.echo(f"    - {col_name} ({data_type})")
+    else:
+        typer.echo("  Columns using generic fallback text: 0")
 
     # -------------------------
     # Done

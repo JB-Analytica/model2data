@@ -628,6 +628,30 @@ name varchar
     assert len(tables["t"].columns) == 2
 
 
+def test_note_curly_brace_block_inside_table(tmp_path):
+    """Test the `Note { ... }` block form (distinct from `Note: '...'`).
+
+    Regression test: this form used to fall through to column parsing and
+    produce a spurious column named "Note" with data_type "{".
+    """
+    dbml_file = tmp_path / "note_curly.dbml"
+    dbml_file.write_text(
+        """Table t {
+id int
+name varchar
+Note {
+    'Describes this table across multiple lines'
+}
+email varchar
+}
+"""
+    )
+    tables, refs = parse_dbml(dbml_file)
+    columns = tables["t"].columns
+    assert len(columns) == 3
+    assert all(col.name != "Note" for col in columns)
+
+
 def test_indexes_block(tmp_path):
     """Test indexes block is properly ignored."""
     dbml_file = tmp_path / "with_indexes.dbml"

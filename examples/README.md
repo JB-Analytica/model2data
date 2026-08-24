@@ -10,7 +10,7 @@ Each example demonstrates best practices and different aspects of data modeling 
 
 ```bash
 # Generate data from an example
-model2data generate --file examples/{filename}.dbml --rows 100 --seed 42
+model2data --file examples/{filename}.dbml --rows 100 --seed 42
 
 # This creates a `dbt_{project_name}/` directory with:
 # - Synthetic data (seeds/ folder with CSV files)
@@ -40,7 +40,7 @@ dbt run
 
 **Try it**:
 ```bash
-model2data generate --file examples/hackernews.dbml --rows 200 --seed 42
+model2data --file examples/hackernews.dbml --rows 200 --seed 42
 cd dbt_hackernews
 dbt seed && dbt run
 ```
@@ -77,7 +77,7 @@ dbt seed && dbt run
 
 **Try it**:
 ```bash
-model2data generate --file examples/ecommerce.dbml --rows 500 --seed 42
+model2data --file examples/ecommerce.dbml --rows 500 --seed 42
 cd dbt_ecommerce
 
 # Explore the generated data
@@ -127,7 +127,7 @@ dbt run-operation select_from_seed --args '{"table": "customers"}'
 
 **Try it**:
 ```bash
-model2data generate --file examples/saas_platform.dbml --rows 100 --seed 42
+model2data --file examples/saas_platform.dbml --rows 100 --seed 42
 cd dbt_saas_platform
 
 # Explore multi-tenant structure
@@ -186,7 +186,7 @@ dbt run
 
 **Try it**:
 ```bash
-model2data generate --file examples/advanced_features.dbml --rows 50 --seed 123
+model2data --file examples/advanced_features.dbml --rows 50 --seed 123
 cd dbt_advanced_features
 
 # Explore hierarchical data
@@ -343,7 +343,7 @@ Table organizations {
 }
 ```
 
-When you run `model2data generate --file your_schema.dbml --rows 100`, it will:
+When you run `model2data --file your_schema.dbml --rows 100`, it will:
 1. Use Faker to generate realistic values for each column type
 2. Respect min/max constraints from inline notes
 3. Preserve all foreign key relationships (parent IDs before child IDs)
@@ -365,18 +365,18 @@ Start with `ecommerce.dbml` — it's the most straightforward and covers common 
 ### 2. **Run with Different Seed Values**
 ```bash
 # Generate different data distributions
-model2data generate --file examples/ecommerce.dbml --rows 100 --seed 1
-model2data generate --file examples/ecommerce.dbml --rows 100 --seed 2
-model2data generate --file examples/ecommerce.dbml --rows 100 --seed 3
+model2data --file examples/ecommerce.dbml --rows 100 --seed 1
+model2data --file examples/ecommerce.dbml --rows 100 --seed 2
+model2data --file examples/ecommerce.dbml --rows 100 --seed 3
 ```
 
 ### 3. **Vary Row Counts**
 ```bash
 # Small dataset for quick testing
-model2data generate --file examples/saas_platform.dbml --rows 10 --seed 42
+model2data --file examples/saas_platform.dbml --rows 10 --seed 42
 
 # Large dataset for performance testing
-model2data generate --file examples/saas_platform.dbml --rows 10000 --seed 42
+model2data --file examples/saas_platform.dbml --rows 10000 --seed 42
 ```
 
 ### 4. **Inspect Generated Files**
@@ -396,14 +396,14 @@ Copy an example and customize it for your own use case:
 ```bash
 cp examples/ecommerce.dbml examples/my_store.dbml
 # Edit my_store.dbml with your custom tables and constraints...
-model2data generate --file examples/my_store.dbml --rows 100 --seed 42
+model2data --file examples/my_store.dbml --rows 100 --seed 42
 ```
 
 ### 6. **Experiment with Constraints**
 ```bash
 # Try different constraint ranges to see their effect
 # Edit the note constraints in the DBML file, then regenerate
-model2data generate --file examples/ecommerce.dbml --rows 100 --seed 42
+model2data --file examples/ecommerce.dbml --rows 100 --seed 42
 ```
 
 ---
