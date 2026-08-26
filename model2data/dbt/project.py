@@ -45,10 +45,14 @@ def create_staging_models(dest: Path, project_name: str) -> None:
         model_file = models_path / f"stg_{table_name}.sql"
 
         if not model_file.exists():
+            # table_name is spliced into a single-quoted Jinja string literal;
+            # escape any embedded single quote so a DBML identifier containing
+            # one can't break the source() call.
+            escaped_name = table_name.replace("'", "\\'")
             sql_content = f"""\
 -- Auto-generated staging model for {table_name}
 select *
-from {{{{ source('raw', '{table_name}') }}}}
+from {{{{ source('raw', '{escaped_name}') }}}}
                 """
             model_file.write_text(sql_content)
 

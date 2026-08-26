@@ -772,7 +772,7 @@ wheels = [
 
 [[package]]
 name = "model2data"
-version = "0.4.3"
+version = "0.5.0"
 source = { editable = "." }
 dependencies = [
     { name = "dbt-core" },
@@ -799,9 +799,9 @@ postgres = [
 
 [package.metadata]
 requires-dist = [
-    { name = "dbt-core", specifier = ">=1.5.0" },
-    { name = "dbt-duckdb", specifier = ">=1.5.0" },
-    { name = "dbt-postgres", marker = "extra == 'postgres'", specifier = ">=1.5.0" },
+    { name = "dbt-core", specifier = ">=1.8.5" },
+    { name = "dbt-duckdb", specifier = ">=1.8.4" },
+    { name = "dbt-postgres", marker = "extra == 'postgres'", specifier = ">=1.8.0" },
     { name = "faker", specifier = ">=37.12.0" },
     { name = "pandas", specifier = ">=2.3.3" },
     { name = "poethepoet", marker = "extra == 'dev'", specifier = ">=0.38.0" },

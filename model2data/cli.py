@@ -12,9 +12,9 @@ from model2data.dbt.project import (
     create_staging_models,
 )
 from model2data.dbt.tests import generate_dbt_yml, generate_unit_tests
-from model2data.generate.core import generate_data_from_dbml
+from model2data.generate.core import generate_data_from_dbml, get_cyclic_tables
 from model2data.generate.faker import get_unmapped_columns, reset_stats
-from model2data.parse.dbml import parse_dbml
+from model2data.parse.dbml import get_parse_warnings, parse_dbml
 from model2data.utils import normalize_identifier
 
 SUPPORTED_ADAPTERS = ("duckdb", "postgres")
@@ -111,6 +111,7 @@ def main(
     # Parse DBML (names untouched)
     # -------------------------
     tables, refs = parse_dbml(file)
+    parse_warnings = get_parse_warnings()
     if not tables:
         typer.echo("❌ No tables found in the provided DBML file.")
         raise typer.Exit(1)
@@ -175,6 +176,7 @@ def main(
     # -------------------------
     total_rows = sum(len(df) for df in generated_tables.values())
     unmapped = get_unmapped_columns()
+    cyclic_tables = get_cyclic_tables()
 
     typer.echo("\n📊 Summary")
     typer.echo(f"  Tables generated:        {len(generated_tables)}")
@@ -186,6 +188,15 @@ def main(
             typer.echo(f"    - {col_name} ({data_type})")
     else:
         typer.echo("  Columns using generic fallback text: 0")
+    if cyclic_tables:
+        typer.echo(
+            "  ⚠️  Tables in an unresolved FK cycle (data may not respect "
+            f"all relationships): {', '.join(cyclic_tables)}"
+        )
+    if parse_warnings:
+        typer.echo(f"  ⚠️  DBML lines model2data could not fully parse: {len(parse_warnings)}")
+        for warning in parse_warnings:
+            typer.echo(f"    - {warning}")
 
     # -------------------------
     # Done

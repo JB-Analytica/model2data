@@ -54,9 +54,7 @@ Table "_dlt_pipeline_state" {
     "_dlt_id" uuid [pk, unique, not null]
 }
 
-Ref {
-    "stories"."_dlt_load_id" > "_dlt_loads"."load_id"
-}
+Ref: "stories"."_dlt_load_id" > "_dlt_loads"."load_id"
 
 Ref {
     "_dlt_pipeline_state"."_dlt_load_id" > "_dlt_loads"."load_id"

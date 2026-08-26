@@ -152,7 +152,13 @@ Pass `--unit-tests` to also generate deterministic dbt unit test fixtures (`mode
 model2data --file examples/hackernews.dbml --rows 200 --seed 42 --unit-tests
 ```
 
-This targets dbt-core's native unit testing feature, which requires **dbt-core >= 1.8**. Since this project only requires `dbt-core>=1.5.0` by default, unit test generation is opt-in — leave the flag off if your dbt-core version is older.
+This targets dbt-core's native unit testing feature, which requires dbt-core >= 1.8 — already
+covered by this project's `dbt-core>=1.8.5` floor, so `--unit-tests` works with the base install.
+Note: on dbt-core versions in the 1.8.x line specifically, a DBML column named after a SQL
+reserved word (e.g. `by`, as in `examples/hackernews.dbml`) can fail unit test execution with a
+`syntax error` — a dbt-core-internal identifier-quoting limitation in its unit test fixture
+rendering for that release line, not something under model2data's control. It's fixed in later
+dbt-core versions; every other `--unit-tests` path works fine on 1.8.x.
 
 ---
 

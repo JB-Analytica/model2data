@@ -191,6 +191,74 @@ def test_cli_prints_generation_summary(tmp_path):
     assert "weird_field" in result.stdout
 
 
+def test_cli_summary_warns_about_fk_cycle(tmp_path):
+    """A genuine A<->B FK cycle should surface a clear warning in the summary,
+    not just silently generate tables in arbitrary order (see core.py's
+    _topological_table_order safety net)."""
+    dbml_file = tmp_path / "cycle.dbml"
+    dbml_file.write_text(
+        """
+    Table a {
+        id int [pk]
+        b_id int
+    }
+
+    Table b {
+        id int [pk]
+        a_id int
+    }
+
+    Ref {
+        a.b_id > b.id
+    }
+
+    Ref {
+        b.a_id > a.id
+    }
+    """
+    )
+
+    original_cwd = os.getcwd()
+    try:
+        os.chdir(tmp_path)
+        result = runner.invoke(app, ["--file", str(dbml_file), "--rows", "10"])
+    finally:
+        os.chdir(original_cwd)
+
+    assert result.exit_code == 0
+    assert "unresolved FK cycle" in result.stdout
+    assert "a" in result.stdout and "b" in result.stdout
+
+
+def test_cli_summary_warns_about_unparsed_dbml_lines(tmp_path):
+    """A Ref pointing at a table that doesn't exist should be surfaced in the
+    post-run summary, not silently dropped."""
+    dbml_file = tmp_path / "dangling.dbml"
+    dbml_file.write_text(
+        """
+    Table posts {
+        id int [pk]
+        user_id int
+    }
+
+    Ref {
+        posts.user_id > users.id
+    }
+    """
+    )
+
+    original_cwd = os.getcwd()
+    try:
+        os.chdir(tmp_path)
+        result = runner.invoke(app, ["--file", str(dbml_file), "--rows", "10"])
+    finally:
+        os.chdir(original_cwd)
+
+    assert result.exit_code == 0
+    assert "could not fully parse" in result.stdout
+    assert "users" in result.stdout
+
+
 def test_cli_with_custom_name(tmp_path):
     """Test CLI with custom project name."""
     dbml_file = tmp_path / "test.dbml"

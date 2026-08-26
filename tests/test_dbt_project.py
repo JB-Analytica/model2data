@@ -321,6 +321,23 @@ def test_staging_models_preserves_csv_name(temp_dir):
     assert csv_name in content
 
 
+def test_create_staging_models_escapes_single_quote_in_seed_name(temp_dir):
+    """A seed CSV name containing a single quote (from a quoted DBML
+    identifier like `it's a table`) must not break the Jinja source() call.
+    """
+    seeds_path = temp_dir / "seeds" / "raw"
+    seeds_path.mkdir(parents=True, exist_ok=True)
+
+    (seeds_path / "it's a table.csv").write_text("id\n1\n")
+
+    create_staging_models(temp_dir, "test_project")
+
+    model_file = temp_dir / "models" / "staging" / "stg_it's a table.sql"
+    assert model_file.exists()
+    content = model_file.read_text()
+    assert "source('raw', 'it\\'s a table')" in content
+
+
 def test_create_project_scaffold_handles_nested_path(temp_dir):
     """Test that scaffold works with nested destination path."""
     nested_path = temp_dir / "projects" / "analytics" / "dbt_project"
