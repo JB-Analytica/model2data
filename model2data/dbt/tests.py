@@ -10,10 +10,16 @@ from model2data.generate.faker import is_free_text_type
 from model2data.generate.relationships import classify_refs
 
 
-def _yaml_field_lines(key: str, value: str, indent: str) -> list[str]:
-    """Render `key: value` as safely-escaped YAML lines at the given indent."""
-    dumped = yaml.safe_dump({key: value}, default_flow_style=False, sort_keys=False)
-    return [f"{indent}{line}" for line in dumped.strip("\n").splitlines()]
+def _dump_yaml(data: dict) -> str:
+    """Dump a plain Python structure to YAML, safely escaping every value.
+
+    Every table/column/description string that ends up in generated YAML
+    goes through this single choke point instead of being hand-interpolated
+    into f-string lines, so an arbitrary (but valid) DBML identifier --
+    containing a space, colon, quote, etc. -- can never produce invalid or
+    silently-misparsed YAML.
+    """
+    return yaml.safe_dump(data, default_flow_style=False, sort_keys=False)
 
 
 def generate_dbt_yml(dest: Path, tables: dict, refs: list[dict], source_name: str = "hackernews"):
@@ -53,20 +59,25 @@ def generate_dbt_yml(dest: Path, tables: dict, refs: list[dict], source_name: st
     # -------------------------
     # Generate __sources.yml
     # -------------------------
-    sources_lines = ["version: 2", "", "sources:"]
-    sources_lines.append("  - name: raw")
-    sources_lines.append("    schema: raw")
-    sources_lines.append(f"    description: {source_name.capitalize()} raw seed data")
-    sources_lines.append("    tables:")
-
+    source_tables = []
     for table in tables.values():
         seed_name = table.name  # keep exact name
         table_desc = getattr(table, "description", None) or f"Table {seed_name}"
-        sources_lines.append(f"      - name: {seed_name}")
-        sources_lines.extend(_yaml_field_lines("description", table_desc, "        "))
+        source_tables.append({"name": seed_name, "description": table_desc})
 
+    sources_doc = {
+        "version": 2,
+        "sources": [
+            {
+                "name": "raw",
+                "schema": "raw",
+                "description": f"{source_name.capitalize()} raw seed data",
+                "tables": source_tables,
+            }
+        ],
+    }
     sources_file = staging_path / "__sources.yml"
-    sources_file.write_text("\n".join(sources_lines))
+    sources_file.write_text(_dump_yaml(sources_doc))
 
     # -------------------------
     # Generate individual staging model YAMLs
@@ -97,44 +108,22 @@ def generate_dbt_yml(dest: Path, tables: dict, refs: list[dict], source_name: st
                     }
                 )
 
-            model_columns.append(
-                {
-                    "name": col.name,
-                    "description": getattr(col, "description", None),
-                    "tests": tests if tests else None,
-                }
-            )
+            col_doc: dict[str, Any] = {"name": col.name}
+            description = getattr(col, "description", None)
+            if description:
+                col_doc["description"] = description
+            if tests:
+                col_doc["tests"] = tests
+            model_columns.append(col_doc)
 
-        # Render model YAML
-        lines = ["version: 2", "", "models:"]
-        lines.append(f"  - name: {stg_name}")
-        lines.append("    columns:")
-        for col in model_columns:
-            lines.append(f"      - name: {col['name']}")
-            if col["description"]:
-                lines.extend(_yaml_field_lines("description", col["description"], "        "))
-            if col["tests"]:
-                lines.append("        tests:")
-                for test in col["tests"]:
-                    if isinstance(test, str):
-                        lines.append(f"          - {test}")
-                    elif "accepted_values" in test:
-                        lines.append("          - accepted_values:")
-                        lines.append("              arguments:")
-                        lines.append("                values:")
-                        for value in test["accepted_values"]["values"]:
-                            lines.append(f"                  - {value!r}")
-                    else:
-                        # relationships test with arguments
-                        for k, v in test.items():
-                            lines.append(f"          - {k}:")
-                            lines.append("              arguments:")
-                            for fk_key, fk_val in v.items():
-                                lines.append(f"                {fk_key}: {fk_val}")
+        model_doc = {
+            "version": 2,
+            "models": [{"name": stg_name, "columns": model_columns}],
+        }
 
         # Write YAML to same folder as SQL model
         yml_file = staging_path / f"{stg_name}.yml"
-        yml_file.write_text("\n".join(lines))
+        yml_file.write_text(_dump_yaml(model_doc))
 
     # -------------------------
     # Composite key singular tests
@@ -155,8 +144,7 @@ def _generate_seed_config(dest: Path, tables: dict) -> None:
     zero-padded postcodes, ...) and would otherwise be silently loaded as
     an integer, overflowing or dropping leading zeros.
     """
-    lines = ["version: 2", "", "seeds:"]
-    any_column_types = False
+    seed_entries = []
 
     for table in tables.values():
         column_types = {
@@ -165,19 +153,28 @@ def _generate_seed_config(dest: Path, tables: dict) -> None:
         if not column_types:
             continue
 
-        any_column_types = True
-        lines.append(f"  - name: {table.name}")
-        lines.append("    config:")
-        lines.append("      column_types:")
-        for col_name, col_type in column_types.items():
-            lines.append(f"        {col_name}: {col_type}")
+        seed_entries.append({"name": table.name, "config": {"column_types": column_types}})
 
-    if not any_column_types:
+    if not seed_entries:
         return
+
+    seeds_doc = {"version": 2, "seeds": seed_entries}
 
     seed_raw_path = dest / "seeds" / "raw"
     seed_raw_path.mkdir(parents=True, exist_ok=True)
-    (seed_raw_path / "__seed_config.yml").write_text("\n".join(lines))
+    (seed_raw_path / "__seed_config.yml").write_text(_dump_yaml(seeds_doc))
+
+
+def _quote_sql_identifier(name: str) -> str:
+    """ANSI double-quote a raw column identifier for use in generated SQL.
+
+    Both supported adapters (DuckDB and Postgres) accept ANSI double-quoting,
+    which is required once a DBML identifier contains a space, colon, or
+    other character that would otherwise break an unquoted `select`/`group
+    by` clause. A literal `"` inside the identifier is escaped by doubling,
+    the standard ANSI SQL convention.
+    """
+    return '"' + name.replace('"', '""') + '"'
 
 
 def _generate_composite_key_tests(dest: Path, tables: dict) -> None:
@@ -193,7 +190,8 @@ def _generate_composite_key_tests(dest: Path, tables: dict) -> None:
             if len(columns) < 2:
                 continue
 
-            columns_csv = ", ".join(columns)
+            quoted_columns = [_quote_sql_identifier(c) for c in columns]
+            columns_csv = ", ".join(quoted_columns)
             test_name = "unique_combination_" + "_".join([stg_name, *columns])
             sql = (
                 f"select {columns_csv}, count(*) as n\n"
@@ -230,6 +228,11 @@ def generate_unit_tests(
 
         sample_rows = _rows_as_native_dicts(df.head(sample_size))
         stg_name = f"stg_{table.name}"
+        # table.name is spliced into a single-quoted Jinja string literal (the
+        # source() call is evaluated by dbt as an expression, not treated as
+        # a literal YAML string); escape any embedded single quote so an
+        # unusual DBML identifier can't break that call.
+        escaped_name = table.name.replace("'", "\\'")
 
         unit_test = {
             "unit_tests": [
@@ -238,7 +241,7 @@ def generate_unit_tests(
                     "model": stg_name,
                     "given": [
                         {
-                            "input": f"source('raw', '{table.name}')",
+                            "input": f"source('raw', '{escaped_name}')",
                             "rows": sample_rows,
                         }
                     ],

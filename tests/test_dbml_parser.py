@@ -6,6 +6,7 @@ from model2data.parse.dbml import (
     _parse_column_settings,
     _strip_quotes,
     get_many_to_many_refs,
+    get_parse_warnings,
     normalize_identifier,
     parse_dbml,
 )
@@ -1484,3 +1485,198 @@ def test_malformed_column_line_inside_table_is_skipped(tmp_path):
     tables, refs = parse_dbml(dbml_file)
     column_names = {c.name for c in tables["users"].columns}
     assert column_names == {"id", "name"}
+
+
+def test_malformed_column_line_is_reported_as_parse_warning(tmp_path):
+    dbml_file = tmp_path / "malformed.dbml"
+    dbml_file.write_text(
+        """
+    Table users {
+        id int [pk]
+        !!!
+        name varchar
+    }
+    """
+    )
+    tables, refs = parse_dbml(dbml_file)
+    warnings = get_parse_warnings()
+    assert any("users" in w and "!!!" in w for w in warnings)
+    # Rest of the table still parses fine (partial-failure tolerance).
+    assert {c.name for c in tables["users"].columns} == {"id", "name"}
+
+
+def test_sentence_like_column_definition_is_reported_as_parse_warning(tmp_path):
+    dbml_file = tmp_path / "sentence.dbml"
+    dbml_file.write_text(
+        """
+    Table users {
+        id int [pk]
+        this is not really a column definition at all
+        name varchar
+    }
+    """
+    )
+    tables, refs = parse_dbml(dbml_file)
+    warnings = get_parse_warnings()
+    assert any("Sentence-like" in w for w in warnings)
+    assert {c.name for c in tables["users"].columns} == {"id", "name"}
+
+
+def test_malformed_ref_line_is_reported_as_parse_warning(tmp_path):
+    dbml_file = tmp_path / "malformed_ref.dbml"
+    dbml_file.write_text(
+        """
+    Table users {
+        id int [pk]
+    }
+
+    Table posts {
+        id int [pk]
+        user_id int
+    }
+
+    Ref {
+        this is not a valid ref line
+        posts.user_id > users.id
+    }
+    """
+    )
+    tables, refs = parse_dbml(dbml_file)
+    warnings = get_parse_warnings()
+    assert any("Unrecognized line in Ref block" in w for w in warnings)
+    # The well-formed ref line right after it still parses.
+    assert any(r["source_table"] == "posts" and r["target_table"] == "users" for r in refs)
+
+
+def test_ref_pointing_at_nonexistent_table_is_reported_as_parse_warning(tmp_path):
+    dbml_file = tmp_path / "dangling_ref.dbml"
+    dbml_file.write_text(
+        """
+    Table posts {
+        id int [pk]
+        user_id int
+    }
+
+    Ref {
+        posts.user_id > users.id
+    }
+    """
+    )
+    tables, refs = parse_dbml(dbml_file)
+    warnings = get_parse_warnings()
+    assert any("users" in w and "not found among parsed tables" in w for w in warnings)
+    # The ref itself is still captured (visibility, not rejection).
+    assert refs == [
+        {
+            "source_table": "posts",
+            "source_column": "user_id",
+            "target_table": "users",
+            "target_column": "id",
+        }
+    ]
+
+
+def test_valid_dbml_produces_no_parse_warnings():
+    tables, refs = parse_dbml(Path("examples/hackernews.dbml"))
+    assert get_parse_warnings() == []
+
+
+def test_malformed_indexes_line_is_reported_as_parse_warning(tmp_path):
+    dbml_file = tmp_path / "bad_index.dbml"
+    dbml_file.write_text(
+        """
+    Table order_items {
+        order_id int
+        product_id int
+        indexes {
+            not a valid index line at all [pk]
+        }
+    }
+    """
+    )
+    tables, refs = parse_dbml(dbml_file)
+    warnings = get_parse_warnings()
+    assert any("Unrecognized indexes{} line" in w for w in warnings)
+    assert tables["order_items"].composite_keys == []
+
+
+def test_malformed_indexes_line_on_closing_brace_line_is_reported(tmp_path):
+    dbml_file = tmp_path / "bad_index_closing.dbml"
+    dbml_file.write_text(
+        """
+    Table order_items {
+        order_id int
+        indexes {
+            garbled nonsense here }
+    }
+    """
+    )
+    tables, refs = parse_dbml(dbml_file)
+    warnings = get_parse_warnings()
+    assert any("Unrecognized indexes{} line" in w for w in warnings)
+    assert tables["order_items"].composite_keys == []
+
+
+def test_composite_ref_with_mismatched_column_counts_is_reported(tmp_path):
+    dbml_file = tmp_path / "mismatched_composite_ref.dbml"
+    dbml_file.write_text(
+        """
+    Table order_items {
+        order_id int
+        variant_id int
+    }
+
+    Table order_variants {
+        order_id int
+        variant_id int
+        extra_id int
+    }
+
+    Ref {
+        order_items.(order_id, variant_id) > order_variants.(order_id, variant_id, extra_id)
+    }
+    """
+    )
+    tables, refs = parse_dbml(dbml_file)
+    warnings = get_parse_warnings()
+    assert any("Composite Ref column count mismatch" in w for w in warnings)
+    assert refs == []
+
+
+def test_composite_ref_block_expands_to_single_column_refs(tmp_path):
+    dbml_file = tmp_path / "composite_ref.dbml"
+    dbml_file.write_text(
+        """
+    Table order_variants {
+        order_id int
+        variant_id int
+        indexes {
+            (order_id, variant_id) [pk]
+        }
+    }
+
+    Table order_items {
+        order_id int
+        variant_id int
+    }
+
+    Ref {
+        order_items.(order_id, variant_id) > order_variants.(order_id, variant_id)
+    }
+    """
+    )
+    tables, refs = parse_dbml(dbml_file)
+    assert get_parse_warnings() == []
+    assert len(refs) == 2
+    assert {
+        "source_table": "order_items",
+        "source_column": "order_id",
+        "target_table": "order_variants",
+        "target_column": "order_id",
+    } in refs
+    assert {
+        "source_table": "order_items",
+        "source_column": "variant_id",
+        "target_table": "order_variants",
+        "target_column": "variant_id",
+    } in refs

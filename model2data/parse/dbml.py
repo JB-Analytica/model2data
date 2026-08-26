@@ -160,6 +160,31 @@ def get_many_to_many_refs() -> list[dict]:
     return list(_last_many_to_many_refs)
 
 
+# Lines model2data silently could not fully understand -- a malformed Ref, a
+# Ref pointing at a table that doesn't exist, a column definition it couldn't
+# parse, a garbled composite-key index line -- collected out-of-band the same
+# way, so an incomplete parse is *visible* (surfaced by the CLI) instead of
+# just quietly producing a smaller schema than the DBML file actually
+# describes. Not a hard error: DBML has features (Project blocks, TableGroup,
+# etc.) model2data intentionally doesn't need to understand, and those are
+# not warned about here.
+_parse_warnings: list[str] = []
+
+
+def reset_parse_warnings() -> None:
+    """Clear the record of lines the most recent parse could not understand."""
+    _parse_warnings.clear()
+
+
+def get_parse_warnings() -> list[str]:
+    """Return warnings about lines the most recent parse_dbml() call skipped."""
+    return list(_parse_warnings)
+
+
+def _warn(message: str) -> None:
+    _parse_warnings.append(message)
+
+
 def normalize_identifier(value: str) -> str:
     cleaned = re.sub(r"[^0-9A-Za-z]+", "_", value).strip("_").lower()
     if not cleaned:
@@ -169,9 +194,69 @@ def normalize_identifier(value: str) -> str:
     return cleaned
 
 
+# Matches the composite (multi-column) standalone Ref form:
+#   table.(col_a, col_b) > table.(col_c, col_d)
+# DBML's inline `[ref: ...]` column setting has no composite syntax (a
+# column setting only ever describes that one column), so composite refs
+# only ever appear in a standalone `Ref { ... }` block.
+_COMPOSITE_REF_RE = re.compile(
+    r'(".*?"|`.*?`|[\w]+)\.\(([^)]+)\)\s*(<>|[<>])\s*(".*?"|`.*?`|[\w]+)\.\(([^)]+)\)'
+)
+
+
+def _record_ref(
+    refs: list[dict],
+    many_to_many_refs: list[dict],
+    left_table: str,
+    left_column: str,
+    operator: str,
+    right_table: str,
+    right_column: str,
+) -> None:
+    """Append one resolved single-column ref (composite refs call this once
+    per zipped column pair -- see the module docstring note on _COMPOSITE_REF_RE
+    for why that's an acceptable simplification) to the appropriate list,
+    applying the same `<`/`<>` normalization as the original inline single-ref
+    logic.
+    """
+    if operator == "<>":
+        many_to_many_refs.append(
+            {
+                "source_table": left_table,
+                "source_column": left_column,
+                "target_table": right_table,
+                "target_column": right_column,
+            }
+        )
+        return
+
+    # The regex only ever captures "<>", "<", or ">"; "<>" is handled above,
+    # so any remaining operator here is "<" or ">".
+    if operator == "<":
+        left_table, right_table = right_table, left_table
+        left_column, right_column = right_column, left_column
+
+    refs.append(
+        {
+            "source_table": left_table,
+            "source_column": left_column,
+            "target_table": right_table,
+            "target_column": right_column,
+        }
+    )
+
+
+_COMPOSITE_KEY_RE = re.compile(r"^\(([^)]+)\)\s*(?:\[(.+)\])?$")
+
+
+def _index_line_has_recognized_form(cleaned: str) -> bool:
+    """Whether an `indexes {}` block line matches the `(cols) [settings]` shape at all."""
+    return bool(_COMPOSITE_KEY_RE.match(cleaned))
+
+
 def _parse_composite_key_line(cleaned: str) -> Optional[dict]:
     """Parse an `indexes {}` block line like `(a, b) [pk]` or `(a) [unique]`."""
-    match = re.match(r"^\(([^)]+)\)\s*(?:\[(.+)\])?$", cleaned)
+    match = _COMPOSITE_KEY_RE.match(cleaned)
     if not match:
         return None
 
@@ -196,6 +281,7 @@ def _parse_composite_key_line(cleaned: str) -> Optional[dict]:
 
 
 def parse_dbml(dbml_path: Path) -> tuple[dict[str, TableDef], list[dict]]:
+    reset_parse_warnings()
     text = dbml_path.read_text(encoding="utf-8")
     lines = text.splitlines()
     tables: dict[str, TableDef] = {}
@@ -288,10 +374,20 @@ def parse_dbml(dbml_path: Path) -> tuple[dict[str, TableDef], list[dict]]:
                         key = _parse_composite_key_line(inner)
                         if key:
                             current_table.composite_keys.append(key)
+                        elif not _index_line_has_recognized_form(inner):
+                            _warn(
+                                f"Unrecognized indexes{{}} line in table "
+                                f"'{current_table.name}': {inner!r}"
+                            )
                     continue
                 key = _parse_composite_key_line(cleaned)
                 if key:
                     current_table.composite_keys.append(key)
+                elif not _index_line_has_recognized_form(cleaned):
+                    _warn(
+                        f"Unrecognized indexes{{}} line in table "
+                        f"'{current_table.name}': {cleaned!r}"
+                    )
                 continue
             if cleaned.startswith("}"):
                 tables[current_table.name] = current_table
@@ -324,6 +420,9 @@ def parse_dbml(dbml_path: Path) -> tuple[dict[str, TableDef], list[dict]]:
                 cleaned,
             )
             if not col_match:
+                _warn(
+                    f"Unrecognized column definition in table '{current_table.name}': {cleaned!r}"
+                )
                 continue
 
             col_name = _strip_quotes(col_match.group(1))
@@ -331,6 +430,10 @@ def parse_dbml(dbml_path: Path) -> tuple[dict[str, TableDef], list[dict]]:
 
             # 🚨 Reject invalid / sentence-like column definitions
             if len(col_type.split()) > 3:
+                _warn(
+                    f"Sentence-like column definition rejected in table "
+                    f"'{current_table.name}': {cleaned!r}"
+                )
                 continue
 
             settings, note_dict, description, default_value, inline_ref = _parse_column_settings(
@@ -398,6 +501,50 @@ def parse_dbml(dbml_path: Path) -> tuple[dict[str, TableDef], list[dict]]:
                 in_ref_block = False
                 continue
 
+            # Composite (multi-column) form: table.(a, b) > table.(c, d).
+            # Tried first since its parenthesized column lists would not
+            # match the single-column pattern below.
+            composite_match = _COMPOSITE_REF_RE.match(cleaned)
+            if composite_match:
+                (
+                    left_table,
+                    left_cols_raw,
+                    operator,
+                    right_table,
+                    right_cols_raw,
+                ) = composite_match.groups()
+                left_columns = [_strip_quotes(c) for c in left_cols_raw.split(",")]
+                right_columns = [_strip_quotes(c) for c in right_cols_raw.split(",")]
+
+                if len(left_columns) != len(right_columns):
+                    _warn(f"Composite Ref column count mismatch in Ref block: {cleaned!r}")
+                    continue
+
+                # Expand into one single-column ref per zipped column pair.
+                # Every downstream consumer (classify_refs, build_fk_lookup,
+                # generate_dbt_yml's relationships tests, generation) already
+                # handles multiple single-column refs between the same two
+                # tables, so this needs no changes anywhere else. Known
+                # limitation: since each column is now generated
+                # independently, the *combination* of values in the child
+                # table's two FK columns won't necessarily match a real
+                # combination of the parent's composite key unless that
+                # composite key is itself enforced via an `indexes {}`
+                # pk/unique block on the parent. Solving joint-value
+                # consistency across independently-generated FK columns is
+                # out of scope here.
+                for left_column, right_column in zip(left_columns, right_columns):
+                    _record_ref(
+                        refs,
+                        many_to_many_refs,
+                        _strip_quotes(left_table),
+                        left_column,
+                        operator,
+                        _strip_quotes(right_table),
+                        right_column,
+                    )
+                continue
+
             # Match: "table"."column" > "table"."column"
             ref_match = re.match(
                 r'(".*?"|`.*?`|[\w]+)\.(".*?"|`.*?`|[\w]+)\s*(<>|[<>])\s*'
@@ -405,34 +552,18 @@ def parse_dbml(dbml_path: Path) -> tuple[dict[str, TableDef], list[dict]]:
                 cleaned,
             )
             if not ref_match:
+                _warn(f"Unrecognized line in Ref block: {cleaned!r}")
                 continue
 
             left_table, left_column, operator, right_table, right_column = ref_match.groups()
-
-            if operator == "<>":
-                many_to_many_refs.append(
-                    {
-                        "source_table": _strip_quotes(left_table),
-                        "source_column": _strip_quotes(left_column),
-                        "target_table": _strip_quotes(right_table),
-                        "target_column": _strip_quotes(right_column),
-                    }
-                )
-                continue
-
-            # The regex only ever captures "<>", "<", or ">"; "<>" is handled
-            # above, so any remaining operator here is "<" or ">".
-            if operator == "<":
-                left_table, right_table = right_table, left_table
-                left_column, right_column = right_column, left_column
-
-            refs.append(
-                {
-                    "source_table": _strip_quotes(left_table),
-                    "source_column": _strip_quotes(left_column),
-                    "target_table": _strip_quotes(right_table),
-                    "target_column": _strip_quotes(right_column),
-                }
+            _record_ref(
+                refs,
+                many_to_many_refs,
+                _strip_quotes(left_table),
+                _strip_quotes(left_column),
+                operator,
+                _strip_quotes(right_table),
+                _strip_quotes(right_column),
             )
             continue
 
@@ -445,6 +576,22 @@ def parse_dbml(dbml_path: Path) -> tuple[dict[str, TableDef], list[dict]]:
                 enum_values = enums.get(column.data_type.strip().lower())
                 if enum_values is not None:
                     column.enum_values = list(enum_values)
+
+    # ----------------------
+    # VALIDATE REF ENDPOINTS
+    # ----------------------
+    # Can only be done once every Table block has been parsed, since a Ref
+    # (standalone or inline) may point at a table defined later in the file.
+    for ref in [*refs, *many_to_many_refs]:
+        for side in ("source", "target"):
+            table_name = ref[f"{side}_table"]
+            if table_name not in tables:
+                _warn(
+                    f"Ref {side} table {table_name!r} not found among parsed "
+                    f"tables (referenced from {ref['source_table']}."
+                    f"{ref['source_column']} -> {ref['target_table']}."
+                    f"{ref['target_column']})"
+                )
 
     global _last_many_to_many_refs
     _last_many_to_many_refs = many_to_many_refs

@@ -1,6 +1,10 @@
 import pandas as pd
 
-from model2data.generate.core import _topological_table_order, generate_data_from_dbml
+from model2data.generate.core import (
+    _topological_table_order,
+    generate_data_from_dbml,
+    get_cyclic_tables,
+)
 from model2data.parse.dbml import ColumnDef, TableDef, parse_dbml
 
 
@@ -499,3 +503,101 @@ def test_no_composite_keys_leaves_generation_unaffected():
     }
     df = generate_data_from_dbml(tables, [], base_rows=10, seed=1)["users"]
     assert len(df) == 10
+
+
+def test_two_table_fk_cycle_completes_and_is_flagged():
+    """A → B and B → A is a genuine structural cycle: neither table's
+    indegree ever reaches 0, so the old 'safety net' catches both silently.
+    Generation must still complete (not crash/hang), and the new
+    get_cyclic_tables() helper must report both tables.
+    """
+    tables = {
+        "a": TableDef(
+            name="a",
+            columns=[ColumnDef("id", "int", {"pk"}), ColumnDef("b_id", "int")],
+        ),
+        "b": TableDef(
+            name="b",
+            columns=[ColumnDef("id", "int", {"pk"}), ColumnDef("a_id", "int")],
+        ),
+    }
+    refs = [
+        {"source_table": "a", "source_column": "b_id", "target_table": "b", "target_column": "id"},
+        {"source_table": "b", "source_column": "a_id", "target_table": "a", "target_column": "id"},
+    ]
+
+    data = generate_data_from_dbml(tables, refs, base_rows=5, seed=0)
+
+    assert set(data.keys()) == {"a", "b"}
+    assert len(data["a"]) == 5
+    assert len(data["b"]) == 5
+    assert set(get_cyclic_tables()) == {"a", "b"}
+
+
+def test_three_table_fk_cycle_is_flagged():
+    tables = {
+        "a": TableDef(name="a", columns=[ColumnDef("id", "int", {"pk"}), ColumnDef("c_id", "int")]),
+        "b": TableDef(name="b", columns=[ColumnDef("id", "int", {"pk"}), ColumnDef("a_id", "int")]),
+        "c": TableDef(name="c", columns=[ColumnDef("id", "int", {"pk"}), ColumnDef("b_id", "int")]),
+    }
+    refs = [
+        {"source_table": "a", "source_column": "c_id", "target_table": "c", "target_column": "id"},
+        {"source_table": "b", "source_column": "a_id", "target_table": "a", "target_column": "id"},
+        {"source_table": "c", "source_column": "b_id", "target_table": "b", "target_column": "id"},
+    ]
+
+    data = generate_data_from_dbml(tables, refs, base_rows=5, seed=0)
+
+    assert set(data.keys()) == {"a", "b", "c"}
+    assert set(get_cyclic_tables()) == {"a", "b", "c"}
+
+
+def test_composite_ref_produces_fk_aware_values_for_both_columns():
+    """A composite Ref expands into two independent single-column refs (see
+    parse.dbml's _COMPOSITE_REF_RE handling), so each child column should
+    independently reference real values in its own target column -- even
+    though the *combination* of the two child columns isn't guaranteed to
+    match a real combination in the parent (documented limitation).
+    """
+    tables = {
+        "order_variants": TableDef(
+            name="order_variants",
+            columns=[ColumnDef("order_id", "int", {"pk"}), ColumnDef("variant_id", "int", {"pk"})],
+        ),
+        "order_items": TableDef(
+            name="order_items",
+            columns=[ColumnDef("order_id", "int"), ColumnDef("variant_id", "int")],
+        ),
+    }
+    refs = [
+        {
+            "source_table": "order_items",
+            "source_column": "order_id",
+            "target_table": "order_variants",
+            "target_column": "order_id",
+        },
+        {
+            "source_table": "order_items",
+            "source_column": "variant_id",
+            "target_table": "order_variants",
+            "target_column": "variant_id",
+        },
+    ]
+
+    data = generate_data_from_dbml(tables, refs, base_rows=10, seed=1)
+
+    parent_order_ids = set(data["order_variants"]["order_id"])
+    parent_variant_ids = set(data["order_variants"]["variant_id"])
+    assert set(data["order_items"]["order_id"]).issubset(parent_order_ids)
+    assert set(data["order_items"]["variant_id"]).issubset(parent_variant_ids)
+
+
+def test_disconnected_table_does_not_trigger_cycle_warning():
+    tables = {
+        "a": TableDef("a", [ColumnDef("id", "int", {"pk"})]),
+        "b": TableDef("b", [ColumnDef("id", "int", {"pk"})]),
+    }
+
+    generate_data_from_dbml(tables, [], base_rows=5, seed=0)
+
+    assert get_cyclic_tables() == []

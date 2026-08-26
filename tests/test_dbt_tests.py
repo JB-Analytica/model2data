@@ -89,21 +89,23 @@ def test_accepted_values_test_generated_for_enum_column(tmp_path):
 
     content = (tmp_path / "models" / "staging" / "stg_orders.yml").read_text()
     assert "accepted_values" in content
-    assert "'active'" in content
-    assert "'inactive'" in content
-    assert "'pending'" in content
+    assert "active" in content
+    assert "inactive" in content
+    assert "pending" in content
 
-    # accepted_values' `values` list must be nested under `arguments:`, like
-    # the relationships test below it -- dbt-core >= 1.10 deprecates (and a
-    # future version will reject) a generic test config with properties
-    # given directly instead of under `arguments`.
+    # Flat (non-`arguments:`-nested) generic test config, matching the
+    # `relationships` test below it -- this project's dbt-core floor
+    # (>=1.8, see pyproject.toml) predates dbt-core's `arguments:` nesting
+    # support entirely (verified: it hard-errors below dbt-core 1.10.5), so
+    # generated tests intentionally use the older, universally-compatible
+    # flat config shape. Current dbt-core versions still accept it (with a
+    # soft deprecation warning, not a failure).
     parsed = yaml.safe_load(content)
     status_tests = next(c["tests"] for c in parsed["models"][0]["columns"] if c["name"] == "status")
     accepted_values_test = next(
         t["accepted_values"] for t in status_tests if "accepted_values" in t
     )
-    assert "arguments" in accepted_values_test
-    assert set(accepted_values_test["arguments"]["values"]) == {"active", "inactive", "pending"}
+    assert set(accepted_values_test["values"]) == {"active", "inactive", "pending"}
 
 
 def test_table_and_column_descriptions_round_trip_as_valid_yaml(tmp_path):
@@ -162,7 +164,7 @@ def test_composite_key_singular_test_sql_written(tmp_path):
     assert test_file.exists()
     content = test_file.read_text()
     assert "ref('stg_order_items')" in content
-    assert "order_id, product_id" in content
+    assert '"order_id", "product_id"' in content
     assert "having count(*) > 1" in content
 
 
@@ -331,6 +333,86 @@ def test_to_native_value_unwraps_raw_numpy_scalars():
 
     assert _to_native_value(np.int64(7)) == 7
     assert isinstance(_to_native_value(np.int64(7)), int)
+
+
+def test_generate_dbt_yml_handles_identifier_with_space(tmp_path):
+    tables = {
+        "my weird table": TableDef(
+            name="my weird table",
+            columns=[
+                ColumnDef("id", "int", {"pk"}),
+                ColumnDef("a column", "varchar", {"not null"}),
+            ],
+            composite_keys=[{"columns": ["id", "a column"], "type": "pk"}],
+        )
+    }
+    generate_dbt_yml(tmp_path, tables, [], source_name="shop")
+
+    sources_text = (tmp_path / "models" / "staging" / "__sources.yml").read_text()
+    sources_yaml = yaml.safe_load(sources_text)
+    assert sources_yaml["sources"][0]["tables"][0]["name"] == "my weird table"
+
+    stg_text = (tmp_path / "models" / "staging" / "stg_my weird table.yml").read_text()
+    stg_yaml = yaml.safe_load(stg_text)
+    col_names = {c["name"] for c in stg_yaml["models"][0]["columns"]}
+    assert "a column" in col_names
+
+    test_files = list((tmp_path / "data-tests").glob("*.sql"))
+    assert len(test_files) == 1
+    sql = test_files[0].read_text()
+    assert '"id", "a column"' in sql
+
+
+def test_generate_dbt_yml_handles_identifier_with_colon(tmp_path):
+    tables = {
+        "orders": TableDef(
+            name="orders",
+            columns=[
+                ColumnDef("id", "int", {"pk"}),
+                ColumnDef("status: code", "varchar", {"not null"}),
+            ],
+        )
+    }
+    generate_dbt_yml(tmp_path, tables, [], source_name="shop")
+
+    stg_text = (tmp_path / "models" / "staging" / "stg_orders.yml").read_text()
+    stg_yaml = yaml.safe_load(stg_text)  # raises if the colon broke YAML syntax
+    col_names = {c["name"] for c in stg_yaml["models"][0]["columns"]}
+    assert "status: code" in col_names
+
+
+def test_generate_dbt_yml_handles_identifier_with_single_quote(tmp_path):
+    tables = {
+        "users": TableDef(
+            name="users",
+            columns=[
+                ColumnDef("id", "int", {"pk"}),
+                ColumnDef("user's name", "varchar", {"not null"}),
+            ],
+        )
+    }
+    generate_dbt_yml(tmp_path, tables, [], source_name="shop")
+
+    stg_text = (tmp_path / "models" / "staging" / "stg_users.yml").read_text()
+    stg_yaml = yaml.safe_load(stg_text)
+    col_names = {c["name"] for c in stg_yaml["models"][0]["columns"]}
+    assert "user's name" in col_names
+
+
+def test_generate_unit_tests_handles_identifier_with_single_quote(tmp_path):
+    tables = {
+        "it's a table": TableDef(
+            name="it's a table",
+            columns=[ColumnDef("id", "int", {"pk"})],
+        )
+    }
+    df = pd.DataFrame({"id": [1, 2]})
+    generate_unit_tests(tmp_path, tables, {"it's a table": df}, sample_size=2)
+
+    yml_file = tmp_path / "models" / "staging" / "ut_stg_it's a table.yml"
+    data = yaml.safe_load(yml_file.read_text())
+    given_input = data["unit_tests"][0]["given"][0]["input"]
+    assert given_input == "source('raw', 'it\\'s a table')"
 
 
 def test_single_column_index_entry_produces_no_singular_test(tmp_path):

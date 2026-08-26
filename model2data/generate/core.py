@@ -16,6 +16,23 @@ from model2data.parse.dbml import TableDef
 
 fake = Faker()
 
+# Tables the most recent generate_data_from_dbml() call found stuck in an
+# unresolved FK cycle (never reached indegree 0 during the topological
+# sort). Exposed out-of-band, mirroring generate.faker's
+# reset_stats()/get_unmapped_columns() pattern, so the CLI can surface a
+# warning without changing this module's existing return signature.
+_cycle_state: dict[str, list[str]] = {"cyclic_tables": []}
+
+
+def reset_cycle_state() -> None:
+    """Clear the record of tables found in an unresolved FK cycle."""
+    _cycle_state["cyclic_tables"] = []
+
+
+def get_cyclic_tables() -> list[str]:
+    """Return table names stuck in an unresolved FK cycle by the last run."""
+    return list(_cycle_state["cyclic_tables"])
+
 
 # ---------------------------------------------------------
 # Public API
@@ -35,6 +52,8 @@ def generate_data_from_dbml(
     if seed is not None:
         random.seed(seed)
         Faker.seed(seed)
+
+    reset_cycle_state()
 
     # ---------------------------------------------------------
     # Classify references
@@ -259,9 +278,17 @@ def _topological_table_order(
             if indegree[neighbor] == 0:
                 queue.append(neighbor)
 
-    # Safety net for disconnected tables
-    for name in tables.keys():
-        if name not in order:
-            order.append(name)
+    # Any table not reached by the Kahn's-algorithm pass above never had its
+    # indegree reduced to 0, which (unlike a genuinely disconnected table,
+    # which starts at indegree 0 and is processed by the loop above) can only
+    # happen if it sits inside -- or depends on -- an unresolved multi-table
+    # FK cycle. Append it to the order anyway (still generate *something*
+    # rather than crash on an unusual-but-not-invalid schema), but record it
+    # so the CLI can warn the user their generated FK data may not respect
+    # every relationship.
+    leftover = sorted(name for name in tables if name not in order)
+    if leftover:
+        _cycle_state["cyclic_tables"] = leftover
+    order.extend(leftover)
 
     return order

@@ -5,6 +5,75 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.5.0] - 2026-08-26
+
+1.0-readiness hardening pass: closes out the highest-severity gaps identified by direct code
+inspection ahead of a 1.0 release — every one of these could previously produce silently wrong
+or incomplete output with zero indication anything went wrong.
+
+### Fixed
+- **Inconsistent/unsafe escaping in generated YAML and SQL.** Most of `dbt/tests.py` hand-built
+  YAML by string-interpolating table/column names directly into f-strings, and the composite-key
+  singular SQL test spliced raw column names into a `group by` clause with no quoting. A DBML
+  schema using a quoted identifier containing a space, colon, or single quote (all valid DBML)
+  produced invalid/garbled generated YAML or SQL — `model2data` reported success, and `dbt seed`/
+  `dbt run`/`dbt test` then failed on the garbled output far from the actual cause. `generate_dbt_yml`
+  now builds one Python structure per generated YAML file and dumps it with a single `yaml.safe_dump`
+  call instead of hand-rolled line lists; composite-key SQL now double-quotes each identifier
+  (ANSI quoting, valid on both supported adapters); and the two places a raw name was spliced into
+  a single-quoted Jinja `source(...)` string literal (`create_staging_models`, `generate_unit_tests`)
+  now escape embedded single quotes.
+- **A genuine multi-table FK cycle (A → B → A, or longer) was silently swallowed** by
+  `_topological_table_order`'s fallback for tables the topological sort didn't reach — a fallback
+  that was also (correctly) catching genuinely disconnected tables, so the two cases were
+  indistinguishable and neither was ever surfaced. Only a table stuck in an actual unresolved
+  cycle now hits that fallback (a genuinely disconnected table is already picked up by the normal
+  zero-indegree pass), and the CLI's post-run summary now prints a clear warning naming the
+  affected tables — generation still completes, but the user is told their FK data may not
+  respect all relationships instead of finding out via a broken `relationships` test.
+- **Silent partial DBML parses.** A malformed `Ref` line, a `Ref` pointing at a table/column that
+  doesn't exist, an unparseable column definition, and a garbled `indexes {}` line were all
+  dropped with a bare `continue` and no record kept — `model2data` reported success on an
+  incompletely-understood schema. `parse_dbml` now collects these into a parse-warnings list
+  (mirroring the existing `get_unmapped_columns()` pattern), surfaced by the CLI's summary section
+  immediately after generation. Parsing still never raises on these — DBML has features (`Project`
+  blocks, `TableGroup`, etc.) this tool intentionally doesn't need to understand, and those stay
+  silent by design.
+
+### Added
+- Composite (multi-column) standalone `Ref` blocks are now parsed: `Ref: a.(x, y) > b.(x, y)`
+  expands into one single-column ref per zipped column pair, so every existing FK-aware consumer
+  (generation, `relationships` tests, `classify_refs`) handles it with no changes. Known
+  limitation, documented in code: since each column is generated independently, the *combination*
+  of values in the child table's two FK columns isn't guaranteed to match a real combination in
+  the parent — solving joint-value consistency across independently-generated FK columns is out
+  of scope.
+
+### Changed
+- **`dbt-core` floor corrected from an unverified `>=1.5.0` to a verified, intentionally-recent
+  `>=1.8.5`** (dbt-core's release current as of ~August 2024, chosen instead of the oldest
+  technically-working version since an unmaintained multi-year-old floor isn't a goal for a 1.0
+  release; also happens to unify with the `--unit-tests` flag's own pre-existing `>=1.8`
+  requirement, removing the previous "base floor 1.5, but this one flag needs 1.8+" caveat
+  entirely). Manual testing against isolated environments pinned to dbt-core 1.5.12, 1.8.5/1.8.8/
+  1.8.10, 1.9.11, and every 1.10.x patch from 1.10.0 found that the `arguments:`-nested generic
+  test config this project started generating in 0.4.3 (to silence a deprecation warning on
+  modern dbt-core) is a **hard parse error** on dbt-core below 1.10.5, so `generate_dbt_yml` now
+  goes back to emitting the older, flat (non-`arguments:`-nested) generic test config across the
+  board — universally compatible from 1.8.5 through current dbt-core (which still accepts the
+  flat form, just with a soft, non-fatal deprecation warning). `dbt-core>=1.8.5` (plus matching
+  `dbt-duckdb>=1.8.4` / `dbt-postgres>=1.8.0`) is enforced in `pyproject.toml`, and CI's `test`
+  job gained a `dbt-version: [floor, latest]` matrix dimension (on one representative Python
+  version, to avoid crossing it with the full Python-version matrix) that generates a project from
+  `examples/hackernews.dbml` and runs `dbt deps && dbt seed && dbt run && dbt test` against both
+  the pinned floor and whatever `uv sync` naturally resolves as latest, on every push/PR — so both
+  ends of the supported range stay continuously verified instead of checked once by hand.
+- Known caveat (dbt-core-internal, not a model2data bug): on the 1.8.x dbt-core line specifically,
+  `--unit-tests` fails with a `syntax error` for any DBML column named after a SQL reserved word
+  (e.g. `by`, present in `examples/hackernews.dbml`) — dbt-core's unit-test CSV-fixture rendering
+  doesn't quote such identifiers on that release line. Fixed in later dbt-core; every other
+  `--unit-tests` path, and the entire non-unit-test pipeline, works cleanly on 1.8.5.
+
 ## [0.4.3] - 2026-08-26
 
 ### Added
