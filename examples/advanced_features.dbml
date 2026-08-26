@@ -1,6 +1,13 @@
 // Advanced Features: Hierarchies, Self-Referential FKs, and Constraints
-// Showcases: Self-referential relationships, min/max constraints in inline notes, diverse Faker data types
+// Showcases: Self-referential relationships, min/max constraints in inline notes,
+// diverse Faker data types, an Enum-typed column, and a composite unique key.
 // Example: model2data generate --file examples/advanced_features.dbml --rows 15 --seed 42
+
+Enum expense_status_enum {
+  pending
+  approved
+  rejected
+}
 
 Table departments {
   id bigint [pk, not null]
@@ -31,6 +38,10 @@ Table project_assignments {
   project_id bigint [not null]
   employee_id bigint [not null]
   allocation_percent numeric [not null, note: '{"min": 0, "max": 100}']
+
+  indexes {
+    (project_id, employee_id) [unique]
+  }
 }
 
 Table time_entries {
@@ -48,7 +59,7 @@ Table expenses {
   employee_id bigint [not null]
   amount_cents bigint [not null, note: '{"min": 100, "max": 50000}']
   description text
-  status text
+  status expense_status_enum
   approved_by bigint
 }
 

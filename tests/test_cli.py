@@ -574,3 +574,68 @@ def test_cli_all_output_messages_present(tmp_path):
 
     for message in expected_messages:
         assert message in result.stdout, f"Missing expected message: {message}"
+
+
+def test_cli_without_unit_tests_flag_creates_no_unit_test_dir(tmp_path):
+    """--unit-tests defaults to off: no tests/unit/ directory should appear."""
+    dbml_file = tmp_path / "test.dbml"
+    dbml_file.write_text(
+        """
+    Table users {
+        id int [pk]
+        name varchar
+    }
+    """
+    )
+
+    original_cwd = os.getcwd()
+    try:
+        os.chdir(tmp_path)
+        result = runner.invoke(app, ["--file", str(dbml_file), "--rows", "10"])
+    finally:
+        os.chdir(original_cwd)
+
+    assert result.exit_code == 0
+    assert not (tmp_path / "dbt_test" / "tests" / "unit").exists()
+
+
+def test_cli_with_unit_tests_flag_generates_unit_test_yaml(tmp_path):
+    """--unit-tests writes tests/unit/test_stg_<table>.yml and prints the dbt-core note."""
+    dbml_file = tmp_path / "test.dbml"
+    dbml_file.write_text(
+        """
+    Table users {
+        id int [pk]
+        name varchar
+    }
+    """
+    )
+
+    original_cwd = os.getcwd()
+    try:
+        os.chdir(tmp_path)
+        result = runner.invoke(
+            app,
+            [
+                "--file",
+                str(dbml_file),
+                "--rows",
+                "10",
+                "--seed",
+                "42",
+                "--unit-tests",
+            ],
+        )
+    finally:
+        os.chdir(original_cwd)
+
+    assert result.exit_code == 0
+    assert "dbt-core >= 1.8" in result.stdout
+
+    unit_yml = tmp_path / "dbt_test" / "tests" / "unit" / "test_stg_users.yml"
+    assert unit_yml.exists()
+
+    import yaml
+
+    data = yaml.safe_load(unit_yml.read_text())
+    assert data["unit_tests"][0]["model"] == "stg_users"

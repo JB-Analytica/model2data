@@ -76,6 +76,7 @@ def generate_data_from_dbml(
             )
 
         df = pd.DataFrame(data)
+        df = _deduplicate_composite_keys(df, table_def)
 
         # -----------------------------------------------------
         # Second pass: attribute mirroring (non-FK refs)
@@ -117,6 +118,46 @@ def generate_data_from_dbml(
 # ---------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------
+def _deduplicate_composite_keys(
+    df: pd.DataFrame,
+    table_def: TableDef,
+    max_attempts: int = 20,
+) -> pd.DataFrame:
+    """
+    Regenerate colliding rows for any pk/unique composite key declared via an
+    `indexes {}` block, so the generated seed data respects that constraint.
+    Bounded retry mirrors generate.faker._deduplicate: give up gracefully on
+    a tiny value space rather than looping forever.
+    """
+    columns_by_name = {column.name: column for column in table_def.columns}
+
+    for key in table_def.composite_keys:
+        if key.get("type") not in ("pk", "unique"):
+            continue
+
+        key_columns = key.get("columns") or []
+        if not key_columns or any(c not in df.columns for c in key_columns):
+            continue
+
+        regen_columns = [(c, columns_by_name[c]) for c in key_columns]
+
+        seen: set = set()
+        for idx in df.index:
+            combo = tuple(df.at[idx, c] for c in key_columns)
+            attempts = 0
+            while combo in seen and attempts < max_attempts:
+                # Regenerate every column of the key (not just the last one) so
+                # the retry can actually reach unused combinations, not just
+                # unused values of a single column.
+                for col_name, col_def in regen_columns:
+                    df.at[idx, col_name] = generate_column_values(col_def, row_count=1)[0]
+                combo = tuple(df.at[idx, c] for c in key_columns)
+                attempts += 1
+            seen.add(combo)
+
+    return df
+
+
 def _determine_row_count(table_name: str, base_rows: int) -> int:
     """
     Return the base number of rows for all tables.

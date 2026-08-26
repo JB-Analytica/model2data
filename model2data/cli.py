@@ -11,7 +11,7 @@ from model2data.dbt.project import (
     create_project_scaffold,
     create_staging_models,
 )
-from model2data.dbt.tests import generate_dbt_yml
+from model2data.dbt.tests import generate_dbt_yml, generate_unit_tests
 from model2data.generate.core import generate_data_from_dbml
 from model2data.generate.faker import get_unmapped_columns, reset_stats
 from model2data.parse.dbml import parse_dbml
@@ -75,6 +75,14 @@ def main(
         "--adapter",
         "-a",
         help=f"dbt warehouse adapter to target. One of: {', '.join(SUPPORTED_ADAPTERS)}.",
+    ),
+    unit_tests: bool = typer.Option(
+        False,
+        "--unit-tests",
+        help=(
+            "Also generate deterministic dbt unit test fixtures (tests/unit/) from the "
+            "generated seed rows. Requires dbt-core >= 1.8 to run."
+        ),
     ),
 ):
     """
@@ -151,6 +159,10 @@ def main(
 
     typer.echo("🧪 Generating dbt yml with tests...")
     generate_dbt_yml(dest, tables, refs, project_name)
+
+    if unit_tests:
+        typer.echo("🔬 Generating dbt unit test fixtures (requires dbt-core >= 1.8)...")
+        generate_unit_tests(dest, tables, generated_tables)
 
     typer.echo(f"🪪 Ensuring dbt profile exists ({adapter})...")
     create_profiles_yml(dest, profile_name, adapter=adapter)

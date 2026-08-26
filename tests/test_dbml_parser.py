@@ -5,6 +5,7 @@ import pytest
 from model2data.parse.dbml import (
     _parse_column_settings,
     _strip_quotes,
+    get_many_to_many_refs,
     normalize_identifier,
     parse_dbml,
 )
@@ -178,39 +179,69 @@ def test_strip_quotes_helper():
 def test_parse_column_settings_helper():
     """Test the _parse_column_settings helper function."""
     # Single setting
-    settings, note = _parse_column_settings("pk")
+    settings, note, description, default = _parse_column_settings("pk")
     assert "pk" in settings
     assert note is None
+    assert description is None
+    assert default is None
 
     # Multiple settings
-    settings, note = _parse_column_settings("pk, not null, unique")
+    settings, note, description, default = _parse_column_settings("pk, not null, unique")
     assert "pk" in settings
     assert "not null" in settings
     assert "unique" in settings
     assert note is None
 
-    # Settings with note
-    settings, note = _parse_column_settings('pk, not null, note: \'{"min": 1, "max": 5}\'')
+    # Settings with JSON min/max note
+    settings, note, description, default = _parse_column_settings(
+        'pk, not null, note: \'{"min": 1, "max": 5}\''
+    )
     assert "pk" in settings
     assert "not null" in settings
     assert note is not None
     assert note["min"] == 1
     assert note["max"] == 5
+    assert description is None
 
     # Just a note
-    settings, note = _parse_column_settings('note: \'{"min": 0, "max": 100}\'')
+    settings, note, description, default = _parse_column_settings(
+        'note: \'{"min": 0, "max": 100}\''
+    )
     assert len(settings) == 0
     assert note is not None
     assert note["min"] == 0
     assert note["max"] == 100
 
+    # Plain-text note becomes a description, not a discarded value
+    settings, note, description, default = _parse_column_settings(
+        "note: 'the user's primary email address'"
+    )
+    assert note is None
+    assert description == "the user's primary email address"
+
+    # default: values
+    settings, note, description, default = _parse_column_settings("default: 'active'")
+    assert default == "active"
+
+    settings, note, description, default = _parse_column_settings("default: 0")
+    assert default == 0 and isinstance(default, int)
+
+    settings, note, description, default = _parse_column_settings("default: 3.14")
+    assert default == 3.14
+
+    settings, note, description, default = _parse_column_settings("default: true")
+    assert default is True
+
+    settings, note, description, default = _parse_column_settings("default: `now()`")
+    assert default is None
+
     # Empty
-    settings, note = _parse_column_settings("")
+    settings, note, description, default = _parse_column_settings("")
     assert len(settings) == 0
     assert note is None
 
     # None
-    settings, note = _parse_column_settings(None)
+    settings, note, description, default = _parse_column_settings(None)
     assert len(settings) == 0
     assert note is None
 
@@ -951,3 +982,332 @@ def test_reference_with_diamond_operator_ignored(tmp_path):
     assert len(refs) == 1
     assert refs[0]["source_table"] == "roles"
     assert refs[0]["target_table"] == "user_roles"
+
+    # But the <> ref is not silently dropped - it's captured separately.
+    m2m = get_many_to_many_refs()
+    assert len(m2m) == 1
+    assert m2m[0]["source_table"] == "users"
+    assert m2m[0]["source_column"] == "id"
+    assert m2m[0]["target_table"] == "user_roles"
+    assert m2m[0]["target_column"] == "user_id"
+
+
+# ---------------------------------------------------------
+# Enum support
+# ---------------------------------------------------------
+
+
+def test_enum_block_resolves_column_type(tmp_path):
+    dbml_file = tmp_path / "enums.dbml"
+    dbml_file.write_text(
+        """
+    Enum status_enum {
+        active
+        inactive
+        pending [note: 'awaiting review']
+    }
+
+    Table orders {
+        id int [pk]
+        status status_enum [not null]
+    }
+    """
+    )
+    tables, refs = parse_dbml(dbml_file)
+    status_col = next(c for c in tables["orders"].columns if c.name == "status")
+    assert status_col.enum_values == ["active", "inactive", "pending"]
+
+
+def test_enum_match_is_case_insensitive(tmp_path):
+    dbml_file = tmp_path / "enums.dbml"
+    dbml_file.write_text(
+        """
+    enum Status_Enum {
+        active
+        inactive
+    }
+
+    Table orders {
+        id int [pk]
+        status STATUS_ENUM
+    }
+    """
+    )
+    tables, refs = parse_dbml(dbml_file)
+    status_col = next(c for c in tables["orders"].columns if c.name == "status")
+    assert status_col.enum_values == ["active", "inactive"]
+
+
+def test_column_without_enum_type_has_no_enum_values(tmp_path):
+    dbml_file = tmp_path / "enums.dbml"
+    dbml_file.write_text(
+        """
+    Enum status_enum {
+        active
+        inactive
+    }
+
+    Table orders {
+        id int [pk]
+        name varchar
+    }
+    """
+    )
+    tables, refs = parse_dbml(dbml_file)
+    name_col = next(c for c in tables["orders"].columns if c.name == "name")
+    assert name_col.enum_values is None
+
+
+# ---------------------------------------------------------
+# Table and column descriptions from notes
+# ---------------------------------------------------------
+
+
+def test_table_single_line_note_captured(tmp_path):
+    dbml_file = tmp_path / "notes.dbml"
+    dbml_file.write_text(
+        """
+    Table users {
+        Note: 'Stores registered users'
+        id int [pk]
+    }
+    """
+    )
+    tables, refs = parse_dbml(dbml_file)
+    assert tables["users"].description == "Stores registered users"
+
+
+def test_table_multiline_note_block_captured(tmp_path):
+    dbml_file = tmp_path / "notes.dbml"
+    dbml_file.write_text(
+        """
+    Table users {
+        id int [pk]
+        Note {
+            'Stores registered users'
+        }
+    }
+    """
+    )
+    tables, refs = parse_dbml(dbml_file)
+    assert tables["users"].description == "Stores registered users"
+
+
+def test_column_plain_text_note_becomes_description(tmp_path):
+    dbml_file = tmp_path / "notes.dbml"
+    dbml_file.write_text(
+        """
+    Table users {
+        id int [pk]
+        email varchar [note: 'the primary email address']
+    }
+    """
+    )
+    tables, refs = parse_dbml(dbml_file)
+    email_col = next(c for c in tables["users"].columns if c.name == "email")
+    assert email_col.description == "the primary email address"
+
+
+def test_column_json_min_max_note_still_works(tmp_path):
+    dbml_file = tmp_path / "notes.dbml"
+    dbml_file.write_text(
+        """
+    Table products {
+        id int [pk]
+        price numeric [note: '{"min": 1, "max": 500}']
+    }
+    """
+    )
+    tables, refs = parse_dbml(dbml_file)
+    price_col = next(c for c in tables["products"].columns if c.name == "price")
+    assert price_col.note == {"min": 1, "max": 500}
+    assert price_col.description is None
+
+
+# ---------------------------------------------------------
+# Composite keys from indexes {} blocks
+# ---------------------------------------------------------
+
+
+def test_composite_pk_from_indexes_block(tmp_path):
+    dbml_file = tmp_path / "composite.dbml"
+    dbml_file.write_text(
+        """
+    Table order_items {
+        order_id int
+        product_id int
+        quantity int
+
+        indexes {
+            (order_id, product_id) [pk]
+        }
+    }
+    """
+    )
+    tables, refs = parse_dbml(dbml_file)
+    keys = tables["order_items"].composite_keys
+    assert len(keys) == 1
+    assert keys[0]["columns"] == ["order_id", "product_id"]
+    assert keys[0]["type"] == "pk"
+
+
+def test_composite_unique_from_indexes_block(tmp_path):
+    dbml_file = tmp_path / "composite.dbml"
+    dbml_file.write_text(
+        """
+    Table memberships {
+        user_id int
+        org_id int
+
+        indexes {
+            (user_id, org_id) [unique, name: 'uq_membership']
+        }
+    }
+    """
+    )
+    tables, refs = parse_dbml(dbml_file)
+    keys = tables["memberships"].composite_keys
+    assert len(keys) == 1
+    assert keys[0]["columns"] == ["user_id", "org_id"]
+    assert keys[0]["type"] == "unique"
+
+
+def test_single_column_index_entry_still_captured(tmp_path):
+    dbml_file = tmp_path / "composite.dbml"
+    dbml_file.write_text(
+        """
+    Table users {
+        email varchar
+
+        indexes {
+            (email) [unique]
+        }
+    }
+    """
+    )
+    tables, refs = parse_dbml(dbml_file)
+    keys = tables["users"].composite_keys
+    assert len(keys) == 1
+    assert keys[0]["columns"] == ["email"]
+    assert keys[0]["type"] == "unique"
+
+
+def test_indexes_block_without_pk_or_unique_is_ignored(tmp_path):
+    dbml_file = tmp_path / "composite.dbml"
+    dbml_file.write_text(
+        """
+    Table users {
+        email varchar
+
+        indexes {
+            (email) [name: 'idx_email']
+        }
+    }
+    """
+    )
+    tables, refs = parse_dbml(dbml_file)
+    assert tables["users"].composite_keys == []
+
+
+# ---------------------------------------------------------
+# default: values
+# ---------------------------------------------------------
+
+
+def test_default_values_parsed_by_type(tmp_path):
+    dbml_file = tmp_path / "defaults.dbml"
+    dbml_file.write_text(
+        """
+    Table accounts {
+        id int [pk]
+        status varchar [default: 'active']
+        retries int [default: 0]
+        rate float [default: 3.14]
+        is_active boolean [default: true]
+        created_at timestamp [default: `now()`]
+    }
+    """
+    )
+    tables, refs = parse_dbml(dbml_file)
+    cols = {c.name: c for c in tables["accounts"].columns}
+    assert cols["status"].default == "active"
+    assert cols["retries"].default == 0 and isinstance(cols["retries"].default, int)
+    assert cols["rate"].default == 3.14
+    assert cols["is_active"].default is True
+    assert cols["created_at"].default is None
+
+
+def test_default_value_helper_edge_cases():
+    from model2data.parse.dbml import _parse_default_value
+
+    assert _parse_default_value("") is None
+    assert _parse_default_value("false") is False
+    assert _parse_default_value("not_a_number") is None
+
+
+def test_composite_key_pk_and_close_brace_on_same_line(tmp_path):
+    dbml_file = tmp_path / "composite.dbml"
+    dbml_file.write_text(
+        """
+    Table order_items {
+        order_id int
+        product_id int
+
+        indexes {
+            (order_id, product_id) [pk] }
+    }
+    """
+    )
+    tables, refs = parse_dbml(dbml_file)
+    keys = tables["order_items"].composite_keys
+    assert len(keys) == 1
+    assert keys[0]["columns"] == ["order_id", "product_id"]
+    assert keys[0]["type"] == "pk"
+
+
+def test_indexes_block_malformed_entry_is_skipped():
+    from model2data.parse.dbml import _parse_composite_key_line
+
+    assert _parse_composite_key_line("(,) [pk]") is None
+    assert _parse_composite_key_line("not an index line") is None
+
+
+def test_table_single_line_inline_triple_quote_note(tmp_path):
+    dbml_file = tmp_path / "notes.dbml"
+    dbml_file.write_text(
+        """
+    Table users {
+        Note: '''Stores registered users'''
+        id int [pk]
+    }
+    """
+    )
+    tables, refs = parse_dbml(dbml_file)
+    assert tables["users"].description == "Stores registered users"
+
+
+def test_advanced_features_example_has_enum_and_composite_key():
+    dbml_path = Path("examples/advanced_features.dbml")
+    tables, refs = parse_dbml(dbml_path)
+
+    status_col = next(c for c in tables["expenses"].columns if c.name == "status")
+    assert status_col.enum_values == ["pending", "approved", "rejected"]
+
+    keys = tables["project_assignments"].composite_keys
+    assert {"columns": ["project_id", "employee_id"], "type": "unique"} in keys
+
+
+def test_malformed_column_line_inside_table_is_skipped(tmp_path):
+    dbml_file = tmp_path / "malformed.dbml"
+    dbml_file.write_text(
+        """
+    Table users {
+        id int [pk]
+        !!!
+        name varchar
+    }
+    """
+    )
+    tables, refs = parse_dbml(dbml_file)
+    column_names = {c.name for c in tables["users"].columns}
+    assert column_names == {"id", "name"}

@@ -1,6 +1,9 @@
 """Tests for column-name-based Faker inference in generate.faker."""
 
+import random
 import re
+
+import pandas as pd
 
 from model2data.generate.faker import (
     _deduplicate,
@@ -77,3 +80,112 @@ class TestNameInference:
         # Only one possible value: dedup can't succeed, but must terminate.
         result = _deduplicate(["x", "x", "x"], generator=lambda: "x", max_attempts=3)
         assert result == ["x", "x", "x"]
+
+
+class TestEnumGeneration:
+    def test_enum_values_only_ever_come_from_the_enum_set(self):
+        allowed = {"active", "inactive", "pending"}
+        for seed in range(5):
+            random.seed(seed)
+            col = ColumnDef(
+                name="status",
+                data_type="status_enum",
+                settings={"not null"},
+                enum_values=["active", "inactive", "pending"],
+            )
+            values = generate_column_values(col, row_count=200)
+            assert len(values) == 200
+            assert set(values) <= allowed
+
+    def test_enum_takes_priority_over_fk_series(self):
+        col = ColumnDef(
+            name="status",
+            data_type="status_enum",
+            settings={"not null"},
+            enum_values=["a", "b"],
+        )
+        fk_series = pd.Series([1, 2, 3])
+        values = generate_column_values(col, row_count=10, fk_series=fk_series)
+        assert set(values) <= {"a", "b"}
+
+    def test_nullable_enum_column_can_still_produce_none_without_default(self):
+        random.seed(0)
+        col = ColumnDef(name="status", data_type="status_enum", enum_values=["a", "b"])
+        values = generate_column_values(col, row_count=200)
+        assert {v for v in values if v is not None} <= {"a", "b"}
+
+
+class TestPrimaryKeyUniqueness:
+    def test_int_pk_with_default_range_has_no_duplicates_at_scale(self):
+        # Default int range is [0, 100] -- well under 500 rows, so this would
+        # collide constantly without the default-range widening.
+        col = ColumnDef(name="id", data_type="bigint", settings={"pk", "not null"})
+        values = generate_column_values(col, row_count=500, ensure_unique=True)
+        assert len(values) == len(set(values)) == 500
+
+    def test_int_pk_with_explicit_narrow_range_does_not_crash(self):
+        # Explicit user range of only 5 values but 20 rows requested: too
+        # small to be fully unique, must fall back to bounded retry rather
+        # than crash or loop forever.
+        col = ColumnDef(
+            name="id",
+            data_type="int",
+            settings={"pk", "not null"},
+            note={"min": 0, "max": 4},
+        )
+        values = generate_column_values(col, row_count=20, ensure_unique=True)
+        assert len(values) == 20
+        assert all(0 <= v <= 4 for v in values)
+
+    def test_float_pk_like_column_has_no_duplicates(self):
+        col = ColumnDef(
+            name="id",
+            data_type="decimal",
+            settings={"pk", "not null"},
+            note={"min": 0, "max": 10_000},
+        )
+        values = generate_column_values(col, row_count=300, ensure_unique=True)
+        assert len(values) == len(set(values)) == 300
+
+    def test_uuid_pk_column_has_no_duplicates(self):
+        col = ColumnDef(name="id", data_type="uuid", settings={"pk", "not null"})
+        values = generate_column_values(col, row_count=300, ensure_unique=True)
+        assert len(values) == len(set(values)) == 300
+
+    def test_pk_only_column_without_explicit_not_null_never_produces_none(self):
+        random.seed(0)
+        col = ColumnDef(name="id", data_type="bigint", settings={"pk"})
+        values = generate_column_values(col, row_count=200, ensure_unique=True)
+        assert None not in values
+        assert len(values) == len(set(values)) == 200
+
+
+class TestDefaultValueFill:
+    def test_nullable_column_with_default_never_produces_none(self):
+        random.seed(0)
+        col = ColumnDef(
+            name="status",
+            data_type="varchar",
+            settings=set(),
+            default="active",
+        )
+        values = generate_column_values(col, row_count=200)
+        assert None not in values
+        assert "active" in values
+
+    def test_nullable_column_without_default_can_produce_none(self):
+        random.seed(0)
+        col = ColumnDef(name="status", data_type="varchar", settings=set())
+        values = generate_column_values(col, row_count=200)
+        assert None in values
+
+    def test_not_null_column_ignores_default_null_fill_path(self):
+        random.seed(0)
+        col = ColumnDef(
+            name="status",
+            data_type="varchar",
+            settings={"not null"},
+            default="active",
+        )
+        values = generate_column_values(col, row_count=50)
+        assert None not in values
