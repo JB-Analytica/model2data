@@ -246,6 +246,73 @@ def _record_ref(
     )
 
 
+def _try_parse_ref_line(cleaned: str, refs: list[dict], many_to_many_refs: list[dict]) -> bool:
+    """Parse one relationship expression (`table.col > table.col`, or the
+    composite `table.(a, b) > table.(c, d)` form), recording it via
+    _record_ref. Shared by both a `Ref { ... }` block's interior lines and
+    the one-liner `Ref: ...` form, since the expression syntax is identical
+    either way. Returns True if the line was handled (parsed, or a specific
+    warning already emitted for it) -- False only when nothing matched and
+    the caller should emit its own generic "unrecognized" warning.
+    """
+    # Composite (multi-column) form: table.(a, b) > table.(c, d). Tried
+    # first since its parenthesized column lists would not match the
+    # single-column pattern below.
+    composite_match = _COMPOSITE_REF_RE.match(cleaned)
+    if composite_match:
+        left_table, left_cols_raw, operator, right_table, right_cols_raw = composite_match.groups()
+        left_columns = [_strip_quotes(c) for c in left_cols_raw.split(",")]
+        right_columns = [_strip_quotes(c) for c in right_cols_raw.split(",")]
+
+        if len(left_columns) != len(right_columns):
+            _warn(f"Composite Ref column count mismatch in Ref block: {cleaned!r}")
+            return True
+
+        # Expand into one single-column ref per zipped column pair. Every
+        # downstream consumer (classify_refs, build_fk_lookup,
+        # generate_dbt_yml's relationships tests, generation) already
+        # handles multiple single-column refs between the same two tables,
+        # so this needs no changes anywhere else. Known limitation: since
+        # each column is now generated independently, the *combination* of
+        # values in the child table's two FK columns won't necessarily
+        # match a real combination of the parent's composite key unless
+        # that composite key is itself enforced via an `indexes {}`
+        # pk/unique block on the parent. Solving joint-value consistency
+        # across independently-generated FK columns is out of scope here.
+        for left_column, right_column in zip(left_columns, right_columns):
+            _record_ref(
+                refs,
+                many_to_many_refs,
+                _strip_quotes(left_table),
+                left_column,
+                operator,
+                _strip_quotes(right_table),
+                right_column,
+            )
+        return True
+
+    # Match: "table"."column" > "table"."column"
+    ref_match = re.match(
+        r'(".*?"|`.*?`|[\w]+)\.(".*?"|`.*?`|[\w]+)\s*(<>|[<>])\s*'
+        r'(".*?"|`.*?`|[\w]+)\.(".*?"|`.*?`|[\w]+)',
+        cleaned,
+    )
+    if not ref_match:
+        return False
+
+    left_table, left_column, operator, right_table, right_column = ref_match.groups()
+    _record_ref(
+        refs,
+        many_to_many_refs,
+        _strip_quotes(left_table),
+        _strip_quotes(left_column),
+        operator,
+        _strip_quotes(right_table),
+        _strip_quotes(right_column),
+    )
+    return True
+
+
 _COMPOSITE_KEY_RE = re.compile(r"^\(([^)]+)\)\s*(?:\[(.+)\])?$")
 
 
@@ -490,10 +557,27 @@ def parse_dbml(dbml_path: Path) -> tuple[dict[str, TableDef], list[dict]]:
             continue
 
         # ----------------------
-        # REF BLOCK START
+        # REF BLOCK START / ONE-LINER
         # ----------------------
         if cleaned.startswith("Ref"):
-            in_ref_block = True
+            # Block form: `Ref {` or `Ref name {` — content follows on
+            # subsequent lines, up to a closing `}`.
+            if cleaned.rstrip().endswith("{"):
+                in_ref_block = True
+                continue
+
+            # One-liner form: `Ref: table.col > table.col` or
+            # `Ref name: table.col > table.col` — the relationship is on
+            # this same line, after the first `:`. This is one of the most
+            # common ways to declare a relationship in DBML, so it must be
+            # parsed here directly rather than (as previously happened)
+            # mistaken for the start of a block and discarded, silently and
+            # without warning, on every occurrence.
+            if ":" in cleaned:
+                ref_content = cleaned.split(":", 1)[1].strip()
+                if _try_parse_ref_line(ref_content, refs, many_to_many_refs):
+                    continue
+            _warn(f"Unrecognized Ref statement: {cleaned!r}")
             continue
 
         if in_ref_block:
@@ -501,70 +585,8 @@ def parse_dbml(dbml_path: Path) -> tuple[dict[str, TableDef], list[dict]]:
                 in_ref_block = False
                 continue
 
-            # Composite (multi-column) form: table.(a, b) > table.(c, d).
-            # Tried first since its parenthesized column lists would not
-            # match the single-column pattern below.
-            composite_match = _COMPOSITE_REF_RE.match(cleaned)
-            if composite_match:
-                (
-                    left_table,
-                    left_cols_raw,
-                    operator,
-                    right_table,
-                    right_cols_raw,
-                ) = composite_match.groups()
-                left_columns = [_strip_quotes(c) for c in left_cols_raw.split(",")]
-                right_columns = [_strip_quotes(c) for c in right_cols_raw.split(",")]
-
-                if len(left_columns) != len(right_columns):
-                    _warn(f"Composite Ref column count mismatch in Ref block: {cleaned!r}")
-                    continue
-
-                # Expand into one single-column ref per zipped column pair.
-                # Every downstream consumer (classify_refs, build_fk_lookup,
-                # generate_dbt_yml's relationships tests, generation) already
-                # handles multiple single-column refs between the same two
-                # tables, so this needs no changes anywhere else. Known
-                # limitation: since each column is now generated
-                # independently, the *combination* of values in the child
-                # table's two FK columns won't necessarily match a real
-                # combination of the parent's composite key unless that
-                # composite key is itself enforced via an `indexes {}`
-                # pk/unique block on the parent. Solving joint-value
-                # consistency across independently-generated FK columns is
-                # out of scope here.
-                for left_column, right_column in zip(left_columns, right_columns):
-                    _record_ref(
-                        refs,
-                        many_to_many_refs,
-                        _strip_quotes(left_table),
-                        left_column,
-                        operator,
-                        _strip_quotes(right_table),
-                        right_column,
-                    )
-                continue
-
-            # Match: "table"."column" > "table"."column"
-            ref_match = re.match(
-                r'(".*?"|`.*?`|[\w]+)\.(".*?"|`.*?`|[\w]+)\s*(<>|[<>])\s*'
-                r'(".*?"|`.*?`|[\w]+)\.(".*?"|`.*?`|[\w]+)',
-                cleaned,
-            )
-            if not ref_match:
+            if not _try_parse_ref_line(cleaned, refs, many_to_many_refs):
                 _warn(f"Unrecognized line in Ref block: {cleaned!r}")
-                continue
-
-            left_table, left_column, operator, right_table, right_column = ref_match.groups()
-            _record_ref(
-                refs,
-                many_to_many_refs,
-                _strip_quotes(left_table),
-                _strip_quotes(left_column),
-                operator,
-                _strip_quotes(right_table),
-                _strip_quotes(right_column),
-            )
             continue
 
     # ----------------------

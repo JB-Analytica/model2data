@@ -1548,6 +1548,111 @@ def test_malformed_ref_line_is_reported_as_parse_warning(tmp_path):
     assert any(r["source_table"] == "posts" and r["target_table"] == "users" for r in refs)
 
 
+def test_one_liner_ref_statement_is_parsed(tmp_path):
+    """Regression test: a bare `Ref: a.b > c.d` statement (not wrapped in
+    `Ref { ... }`) used to be mistaken for the start of a block and its
+    content silently discarded, with zero warning, on every occurrence.
+    """
+    dbml_file = tmp_path / "one_liner_ref.dbml"
+    dbml_file.write_text(
+        """
+    Table users {
+        id int [pk]
+    }
+
+    Table posts {
+        id int [pk]
+        user_id int
+    }
+
+    Ref: posts.user_id > users.id
+    """
+    )
+    tables, refs = parse_dbml(dbml_file)
+    assert refs == [
+        {
+            "source_table": "posts",
+            "source_column": "user_id",
+            "target_table": "users",
+            "target_column": "id",
+        }
+    ]
+    assert get_parse_warnings() == []
+
+
+def test_one_liner_ref_statement_with_less_than_operator(tmp_path):
+    dbml_file = tmp_path / "one_liner_ref_lt.dbml"
+    dbml_file.write_text(
+        """
+    Table users {
+        id int [pk]
+    }
+
+    Table posts {
+        id int [pk]
+        user_id int
+    }
+
+    Ref: users.id < posts.user_id
+    """
+    )
+    tables, refs = parse_dbml(dbml_file)
+    assert refs == [
+        {
+            "source_table": "posts",
+            "source_column": "user_id",
+            "target_table": "users",
+            "target_column": "id",
+        }
+    ]
+
+
+def test_multiple_one_liner_refs_all_parse(tmp_path):
+    """The bug affected every one-liner Ref in a file, not just the first —
+    confirm several in a row (interspersed with unrelated top-level
+    statements) all get captured.
+    """
+    dbml_file = tmp_path / "multi_one_liner_refs.dbml"
+    dbml_file.write_text(
+        """
+    Table a {
+        id int [pk]
+    }
+    Table b {
+        id int [pk]
+        a_id int
+    }
+    Table c {
+        id int [pk]
+        b_id int
+    }
+
+    Ref: b.a_id > a.id
+    Ref: c.b_id > b.id
+    """
+    )
+    tables, refs = parse_dbml(dbml_file)
+    assert {(r["source_table"], r["target_table"]) for r in refs} == {("b", "a"), ("c", "b")}
+    assert get_parse_warnings() == []
+
+
+def test_malformed_one_liner_ref_is_reported_as_parse_warning(tmp_path):
+    dbml_file = tmp_path / "malformed_one_liner_ref.dbml"
+    dbml_file.write_text(
+        """
+    Table users {
+        id int [pk]
+    }
+
+    Ref: this is not a valid relationship expression
+    """
+    )
+    tables, refs = parse_dbml(dbml_file)
+    warnings = get_parse_warnings()
+    assert any("Unrecognized Ref statement" in w for w in warnings)
+    assert refs == []
+
+
 def test_ref_pointing_at_nonexistent_table_is_reported_as_parse_warning(tmp_path):
     dbml_file = tmp_path / "dangling_ref.dbml"
     dbml_file.write_text(
