@@ -2,6 +2,7 @@ import pandas as pd
 import yaml
 
 from model2data.cli import main as generate_cli
+from model2data.dbt.project import create_project_scaffold
 from model2data.dbt.tests import _to_native_value, generate_dbt_yml, generate_unit_tests
 from model2data.parse.dbml import ColumnDef, TableDef
 
@@ -143,7 +144,9 @@ def test_composite_key_singular_test_sql_written(tmp_path):
     }
     generate_dbt_yml(tmp_path, tables, [], source_name="shop")
 
-    test_file = tmp_path / "tests" / "unique_combination_stg_order_items_order_id_product_id.sql"
+    test_file = (
+        tmp_path / "data-tests" / "unique_combination_stg_order_items_order_id_product_id.sql"
+    )
     assert test_file.exists()
     content = test_file.read_text()
     assert "ref('stg_order_items')" in content
@@ -155,9 +158,69 @@ def test_no_composite_keys_writes_no_singular_test(tmp_path):
     tables = {"users": TableDef(name="users", columns=[ColumnDef("id", "int", {"pk"})])}
     generate_dbt_yml(tmp_path, tables, [], source_name="shop")
 
-    tests_dir = tmp_path / "tests"
+    tests_dir = tmp_path / "data-tests"
     sql_files = list(tests_dir.glob("*.sql")) if tests_dir.exists() else []
     assert sql_files == []
+
+
+def test_generated_file_paths_match_dbt_project_yml_resource_paths(tmp_path):
+    """Guard against the class of bug behind Bug #1 and Bug #2: generate_dbt_yml
+    and generate_unit_tests writing files to a directory that isn't actually
+    one of dbt_project.yml's declared `*-paths`, so dbt silently never
+    discovers them even though the files exist on disk. This doesn't invoke
+    the dbt CLI (see tests/test_dbt_integration.py for that), so it's cheap
+    and always runs, but it directly checks the two sources of truth --
+    the rendered `*-paths` config and the directories the generators actually
+    write to -- against each other instead of hardcoding either one.
+    """
+    create_project_scaffold(tmp_path, "proj", "proj_profile")
+    project_yml = yaml.safe_load((tmp_path / "dbt_project.yml").read_text())
+
+    model_paths = [(tmp_path / p).resolve() for p in project_yml["model-paths"]]
+    test_paths = [(tmp_path / p).resolve() for p in project_yml["test-paths"]]
+
+    tables = {
+        "orders": TableDef(
+            name="orders",
+            columns=[
+                ColumnDef("order_id", "int", {"not null"}),
+                ColumnDef("customer_id", "int", {"not null"}),
+                ColumnDef(
+                    "status",
+                    "status_enum",
+                    {"not null"},
+                    enum_values=["open", "closed"],
+                ),
+            ],
+            composite_keys=[{"columns": ["order_id", "customer_id"], "type": "pk"}],
+        )
+    }
+    df = pd.DataFrame({"order_id": [1], "customer_id": [2], "status": ["open"]})
+
+    generate_dbt_yml(tmp_path, tables, [], source_name="shop")
+    generate_unit_tests(tmp_path, tables, {"orders": df}, sample_size=1)
+
+    generated_files = [
+        p
+        for p in tmp_path.rglob("*")
+        if p.is_file()
+        and p.suffix in (".yml", ".sql")
+        and p.name != "dbt_project.yml"
+        and "macros" not in p.parts
+    ]
+    assert generated_files, "expected generate_dbt_yml/generate_unit_tests to write some files"
+
+    for f in generated_files:
+        resolved = f.resolve()
+        if f.suffix == ".sql":
+            assert any(resolved.is_relative_to(root) for root in test_paths), (
+                f"{f} is a singular SQL test but is not under any configured "
+                f"test-paths dir {test_paths}"
+            )
+        else:
+            assert any(resolved.is_relative_to(root) for root in model_paths), (
+                f"{f} is not under any configured model-paths dir {model_paths}"
+            )
 
 
 def test_generate_unit_tests_produces_valid_yaml_with_expected_rows(tmp_path):
@@ -171,7 +234,7 @@ def test_generate_unit_tests_produces_valid_yaml_with_expected_rows(tmp_path):
 
     generate_unit_tests(tmp_path, tables, {"users": df}, sample_size=2)
 
-    yml_file = tmp_path / "tests" / "unit" / "test_stg_users.yml"
+    yml_file = tmp_path / "models" / "staging" / "ut_stg_users.yml"
     assert yml_file.exists()
     data = yaml.safe_load(yml_file.read_text())
 
@@ -194,7 +257,7 @@ def test_generate_unit_tests_handles_nan_and_fewer_rows_than_sample_size(tmp_pat
 
     generate_unit_tests(tmp_path, tables, {"widgets": df}, sample_size=5)
 
-    yml_file = tmp_path / "tests" / "unit" / "test_stg_widgets.yml"
+    yml_file = tmp_path / "models" / "staging" / "ut_stg_widgets.yml"
     data = yaml.safe_load(yml_file.read_text())
 
     rows = data["unit_tests"][0]["given"][0]["rows"]
@@ -228,7 +291,7 @@ def test_generate_unit_tests_converts_dates_and_numpy_scalars(tmp_path):
 
     generate_unit_tests(tmp_path, tables, {"events": df}, sample_size=1)
 
-    yml_file = tmp_path / "tests" / "unit" / "test_stg_events.yml"
+    yml_file = tmp_path / "models" / "staging" / "ut_stg_events.yml"
     data = yaml.safe_load(yml_file.read_text())
     row = data["unit_tests"][0]["given"][0]["rows"][0]
     assert row["id"] == 1
@@ -242,7 +305,7 @@ def test_generate_unit_tests_skips_table_with_no_generated_data(tmp_path):
     }
     generate_unit_tests(tmp_path, tables, {"empty": pd.DataFrame({"id": []})}, sample_size=2)
 
-    assert not (tmp_path / "tests" / "unit" / "test_stg_empty.yml").exists()
+    assert not (tmp_path / "models" / "staging" / "ut_stg_empty.yml").exists()
 
 
 def test_to_native_value_unwraps_raw_numpy_scalars():
@@ -262,6 +325,6 @@ def test_single_column_index_entry_produces_no_singular_test(tmp_path):
     }
     generate_dbt_yml(tmp_path, tables, [], source_name="shop")
 
-    tests_dir = tmp_path / "tests"
+    tests_dir = tmp_path / "data-tests"
     sql_files = list(tests_dir.glob("*.sql")) if tests_dir.exists() else []
     assert sql_files == []

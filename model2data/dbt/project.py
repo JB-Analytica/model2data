@@ -13,7 +13,7 @@ def create_project_scaffold(dest: Path, project_name: str, profile_name: str) ->
     (dest / "seeds" / "raw").mkdir(parents=True, exist_ok=True)
     (dest / "analysis").mkdir(exist_ok=True)
     (dest / "macros").mkdir(exist_ok=True)
-    (dest / "tests").mkdir(exist_ok=True)
+    (dest / "data-tests").mkdir(exist_ok=True)
     (dest / "snapshots").mkdir(exist_ok=True)
 
     # dbt_project.yml

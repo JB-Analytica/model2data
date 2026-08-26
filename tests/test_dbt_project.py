@@ -34,7 +34,7 @@ def test_create_project_scaffold_creates_directories(temp_dir):
     assert (temp_dir / "seeds" / "raw").exists()
     assert (temp_dir / "analysis").exists()
     assert (temp_dir / "macros").exists()
-    assert (temp_dir / "tests").exists()
+    assert (temp_dir / "data-tests").exists()
     assert (temp_dir / "snapshots").exists()
 
 

@@ -80,8 +80,8 @@ def main(
         False,
         "--unit-tests",
         help=(
-            "Also generate deterministic dbt unit test fixtures (tests/unit/) from the "
-            "generated seed rows. Requires dbt-core >= 1.8 to run."
+            "Also generate deterministic dbt unit test fixtures (models/staging/ut_stg_*.yml) "
+            "from the generated seed rows. Requires dbt-core >= 1.8 to run."
         ),
     ),
 ):

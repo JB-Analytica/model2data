@@ -238,6 +238,41 @@ def test_self_referencing_fk_does_not_break_generation():
     assert len(data["categories"]) == 10
 
 
+def test_self_referencing_fk_values_resolve_to_own_pk_column():
+    """Regression test: a self-referencing FK (e.g. employees.manager_id ->
+    employees.id) used to fall through to unrelated random values because the
+    table's own DataFrame wasn't in `generated` yet while it was being built.
+    Every non-null value in the FK column must now exist in the table's own
+    PK column."""
+    tables = {
+        "employees": TableDef(
+            name="employees",
+            columns=[
+                ColumnDef("id", "int", {"pk"}),
+                ColumnDef("manager_id", "int"),
+            ],
+        )
+    }
+
+    refs = [
+        {
+            "source_table": "employees",
+            "source_column": "manager_id",
+            "target_table": "employees",
+            "target_column": "id",
+        }
+    ]
+
+    data = generate_data_from_dbml(tables, refs, base_rows=150, seed=42)
+    df = data["employees"]
+
+    valid_ids = set(df["id"])
+    manager_ids = df["manager_id"].dropna()
+
+    assert not manager_ids.empty
+    assert set(manager_ids).issubset(valid_ids)
+
+
 def test_missing_parent_table_in_refs_is_ignored():
     tables = {
         "child": TableDef(

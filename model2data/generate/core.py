@@ -76,6 +76,7 @@ def generate_data_from_dbml(
             )
 
         df = pd.DataFrame(data)
+        df = _resolve_self_referencing_fks(df, table_def, table_name, fk_lookup, row_count)
         df = _deduplicate_composite_keys(df, table_def)
 
         # -----------------------------------------------------
@@ -154,6 +155,45 @@ def _deduplicate_composite_keys(
                 combo = tuple(df.at[idx, c] for c in key_columns)
                 attempts += 1
             seen.add(combo)
+
+    return df
+
+
+def _resolve_self_referencing_fks(
+    df: pd.DataFrame,
+    table_def: TableDef,
+    table_name: str,
+    fk_lookup: dict[tuple[str, str], tuple[str, str]],
+    row_count: int,
+) -> pd.DataFrame:
+    """
+    Re-generate any FK column that references its own table (e.g. a
+    `manager_id` on `employees` pointing back at `employees.id`) using the
+    table's own just-built parent column as the value pool.
+
+    These columns can't be resolved during the main per-column generation
+    pass above because the table isn't done building itself yet (its own
+    df isn't added to `generated` until the whole loop iteration finishes),
+    so `fk_series` falls through to None there and the column gets
+    unrelated random values instead. Once `df` exists we know the real
+    parent-column values and can fix it up here.
+    """
+    for column in table_def.columns:
+        fk_target = fk_lookup.get((table_name, column.name))
+        if not fk_target:
+            continue
+
+        parent_table, parent_column = fk_target
+        if parent_table != table_name or parent_column not in df.columns:
+            continue
+
+        ensure_unique = "pk" in column.settings
+        df[column.name] = generate_column_values(
+            column=column,
+            row_count=row_count,
+            fk_series=df[parent_column],
+            ensure_unique=ensure_unique,
+        )
 
     return df
 
