@@ -5,6 +5,63 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.5.1] - 2026-08-26
+
+Continued 1.0-readiness hardening: this round tested genuinely new hand-authored DBML schemas
+(many-to-many bridge tables, `Project`/`TableGroup` blocks, out-of-order declarations, mixed
+quote styles, CRLF line endings, wide fan-out FK schemas) end-to-end through a fresh install and
+a real `dbt build`, plus added fixed-seed fuzz testing of the parser against malformed/corrupted
+DBML. Both efforts found real bugs, fixed below.
+
+### Fixed
+- **Backtick-quoted identifiers kept their literal backticks.** `_strip_quotes` stripped `"` and
+  `'` but never `` ` ``, even though backtick-quoted identifiers are explicitly documented as
+  supported. A backtick-quoted table name came out of parsing still wrapped in backticks, which
+  then leaked into generated dbt model filenames and `ref()`/`source()` calls that `dbt` could not
+  even parse.
+- **A quoted table name containing a space or other punctuation broke the generated dbt project
+  outright.** Table names were used verbatim as CSV/seed filenames and dbt model names with no
+  validation; `dbt` requires those to be valid identifiers. Table names are now sanitized (via a
+  new `_sanitize_table_name`, applied consistently to table definitions and every place a Ref
+  references a table) into a dbt-safe identifier, while still round-tripping an already-valid name
+  — including a leading-underscore name like `_dlt_version` — unchanged.
+- **A quoted column name containing a space or other special character broke every generated
+  `not_null`/`unique`/`relationships` test.** dbt's built-in generic tests interpolate the schema
+  YAML's `name`/`field` value directly into compiled SQL with no quoting of their own; an unquoted
+  `select display name` is a SQL syntax error. Non-bare column identifiers are now pre-quoted
+  (ANSI double-quoting, reusing the existing `_quote_sql_identifier` helper) wherever they're
+  emitted into generated schema YAML.
+- **A single missing/corrupted brace could silently drop the rest of a DBML file.** A truncated
+  file, or one with a removed closing `}`, left the parser's `current_table` (or a `Project`/
+  `TableGroup` ignored-block depth counter) permanently "open" for the remainder of the file —
+  every subsequent line was then either misparsed as a bogus column of the dangling table, or
+  swallowed as ignored-block content, with zero warning and zero surviving tables. The parser now
+  detects any block (table, enum, Ref block, `indexes{}` block, note block, `Project`/
+  `TableGroup` block) still open at end-of-file, recovers what it can (an unclosed table is still
+  added to the result), and always emits a parse warning.
+- **A stray character before a top-level keyword silently dropped the whole construct.** Any line
+  that didn't match a recognized top-level construct was previously ignored with no warning at
+  all (originally so `Project`/`TableGroup` blocks could be skipped silently) — so a single
+  corrupted character landing right before a `Table ...{` line made that `.startswith("table ")`
+  check fail, and the entire table silently vanished. `Project`/`TableGroup` blocks are now
+  recognized and skipped explicitly (tracked by brace depth so a nested brace inside one doesn't
+  close it early); anything else unrecognized at the top level now emits a parse warning instead
+  of disappearing.
+
+### Added
+- `examples/tagging_m2m.dbml` — a many-to-many bridge table (composite PK on both FK columns)
+  alongside `Project {}`/`TableGroup {}` blocks.
+- `examples/mixed_quotes_crlf.dbml` — mixed backtick/double-quoted identifiers (including one
+  with a space), inline and standalone comment placement, and CRLF line endings.
+- `tests/fixtures/` — regression fixtures for out-of-order table/enum/Ref declarations, a
+  composite-only table with no single-column id/pk, a wide fact table with 9 FK columns, and a
+  minimal single-table schema with no refs.
+- `tests/test_dbml_parser_fuzz.py` — fixed-seed fuzz testing of `parse_dbml`: randomized garbage
+  DBML fragments (asserting no unhandled exception) and targeted corruptions of every bundled
+  example (truncation, brace removal, unicode/control-character injection, duplicated table
+  names, stripped keywords, injected null bytes — asserting the parser never silently loses
+  structure without at least one parse warning).
+
 ## [0.5.0] - 2026-08-26
 
 1.0-readiness hardening pass: closes out the highest-severity gaps identified by direct code

@@ -211,6 +211,37 @@ dbt run
 
 ---
 
+### 5. **tagging_m2m.dbml** — Many-to-Many Bridge Table
+
+- **Domain**: Simple blogging platform (posts ↔ tags)
+- **Focus**: A many-to-many bridge/join table (`post_tags`) with a composite
+  primary key on both foreign-key columns, plus DBML's `Project { }` and
+  `TableGroup { }` blocks (harmlessly ignored by model2data).
+
+**Try it**:
+```bash
+model2data --file examples/tagging_m2m.dbml --rows 50 --seed 42
+cd dbt_tagging_m2m
+dbt seed && dbt run
+```
+
+### 6. **mixed_quotes_crlf.dbml** — Quoting & Line-Ending Edge Cases
+
+- **Domain**: Minimal user accounts / orders schema
+- **Focus**: Mixed quote styles for identifiers (backtick, double-quote) in
+  the same file, an identifier containing a space, inline comments placed
+  after a column definition and on their own line, and Windows-style CRLF
+  line endings.
+
+**Try it**:
+```bash
+model2data --file examples/mixed_quotes_crlf.dbml --rows 50 --seed 42
+cd dbt_mixed_quotes_crlf
+dbt seed && dbt run
+```
+
+---
+
 ## Feature Matrix
 
 | Feature | hackernews | ecommerce | saas_platform | advanced_features |

@@ -1,0 +1,5 @@
+// Minimal edge case: a single table, no refs, no pk at all, just plain columns.
+Table notes {
+  content varchar
+  created_at timestamp
+}

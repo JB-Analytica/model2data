@@ -1,0 +1,34 @@
+// Many-to-many bridge table test: posts <-> tags via post_tags
+// Also exercises: Project {} block, TableGroup {} block (should be ignored)
+
+Project blog_platform {
+  database_type: 'PostgreSQL'
+  Note: 'A simple blogging platform used to test many-to-many bridge tables.'
+}
+
+Table posts {
+  id integer [pk]
+  title varchar [not null]
+  body text
+  published_at timestamp
+}
+
+Table tags {
+  id integer [pk]
+  name varchar [not null, unique]
+}
+
+Table post_tags {
+  post_id integer [ref: > posts.id]
+  tag_id integer [ref: > tags.id]
+
+  indexes {
+    (post_id, tag_id) [pk]
+  }
+}
+
+TableGroup content {
+  posts
+  tags
+  post_tags
+}

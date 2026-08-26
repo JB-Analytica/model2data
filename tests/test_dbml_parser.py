@@ -4,12 +4,13 @@ import pytest
 
 from model2data.parse.dbml import (
     _parse_column_settings,
+    _sanitize_table_name,
     _strip_quotes,
     get_many_to_many_refs,
     get_parse_warnings,
-    normalize_identifier,
     parse_dbml,
 )
+from model2data.utils import normalize_identifier
 
 
 def test_parse_hackernews_dbml():
@@ -1785,3 +1786,291 @@ def test_composite_ref_block_expands_to_single_column_refs(tmp_path):
         "target_table": "order_variants",
         "target_column": "variant_id",
     } in refs
+
+
+def test_strip_quotes_handles_backticks():
+    """Regression test: `_strip_quotes` stripped '"' and "'" but never a
+    backtick, even though backtick-quoted identifiers are explicitly
+    documented as supported (see `_INLINE_REF_RE`'s docstring). A backtick-
+    quoted table name like `` `user accounts` `` came out of parsing still
+    wrapped in literal backticks, which then leaked into generated dbt
+    model filenames/ref() calls dbt could not even parse.
+    """
+    assert _strip_quotes("`user accounts`") == "user accounts"
+    assert _strip_quotes('"user accounts"') == "user accounts"
+    assert _strip_quotes("'user accounts'") == "user accounts"
+    assert _strip_quotes("bare_name") == "bare_name"
+
+
+def test_sanitize_table_name_preserves_valid_identifiers():
+    """`_sanitize_table_name` must round-trip an already-valid identifier
+    unchanged -- including one with a leading underscore (e.g. dlt's
+    `_dlt_version`) -- since generated seeds/models are keyed off the exact
+    DBML table name (see test_dbt_naming.py's documented naming boundary).
+    Unlike `normalize_identifier` (used only for the CLI's own --name
+    option), it must not lowercase or strip leading/trailing underscores.
+    """
+    assert _sanitize_table_name("_dlt_version") == "_dlt_version"
+    assert _sanitize_table_name("stories__kids") == "stories__kids"
+    assert _sanitize_table_name("Users") == "Users"
+
+
+def test_sanitize_table_name_makes_quoted_identifier_dbt_safe():
+    """A quoted DBML table name may legally contain spaces or punctuation;
+    `_sanitize_table_name` must turn that into something safe to use as a
+    dbt model name and filesystem path component.
+    """
+    assert _sanitize_table_name("user accounts") == "user_accounts"
+    assert _sanitize_table_name("123abc") == "t_123abc"
+    assert _sanitize_table_name("!!!") == "table"
+
+
+def test_backtick_quoted_table_name_is_sanitized_end_to_end(tmp_path):
+    """Regression test for the bug found by a genuinely new hand-authored
+    schema: a backtick-quoted table name with a space produced literal
+    backticks and a space in `tables`, which downstream turned into a dbt
+    model filename/ref() call (`stg_`user accounts`.sql`) that a real
+    `dbt build` could not parse at all.
+    """
+    dbml_file = tmp_path / "backtick_table.dbml"
+    dbml_file.write_text(
+        """
+    Table `user accounts` {
+        id integer [pk]
+        name varchar
+    }
+
+    Table orders {
+        id integer [pk]
+        account_id integer [ref: > `user accounts`.id]
+    }
+    """
+    )
+    tables, refs = parse_dbml(dbml_file)
+    assert get_parse_warnings() == []
+    assert "user_accounts" in tables
+    assert "`" not in "".join(tables.keys())
+    assert refs == [
+        {
+            "source_table": "orders",
+            "source_column": "account_id",
+            "target_table": "user_accounts",
+            "target_column": "id",
+        }
+    ]
+
+
+def test_table_name_with_space_normalized_consistently_across_refs(tmp_path):
+    """A double-quoted table name with a space must be sanitized the same
+    way at every point it's referenced -- table definition, standalone Ref
+    block, and inline `[ref: ...]` -- so refs still resolve against the
+    tables dict (which is keyed by the sanitized name).
+    """
+    dbml_file = tmp_path / "quoted_space.dbml"
+    dbml_file.write_text(
+        """
+    Table "order items" {
+        id integer [pk]
+    }
+
+    Table "shipping info" {
+        id integer [pk]
+        item_id integer
+    }
+
+    Ref: "shipping info".item_id > "order items".id
+    """
+    )
+    tables, refs = parse_dbml(dbml_file)
+    assert get_parse_warnings() == []
+    assert set(tables.keys()) == {"order_items", "shipping_info"}
+    assert refs == [
+        {
+            "source_table": "shipping_info",
+            "source_column": "item_id",
+            "target_table": "order_items",
+            "target_column": "id",
+        }
+    ]
+
+
+def test_project_and_tablegroup_blocks_are_silently_ignored(tmp_path):
+    """`Project { ... }` and `TableGroup { ... }` are real DBML constructs
+    model2data intentionally doesn't need to understand. They (including
+    their multi-line interior content, and a nested brace inside the
+    Project block, e.g. its own `Note { ... }`) must be skipped cleanly:
+    no crash, no parse warning, and no effect on the tables/refs that
+    surround them.
+    """
+    dbml_file = tmp_path / "project_and_tablegroup.dbml"
+    dbml_file.write_text(
+        """
+    Project my_project {
+      database_type: 'PostgreSQL'
+      Note {
+        'A nested brace inside the Project block should not close it early.'
+      }
+    }
+
+    Table posts {
+      id integer [pk]
+    }
+
+    Table tags {
+      id integer [pk]
+    }
+
+    TableGroup content {
+      posts
+      tags
+    }
+    """
+    )
+    tables, refs = parse_dbml(dbml_file)
+    assert get_parse_warnings() == []
+    assert set(tables.keys()) == {"posts", "tags"}
+    assert refs == []
+
+
+def test_unrecognized_top_level_line_is_reported_as_parse_warning(tmp_path):
+    """Regression test: a stray character (e.g. a control character from a
+    corrupted file) landing right before a `Table ...{` line used to make
+    that `.lower().startswith("table ")` check fail silently -- the line
+    matched nothing at the top level and, since only lines *inside* a
+    table/ref/enum/note/indexes block ever warned about being
+    unrecognized, the entire table (and everything up to its closing `}`)
+    vanished from the parsed result with zero warnings. Any top-level line
+    that isn't a table/enum/ref/Project/TableGroup construct must now be
+    reported, not silently dropped.
+    """
+    dbml_file = tmp_path / "stray_top_level.dbml"
+    dbml_file.write_text(
+        """
+    Table customers {
+      id integer [pk]
+    }
+
+    this is not a real dbml construct
+
+    Table orders {
+      id integer [pk]
+    }
+    """
+    )
+    tables, refs = parse_dbml(dbml_file)
+    assert set(tables.keys()) == {"customers", "orders"}
+    warnings = get_parse_warnings()
+    assert any("this is not a real dbml construct" in w for w in warnings)
+
+
+def test_tagging_m2m_example_bridge_table_and_project_blocks():
+    """examples/tagging_m2m.dbml: a many-to-many bridge table (post_tags,
+    composite pk on both FK columns) plus Project {}/TableGroup {} blocks,
+    which must parse cleanly with zero warnings.
+    """
+    tables, refs = parse_dbml(Path("examples/tagging_m2m.dbml"))
+    assert get_parse_warnings() == []
+    assert set(tables.keys()) == {"posts", "tags", "post_tags"}
+    post_tags = tables["post_tags"]
+    assert post_tags.composite_keys == [{"columns": ["post_id", "tag_id"], "type": "pk"}]
+    assert {r["source_column"] for r in refs} == {"post_id", "tag_id"}
+
+
+def test_mixed_quotes_crlf_example_parses_cleanly():
+    """examples/mixed_quotes_crlf.dbml: backtick- and double-quoted
+    identifiers (including one with a space), an inline `[ref: ...]`, and
+    CRLF line endings all parse cleanly with a single sanitized table name
+    across the board.
+    """
+    tables, refs = parse_dbml(Path("examples/mixed_quotes_crlf.dbml"))
+    assert get_parse_warnings() == []
+    assert set(tables.keys()) == {"user_accounts", "orders"}
+    assert "`" not in "".join(tables.keys())
+    assert refs == [
+        {
+            "source_table": "orders",
+            "source_column": "account_id",
+            "target_table": "user_accounts",
+            "target_column": "id",
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    "fixture_name",
+    ["out_of_order", "composite_only", "wide_fanout", "minimal_single_table"],
+)
+def test_fixture_dbml_files_parse_without_warnings(fixture_name):
+    """tests/fixtures/*.dbml: regression coverage for edge cases found by
+    genuinely new schemas during the 1.0 hardening pass -- out-of-order
+    table/enum/Ref declarations, a table with only a composite key and no
+    single-column id/pk, a wide fact table with 9 FK columns, and a
+    single-table schema with no refs at all. All must parse cleanly.
+    """
+    tables, refs = parse_dbml(Path(f"tests/fixtures/{fixture_name}.dbml"))
+    assert get_parse_warnings() == []
+    assert tables
+
+
+def test_unclosed_table_at_eof_is_recovered_and_reported(tmp_path):
+    """Regression test: a truncated file (or one missing a closing brace)
+    used to silently swallow the still-open table -- and, worse, every
+    subsequent line in the file, since each was interpreted as if it
+    belonged to that never-closed table. The unclosed table must now be
+    recovered (best effort) and reported via a parse warning.
+    """
+    dbml_file = tmp_path / "unclosed_table.dbml"
+    dbml_file.write_text(
+        """
+    Table customers {
+      id integer [pk]
+      name varchar
+    """
+    )
+    tables, refs = parse_dbml(dbml_file)
+    assert "customers" in tables
+    assert {c.name for c in tables["customers"].columns} == {"id", "name"}
+    warnings = get_parse_warnings()
+    assert any("customers" in w and "never closed" in w for w in warnings)
+
+
+def test_unclosed_project_block_does_not_swallow_rest_of_file(tmp_path):
+    """Regression test: removing a Project block's closing brace used to
+    make the ignored-block-depth tracker never return to 0, silently
+    swallowing every table declared afterward for the rest of the file
+    with zero warnings.
+    """
+    dbml_file = tmp_path / "unclosed_project.dbml"
+    dbml_file.write_text(
+        """
+    Project my_project {
+      database_type: 'PostgreSQL'
+
+    Table customers {
+      id integer [pk]
+    }
+    """
+    )
+    tables, refs = parse_dbml(dbml_file)
+    warnings = get_parse_warnings()
+    assert any("Project/TableGroup" in w and "never closed" in w for w in warnings)
+
+
+def test_unclosed_note_block_at_eof_is_reported(tmp_path):
+    """Regression test companion to the unclosed-table case above: a
+    multi-line table note whose closing `'''` (or `}`) is missing must also
+    be reported, not just the table that contains it.
+    """
+    dbml_file = tmp_path / "unclosed_note.dbml"
+    dbml_file.write_text(
+        """
+    Table foo {
+      id int [pk]
+      note: '''
+      an unterminated triple-quoted note
+    """
+    )
+    tables, refs = parse_dbml(dbml_file)
+    warnings = get_parse_warnings()
+    assert any("Note block" in w and "never closed" in w for w in warnings)
+    assert any("foo" in w and "never closed" in w for w in warnings)

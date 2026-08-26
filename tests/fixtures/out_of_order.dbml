@@ -1,0 +1,37 @@
+// Out-of-order declarations test:
+// - a standalone Ref block referencing tables defined LATER in the file
+// - a table column typed with an enum declared LATER in the file
+// - a one-liner Ref referencing a table defined later
+
+Ref: orders.customer_id > customers.id
+
+Table orders {
+  id integer [pk]
+  customer_id integer
+  status order_status
+  total decimal
+}
+
+Ref {
+  orders.id < order_items.order_id
+}
+
+Table order_items {
+  id integer [pk]
+  order_id integer
+  product_id integer
+  quantity integer [default: 1]
+}
+
+Enum order_status {
+  pending
+  shipped
+  delivered
+  cancelled
+}
+
+Table customers {
+  id integer [pk]
+  name varchar [not null]
+  email varchar [unique]
+}

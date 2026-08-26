@@ -36,7 +36,31 @@ class TableDef:
 
 
 def _strip_quotes(value: str) -> str:
-    return value.strip().strip('"').strip("'")
+    return value.strip().strip('"').strip("'").strip("`")
+
+
+def _sanitize_table_name(value: str) -> str:
+    """Make a raw (already quote-stripped) DBML table name safe to use as a
+    dbt model/seed name and filesystem path component.
+
+    A quoted DBML identifier (`` `user accounts` ``, `"order items"`) can
+    legally contain spaces or other punctuation that isn't safe in a dbt
+    model name or file path -- generating one straight through produced
+    `stg_user accounts.sql` and a `ref('stg_user accounts')` dbt cannot even
+    parse. Unlike `normalize_identifier` (used for the CLI's own --name/
+    project-name option), this does NOT lowercase or strip leading/trailing
+    underscores: the rest of the pipeline (and test_dbt_naming.py's
+    documented DBML -> dbt naming boundary) keys generated seeds/models off
+    the table name exactly as declared in the DBML, so a name that's
+    already a valid identifier -- including a leading-underscore name like
+    `_dlt_version` -- must round-trip unchanged.
+    """
+    cleaned = re.sub(r"[^0-9A-Za-z_]+", "_", value)
+    if cleaned.strip("_") == "":
+        cleaned = "table"
+    elif cleaned[0].isdigit():
+        cleaned = f"t_{cleaned}"
+    return cleaned
 
 
 def _parse_default_value(raw: str) -> Optional[object]:
@@ -185,15 +209,6 @@ def _warn(message: str) -> None:
     _parse_warnings.append(message)
 
 
-def normalize_identifier(value: str) -> str:
-    cleaned = re.sub(r"[^0-9A-Za-z]+", "_", value).strip("_").lower()
-    if not cleaned:
-        cleaned = "table"
-    if cleaned[0].isdigit():
-        cleaned = f"t_{cleaned}"
-    return cleaned
-
-
 # Matches the composite (multi-column) standalone Ref form:
 #   table.(col_a, col_b) > table.(col_c, col_d)
 # DBML's inline `[ref: ...]` column setting has no composite syntax (a
@@ -217,8 +232,14 @@ def _record_ref(
     per zipped column pair -- see the module docstring note on _COMPOSITE_REF_RE
     for why that's an acceptable simplification) to the appropriate list,
     applying the same `<`/`<>` normalization as the original inline single-ref
-    logic.
+    logic. Table names are normalized the same way table definitions are, so
+    a Ref naming a table via a different (but equivalent, once quotes/
+    punctuation are stripped) spelling still resolves against the tables
+    dict built during table parsing.
     """
+    left_table = _sanitize_table_name(left_table)
+    right_table = _sanitize_table_name(right_table)
+
     if operator == "<>":
         many_to_many_refs.append(
             {
@@ -363,6 +384,7 @@ def parse_dbml(dbml_path: Path) -> tuple[dict[str, TableDef], list[dict]]:
     in_note_block = False
     note_block_lines: list[str] = []
     in_ref_block = False
+    ignored_block_depth = 0
 
     for raw_line in lines:
         line = raw_line.strip()
@@ -419,13 +441,29 @@ def parse_dbml(dbml_path: Path) -> tuple[dict[str, TableDef], list[dict]]:
             continue
 
         # ----------------------
+        # IGNORED BLOCKS: `Project { ... }`, `TableGroup { ... }` -- DBML
+        # features model2data intentionally doesn't need to understand.
+        # Tracked by brace depth (not just "line ends with }") so a nested
+        # brace inside the block (e.g. a Project's own `Note { ... }`)
+        # doesn't close it early and leak its content into the fallback
+        # "unrecognized line" warning below.
+        # ----------------------
+        if ignored_block_depth > 0:
+            ignored_block_depth += cleaned.count("{") - cleaned.count("}")
+            continue
+
+        if current_table is None and re.match(r"^(project|tablegroup)\b", cleaned, re.IGNORECASE):
+            ignored_block_depth = cleaned.count("{") - cleaned.count("}")
+            continue
+
+        # ----------------------
         # TABLE PARSING
         # ----------------------
         if cleaned.lower().startswith("table "):
             table_name_section = cleaned[6:].split("{", 1)[0].strip()
             if "[" in table_name_section:
                 table_name_section = table_name_section.split("[", 1)[0].strip()
-            table_name = _strip_quotes(table_name_section)
+            table_name = _sanitize_table_name(_strip_quotes(table_name_section))
             current_table = TableDef(name=table_name)
             continue
 
@@ -519,7 +557,7 @@ def parse_dbml(dbml_path: Path) -> tuple[dict[str, TableDef], list[dict]]:
             )
 
             if inline_ref is not None:
-                target_table = inline_ref["target_table"]
+                target_table = _sanitize_table_name(inline_ref["target_table"])
                 target_column = inline_ref["target_column"]
 
                 if inline_ref["operator"] == "<>":
@@ -588,6 +626,45 @@ def parse_dbml(dbml_path: Path) -> tuple[dict[str, TableDef], list[dict]]:
             if not _try_parse_ref_line(cleaned, refs, many_to_many_refs):
                 _warn(f"Unrecognized line in Ref block: {cleaned!r}")
             continue
+
+        # ----------------------
+        # FALLBACK: a top-level line that matched none of the constructs
+        # above. Reached only when current_table is None (every branch
+        # inside a table/ref/enum/note/indexes block ends in `continue`),
+        # so this is genuinely unrecognized content -- not, e.g., a column
+        # definition mid-table. Warn rather than silently dropping it: a
+        # single stray/corrupted character (a stray control character, an
+        # unrecognized keyword, ...) landing right before a `Table ...{`
+        # line used to make that entire table vanish with zero warnings.
+        # ----------------------
+        _warn(f"Unrecognized top-level line: {cleaned!r}")
+
+    # ----------------------
+    # UNCLOSED BLOCKS AT EOF
+    # ----------------------
+    # A truncated file, or one missing a closing brace (a mutated/corrupted
+    # file, a hand-edit gone wrong, ...) can end while still "inside" a
+    # block. Silently discarding that block used to be worse than losing
+    # just its own content: since every subsequent line was interpreted as
+    # if it belonged to whatever block was still open (e.g. every table
+    # after an unclosed `Table` swallowed as bogus columns of it, or every
+    # line after an unclosed `Project`/`TableGroup` swallowed as ignored
+    # content), one missing `}` could silently drop *the rest of the file*
+    # with zero warning. Recover what's usable and always warn.
+    if current_table is not None:
+        tables[current_table.name] = current_table
+        _warn(f"Table '{current_table.name}' was never closed (missing '}}') before end of file")
+    if current_enum_name is not None:
+        enums[current_enum_name.lower()] = list(current_enum_values)
+        _warn(f"Enum '{current_enum_name}' was never closed (missing '}}') before end of file")
+    if in_ref_block:
+        _warn("Ref block was never closed (missing '}') before end of file")
+    if in_indexes_block:
+        _warn("indexes{} block was never closed (missing '}') before end of file")
+    if in_note_block:
+        _warn("Note block was never closed (missing '}' or closing \"'''\") before end of file")
+    if ignored_block_depth > 0:
+        _warn("Project/TableGroup block was never closed (missing '}') before end of file")
 
     # ----------------------
     # RESOLVE ENUM TYPES
