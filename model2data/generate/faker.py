@@ -122,17 +122,38 @@ def generate_column_values(
     # -----------------------------------------------------
     if "uuid" in base_type or "hash" in base_type:
         values = [str(uuid.uuid4()) for _ in range(row_count)]
+        if ensure_unique:
+            values = _deduplicate(values, lambda: str(uuid.uuid4()))
 
     # -----------------------------------------------------
     # Integers
     # -----------------------------------------------------
     elif any(key in base_type for key in ["int", "integer", "bigint", "smallint"]):
         # Use note values if present, otherwise defaults
+        had_explicit_range = min_val is not None or max_val is not None
         if min_val is None:
             min_val = 0
         if max_val is None:
             max_val = 100
-        values = [random.randint(min_val, max_val) for _ in range(row_count)]
+
+        if ensure_unique:
+            if not had_explicit_range:
+                # No user-specified range: widen the default so there's
+                # always enough headroom for `row_count` unique PK values.
+                max_val = max(max_val, min_val + row_count - 1)
+
+            usable_range = max_val - min_val + 1
+            if usable_range >= row_count:
+                values = random.sample(range(min_val, max_val + 1), row_count)
+            else:
+                # Explicit user range genuinely too small for row_count
+                # unique values: fall back to bounded-retry regeneration
+                # and accept the same tiny-value-space tradeoff as
+                # _deduplicate.
+                values = [random.randint(min_val, max_val) for _ in range(row_count)]
+                values = _deduplicate(values, lambda: random.randint(min_val, max_val))
+        else:
+            values = [random.randint(min_val, max_val) for _ in range(row_count)]
 
     # -----------------------------------------------------
     # Floats / decimals
@@ -143,6 +164,8 @@ def generate_column_values(
         if max_val is None:
             max_val = 10_000
         values = [round(random.uniform(min_val, max_val), 2) for _ in range(row_count)]
+        if ensure_unique:
+            values = _deduplicate(values, lambda: round(random.uniform(min_val, max_val), 2))
 
     # -----------------------------------------------------
     # Booleans
@@ -185,7 +208,7 @@ def generate_column_values(
     # -----------------------------------------------------
     # Nullability
     # -----------------------------------------------------
-    if "not null" not in column.settings:
+    if "not null" not in column.settings and "pk" not in column.settings:
         null_fraction = max(0, min(0.2, 1 - (row_count / (row_count + 50))))
         sample_size = int(row_count * null_fraction)
         if sample_size:

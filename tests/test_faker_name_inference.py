@@ -115,6 +115,51 @@ class TestEnumGeneration:
         assert {v for v in values if v is not None} <= {"a", "b"}
 
 
+class TestPrimaryKeyUniqueness:
+    def test_int_pk_with_default_range_has_no_duplicates_at_scale(self):
+        # Default int range is [0, 100] -- well under 500 rows, so this would
+        # collide constantly without the default-range widening.
+        col = ColumnDef(name="id", data_type="bigint", settings={"pk", "not null"})
+        values = generate_column_values(col, row_count=500, ensure_unique=True)
+        assert len(values) == len(set(values)) == 500
+
+    def test_int_pk_with_explicit_narrow_range_does_not_crash(self):
+        # Explicit user range of only 5 values but 20 rows requested: too
+        # small to be fully unique, must fall back to bounded retry rather
+        # than crash or loop forever.
+        col = ColumnDef(
+            name="id",
+            data_type="int",
+            settings={"pk", "not null"},
+            note={"min": 0, "max": 4},
+        )
+        values = generate_column_values(col, row_count=20, ensure_unique=True)
+        assert len(values) == 20
+        assert all(0 <= v <= 4 for v in values)
+
+    def test_float_pk_like_column_has_no_duplicates(self):
+        col = ColumnDef(
+            name="id",
+            data_type="decimal",
+            settings={"pk", "not null"},
+            note={"min": 0, "max": 10_000},
+        )
+        values = generate_column_values(col, row_count=300, ensure_unique=True)
+        assert len(values) == len(set(values)) == 300
+
+    def test_uuid_pk_column_has_no_duplicates(self):
+        col = ColumnDef(name="id", data_type="uuid", settings={"pk", "not null"})
+        values = generate_column_values(col, row_count=300, ensure_unique=True)
+        assert len(values) == len(set(values)) == 300
+
+    def test_pk_only_column_without_explicit_not_null_never_produces_none(self):
+        random.seed(0)
+        col = ColumnDef(name="id", data_type="bigint", settings={"pk"})
+        values = generate_column_values(col, row_count=200, ensure_unique=True)
+        assert None not in values
+        assert len(values) == len(set(values)) == 200
+
+
 class TestDefaultValueFill:
     def test_nullable_column_with_default_never_produces_none(self):
         random.seed(0)
