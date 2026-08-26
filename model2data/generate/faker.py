@@ -62,6 +62,46 @@ _NAME_PATTERNS: list[tuple[str, Callable[[], object]]] = [
     ("summary", lambda: fake.text(max_nb_chars=160)),
 ]
 
+# DBML type substrings generate_column_values renders as a database-native
+# numeric/boolean/date/uuid value rather than arbitrary text. Shared with
+# `is_free_text_type` below so seed column-type config stays in sync with
+# actual generation.
+_STRUCTURED_TYPE_KEYS = (
+    "uuid",
+    "hash",
+    "int",
+    "integer",
+    "bigint",
+    "smallint",
+    "decimal",
+    "numeric",
+    "float",
+    "double",
+    "boolean",
+    "bool",
+    "date",
+    "time",
+    "timestamp",
+    "datetime",
+)
+
+
+def is_free_text_type(data_type: str) -> bool:
+    """
+    True for DBML types generate_column_values fills with arbitrary text
+    (name-pattern lookups, a literal Faker provider, or the generic
+    fallback) rather than a numeric/boolean/date/uuid value.
+
+    Used to force such seed columns to VARCHAR in the generated dbt
+    project: some Faker-produced text (EAN13 barcodes, postcodes with a
+    leading zero, ...) is entirely digits, which is enough for dbt's CSV
+    seed loader to mis-infer an integer column and either overflow or
+    silently strip meaningful leading zeros.
+    """
+    base_type = data_type.lower().split("(")[0].strip()
+    return not any(key in base_type for key in _STRUCTURED_TYPE_KEYS)
+
+
 # Column/table introspection helpers used by both generation and the
 # CLI's post-run summary, so the two stay in sync.
 _stats_state: dict[str, list[tuple[str, str]]] = {"unmapped": []}

@@ -111,6 +111,7 @@ def generate_data_from_dbml(
 
             df[child_column] = df[fk_column].map(lookup)
 
+        df = _coerce_integer_dtypes(df, table_def)
         generated[table_name] = df
 
     return generated
@@ -119,6 +120,25 @@ def generate_data_from_dbml(
 # ---------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------
+def _coerce_integer_dtypes(df: pd.DataFrame, table_def: TableDef) -> pd.DataFrame:
+    """
+    Cast int/bigint/smallint-typed columns to pandas' nullable "Int64" dtype.
+
+    `generate_column_values` fills "empty" nullable columns with `None`
+    (absent an explicit default). Building a plain `pd.DataFrame` from a
+    Python list mixing ints and `None` silently upcasts that column to
+    float64, so whole numbers round-trip through the CSV seed as "70.0"
+    instead of "70" and blanks. Int64 keeps them as integers and renders
+    nulls as empty cells, matching the DBML-declared type.
+    """
+    for column in table_def.columns:
+        base_type = column.data_type.lower().split("(")[0].strip()
+        if any(key in base_type for key in ["int", "integer", "bigint", "smallint"]):
+            df[column.name] = df[column.name].astype("Int64")
+
+    return df
+
+
 def _deduplicate_composite_keys(
     df: pd.DataFrame,
     table_def: TableDef,

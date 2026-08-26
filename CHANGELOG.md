@@ -5,6 +5,18 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.4.3] - 2026-08-26
+
+### Added
+- Inline column-level `[ref: > table.column]` DBML foreign-key syntax is now parsed (alongside the previously-supported standalone `Ref { table.col > table.col }` block form). `>`, `<`, and `<>` inline operators all normalize into the exact same `refs`/many-to-many structures a standalone `Ref` block produces, so FK-aware generation and dbt `relationships` tests work identically regardless of which syntax a DBML file uses. `examples/ecommerce.dbml`'s `order_items` table now demonstrates this syntax.
+
+### Fixed
+- **A relationship declared via `Ref` was tested by dbt even when the generator didn't have enough signal to make the column FK-aware, guaranteeing a false test failure.** `generate_dbt_yml` emitted a `relationships` test for every parsed ref, but `generate_data_from_dbml` only fills a column with values sampled from the parent table for refs `classify_refs` recognizes as reliable FKs (target is a `pk` or named `id`) or attribute-mirror refs riding on an existing FK between the same two tables; a ref that met neither condition (e.g. `examples/hackernews.dbml`'s `_dlt_loads.schema_version_hash < _dlt_version.version_hash`, referencing a non-`id`, non-`pk` hash column) still got random, unrelated data but was tested against the parent anyway. `generate_dbt_yml` now only emits a `relationships` test for refs the generator actually makes FK-aware.
+- **Nullable `int`/`bigint`/`smallint` columns round-tripped through the CSV seed as floats (e.g. `70.0` instead of `70`, with `None` becoming an empty float cell).** Building a `pd.DataFrame` from a plain Python list mixing ints and `None` silently upcasts the column to `float64`. Such columns are now cast to pandas' nullable `Int64` dtype after generation, so whole numbers and nulls serialize correctly.
+- **A seed column containing all-digit generated text (e.g. an `ean13`-typed SKU, or a zero-padded postcode) could be mis-inferred as an integer by dbt/duckdb's CSV loader**, either overflowing (`examples/ecommerce.dbml`'s `products.sku` failed `dbt seed` outright: a 13-digit EAN13 value doesn't fit a 32-bit `INTEGER`) or silently dropping meaningful leading zeros. Every column `generate_column_values` fills with free text (name-pattern lookups, a literal Faker provider, or the generic fallback) is now pinned to `varchar` via a generated seed `column_types` config, so dbt never has to guess.
+- **A dbt-core >= 1.10 deprecation:** the generated `accepted_values` schema test nested its `values` list directly instead of under an `arguments:` key (unlike the `relationships` test just below it in the same file), triggering a `MissingArgumentsPropertyInGenericTestDeprecation` warning on every `dbt seed`/`build` for a table with an enum-typed column.
+- `examples/saas_platform.dbml` and `examples/ecommerce.dbml` had several columns (`role`, `plan_tier`, `status`, `event_type`) typed as a bare Faker-provider-name or generic `text` with no `Enum` and no realistic name-pattern match, so they generated multi-sentence lorem-ipsum paragraphs (or, for `role`, login-style usernames) instead of plausible short values. These now use proper DBML `Enum` types with realistic values, also serving as additional worked examples of the `Enum` feature.
+
 ## [0.4.2] - 2026-08-26
 
 ### Fixed

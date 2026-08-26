@@ -179,21 +179,31 @@ def test_strip_quotes_helper():
 def test_parse_column_settings_helper():
     """Test the _parse_column_settings helper function."""
     # Single setting
-    settings, note, description, default = _parse_column_settings("pk")
+    settings, note, description, default, inline_ref = _parse_column_settings("pk")
     assert "pk" in settings
     assert note is None
     assert description is None
     assert default is None
+    assert inline_ref is None
+
+    # Inline ref setting
+    settings, note, description, default, inline_ref = _parse_column_settings(
+        "not null, ref: > users.id"
+    )
+    assert "not null" in settings
+    assert inline_ref == {"operator": ">", "target_table": "users", "target_column": "id"}
 
     # Multiple settings
-    settings, note, description, default = _parse_column_settings("pk, not null, unique")
+    settings, note, description, default, inline_ref = _parse_column_settings(
+        "pk, not null, unique"
+    )
     assert "pk" in settings
     assert "not null" in settings
     assert "unique" in settings
     assert note is None
 
     # Settings with JSON min/max note
-    settings, note, description, default = _parse_column_settings(
+    settings, note, description, default, inline_ref = _parse_column_settings(
         'pk, not null, note: \'{"min": 1, "max": 5}\''
     )
     assert "pk" in settings
@@ -204,7 +214,7 @@ def test_parse_column_settings_helper():
     assert description is None
 
     # Just a note
-    settings, note, description, default = _parse_column_settings(
+    settings, note, description, default, inline_ref = _parse_column_settings(
         'note: \'{"min": 0, "max": 100}\''
     )
     assert len(settings) == 0
@@ -213,35 +223,35 @@ def test_parse_column_settings_helper():
     assert note["max"] == 100
 
     # Plain-text note becomes a description, not a discarded value
-    settings, note, description, default = _parse_column_settings(
+    settings, note, description, default, inline_ref = _parse_column_settings(
         "note: 'the user's primary email address'"
     )
     assert note is None
     assert description == "the user's primary email address"
 
     # default: values
-    settings, note, description, default = _parse_column_settings("default: 'active'")
+    settings, note, description, default, inline_ref = _parse_column_settings("default: 'active'")
     assert default == "active"
 
-    settings, note, description, default = _parse_column_settings("default: 0")
+    settings, note, description, default, inline_ref = _parse_column_settings("default: 0")
     assert default == 0 and isinstance(default, int)
 
-    settings, note, description, default = _parse_column_settings("default: 3.14")
+    settings, note, description, default, inline_ref = _parse_column_settings("default: 3.14")
     assert default == 3.14
 
-    settings, note, description, default = _parse_column_settings("default: true")
+    settings, note, description, default, inline_ref = _parse_column_settings("default: true")
     assert default is True
 
-    settings, note, description, default = _parse_column_settings("default: `now()`")
+    settings, note, description, default, inline_ref = _parse_column_settings("default: `now()`")
     assert default is None
 
     # Empty
-    settings, note, description, default = _parse_column_settings("")
+    settings, note, description, default, inline_ref = _parse_column_settings("")
     assert len(settings) == 0
     assert note is None
 
     # None
-    settings, note, description, default = _parse_column_settings(None)
+    settings, note, description, default, inline_ref = _parse_column_settings(None)
     assert len(settings) == 0
     assert note is None
 
@@ -990,6 +1000,169 @@ def test_reference_with_diamond_operator_ignored(tmp_path):
     assert m2m[0]["source_column"] == "id"
     assert m2m[0]["target_table"] == "user_roles"
     assert m2m[0]["target_column"] == "user_id"
+
+
+# ---------------------------------------------------------
+# Inline column-level `[ref: ...]` support
+# ---------------------------------------------------------
+
+
+def test_inline_ref_greater_than_operator(tmp_path):
+    """`[ref: > table.column]` on a column is equivalent to a standalone Ref."""
+    dbml_file = tmp_path / "test.dbml"
+    dbml_file.write_text(
+        """
+    Table users {
+        id int [pk]
+    }
+
+    Table orders {
+        id int [pk]
+        user_id int [ref: > users.id]
+    }
+    """
+    )
+
+    tables, refs = parse_dbml(dbml_file)
+
+    assert len(refs) == 1
+    ref = refs[0]
+    assert ref["source_table"] == "orders"
+    assert ref["source_column"] == "user_id"
+    assert ref["target_table"] == "users"
+    assert ref["target_column"] == "id"
+
+
+def test_inline_ref_less_than_operator(tmp_path):
+    """`[ref: < table.column]` is reversed, same as a standalone `<` Ref."""
+    dbml_file = tmp_path / "test.dbml"
+    dbml_file.write_text(
+        """
+    Table users {
+        id int [pk, ref: < orders.user_id]
+    }
+
+    Table orders {
+        id int [pk]
+        user_id int
+    }
+    """
+    )
+
+    tables, refs = parse_dbml(dbml_file)
+
+    assert len(refs) == 1
+    ref = refs[0]
+    # users.id [ref: < orders.user_id] means orders.user_id is the actual
+    # FK-holding side, so it becomes source; users.id becomes target.
+    assert ref["source_table"] == "orders"
+    assert ref["source_column"] == "user_id"
+    assert ref["target_table"] == "users"
+    assert ref["target_column"] == "id"
+
+
+def test_inline_ref_many_to_many_operator(tmp_path):
+    """`[ref: <> table.column]` is captured as a many-to-many ref, not an FK."""
+    dbml_file = tmp_path / "test.dbml"
+    dbml_file.write_text(
+        """
+    Table posts {
+        id int [pk]
+        tag_id int [ref: <> tags.id]
+    }
+
+    Table tags {
+        id int [pk]
+    }
+    """
+    )
+
+    tables, refs = parse_dbml(dbml_file)
+
+    assert refs == []
+
+    m2m = get_many_to_many_refs()
+    assert len(m2m) == 1
+    assert m2m[0]["source_table"] == "posts"
+    assert m2m[0]["source_column"] == "tag_id"
+    assert m2m[0]["target_table"] == "tags"
+    assert m2m[0]["target_column"] == "id"
+
+
+def test_inline_ref_with_quoted_identifiers(tmp_path):
+    """Inline refs handle double-quoted table/column names like standalone Refs do."""
+    dbml_file = tmp_path / "test.dbml"
+    dbml_file.write_text(
+        """
+    Table "users" {
+        "id" int [pk]
+    }
+
+    Table "orders" {
+        "id" int [pk]
+        "user_id" int [ref: > "users"."id"]
+    }
+    """
+    )
+
+    tables, refs = parse_dbml(dbml_file)
+
+    assert len(refs) == 1
+    ref = refs[0]
+    assert ref["source_table"] == "orders"
+    assert ref["source_column"] == "user_id"
+    assert ref["target_table"] == "users"
+    assert ref["target_column"] == "id"
+
+
+def test_inline_ref_malformed_value_is_ignored(tmp_path):
+    """A `ref:` setting that doesn't match `<op> table.column` is dropped,
+    not crashed on -- same tolerant handling as an unparseable standalone Ref."""
+    dbml_file = tmp_path / "test.dbml"
+    dbml_file.write_text(
+        """
+    Table orders {
+        id int [pk]
+        user_id int [ref: > not_a_table_dot_column]
+    }
+    """
+    )
+
+    tables, refs = parse_dbml(dbml_file)
+
+    assert refs == []
+    assert get_many_to_many_refs() == []
+    orders = tables["orders"]
+    user_id_col = next(c for c in orders.columns if c.name == "user_id")
+    assert user_id_col is not None
+
+
+def test_inline_ref_combined_with_other_settings(tmp_path):
+    """An inline ref alongside other column settings doesn't disturb them."""
+    dbml_file = tmp_path / "test.dbml"
+    dbml_file.write_text(
+        """
+    Table users {
+        id int [pk]
+    }
+
+    Table orders {
+        id int [pk]
+        user_id int [not null, ref: > users.id]
+    }
+    """
+    )
+
+    tables, refs = parse_dbml(dbml_file)
+
+    orders = tables["orders"]
+    user_id_col = next(c for c in orders.columns if c.name == "user_id")
+    assert "not null" in user_id_col.settings
+    assert "ref" not in " ".join(user_id_col.settings)
+
+    assert len(refs) == 1
+    assert refs[0]["source_table"] == "orders"
+    assert refs[0]["target_table"] == "users"
 
 
 # ---------------------------------------------------------

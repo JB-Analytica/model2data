@@ -197,6 +197,32 @@ def test_ref_with_reverse_operator_is_normalized(tmp_path):
     assert ref["target_column"] == "id"
 
 
+def test_inline_ref_produces_fk_aware_values(tmp_path):
+    """A column-level `[ref: > table.column]` FK gets FK-aware generation,
+    the same way a standalone `Ref {}` block does."""
+    dbml = tmp_path / "inline_ref.dbml"
+    dbml.write_text(
+        """
+        Table users {
+          id int [pk]
+        }
+
+        Table orders {
+          id int [pk]
+          user_id int [ref: > users.id]
+        }
+        """
+    )
+
+    tables, refs = parse_dbml(dbml)
+    data = generate_data_from_dbml(tables, refs, base_rows=20, seed=3)
+
+    orders = data["orders"]
+    users = data["users"]
+
+    assert orders["user_id"].isin(users["id"]).all()
+
+
 def test_disconnected_tables_are_generated():
     tables = {
         "a": TableDef("a", [ColumnDef("id", "int", {"pk"})]),

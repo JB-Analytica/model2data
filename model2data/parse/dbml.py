@@ -68,17 +68,38 @@ def _parse_default_value(raw: str) -> Optional[object]:
     return None
 
 
+# Matches the "> table.column" / "< table.column" / "<> table.column" part of
+# an inline `ref: > table.column` column setting. Table/column names may be
+# bare, double-quoted, or backtick-quoted, mirroring the standalone `Ref {}`
+# block parser's identifier handling.
+_INLINE_REF_RE = re.compile(r"^(<>|[<>])\s*(\".*?\"|`.*?`|[\w]+)\.(\".*?\"|`.*?`|[\w]+)$")
+
+
+def _parse_inline_ref(value: str) -> Optional[dict]:
+    """Parse the value of a `ref:` column setting into operator + target table/column."""
+    match = _INLINE_REF_RE.match(value.strip())
+    if not match:
+        return None
+    operator, target_table, target_column = match.groups()
+    return {
+        "operator": operator,
+        "target_table": _strip_quotes(target_table),
+        "target_column": _strip_quotes(target_column),
+    }
+
+
 def _parse_column_settings(
     raw: Optional[str],
-) -> tuple[set[str], Optional[dict], Optional[str], Optional[object]]:
-    """Parse column settings, extracting note/description and default if present."""
+) -> tuple[set[str], Optional[dict], Optional[str], Optional[object], Optional[dict]]:
+    """Parse column settings, extracting note/description/default/inline ref if present."""
     if not raw:
-        return set(), None, None, None
+        return set(), None, None, None, None
 
     settings = set()
     note_dict = None
     description = None
     default_value = None
+    inline_ref = None
 
     # Split by comma, but be careful with nested structures
     parts = []
@@ -119,11 +140,13 @@ def _parse_column_settings(
         elif part.lower().startswith("default:"):
             default_str = part[len("default:") :].strip()
             default_value = _parse_default_value(default_str)
+        elif part.lower().startswith("ref:"):
+            inline_ref = _parse_inline_ref(part[len("ref:") :])
         else:
             # Regular setting (pk, not null, unique, etc.)
             settings.add(part.strip("'").strip('"').lower())
 
-    return settings, note_dict, description, default_value
+    return settings, note_dict, description, default_value, inline_ref
 
 
 # Many-to-many (`<>`) refs are captured but not fed into FK-based generation.
@@ -310,7 +333,7 @@ def parse_dbml(dbml_path: Path) -> tuple[dict[str, TableDef], list[dict]]:
             if len(col_type.split()) > 3:
                 continue
 
-            settings, note_dict, description, default_value = _parse_column_settings(
+            settings, note_dict, description, default_value, inline_ref = _parse_column_settings(
                 col_match.group(3)
             )
 
@@ -324,6 +347,42 @@ def parse_dbml(dbml_path: Path) -> tuple[dict[str, TableDef], list[dict]]:
                     default=default_value,
                 )
             )
+
+            if inline_ref is not None:
+                target_table = inline_ref["target_table"]
+                target_column = inline_ref["target_column"]
+
+                if inline_ref["operator"] == "<>":
+                    many_to_many_refs.append(
+                        {
+                            "source_table": current_table.name,
+                            "source_column": col_name,
+                            "target_table": target_table,
+                            "target_column": target_column,
+                        }
+                    )
+                elif inline_ref["operator"] == "<":
+                    # "this column is referenced by target.column": the
+                    # target is the actual FK-holding (child) side, so it
+                    # becomes source; this column becomes target, mirroring
+                    # the standalone `Ref { a < b }` swap below.
+                    refs.append(
+                        {
+                            "source_table": target_table,
+                            "source_column": target_column,
+                            "target_table": current_table.name,
+                            "target_column": col_name,
+                        }
+                    )
+                else:
+                    refs.append(
+                        {
+                            "source_table": current_table.name,
+                            "source_column": col_name,
+                            "target_table": target_table,
+                            "target_column": target_column,
+                        }
+                    )
 
             continue
 

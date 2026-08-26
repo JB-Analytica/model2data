@@ -93,6 +93,18 @@ def test_accepted_values_test_generated_for_enum_column(tmp_path):
     assert "'inactive'" in content
     assert "'pending'" in content
 
+    # accepted_values' `values` list must be nested under `arguments:`, like
+    # the relationships test below it -- dbt-core >= 1.10 deprecates (and a
+    # future version will reject) a generic test config with properties
+    # given directly instead of under `arguments`.
+    parsed = yaml.safe_load(content)
+    status_tests = next(c["tests"] for c in parsed["models"][0]["columns"] if c["name"] == "status")
+    accepted_values_test = next(
+        t["accepted_values"] for t in status_tests if "accepted_values" in t
+    )
+    assert "arguments" in accepted_values_test
+    assert set(accepted_values_test["arguments"]["values"]) == {"active", "inactive", "pending"}
+
 
 def test_table_and_column_descriptions_round_trip_as_valid_yaml(tmp_path):
     tables = {
@@ -178,6 +190,7 @@ def test_generated_file_paths_match_dbt_project_yml_resource_paths(tmp_path):
 
     model_paths = [(tmp_path / p).resolve() for p in project_yml["model-paths"]]
     test_paths = [(tmp_path / p).resolve() for p in project_yml["test-paths"]]
+    seed_paths = [(tmp_path / p).resolve() for p in project_yml["seed-paths"]]
 
     tables = {
         "orders": TableDef(
@@ -216,6 +229,11 @@ def test_generated_file_paths_match_dbt_project_yml_resource_paths(tmp_path):
             assert any(resolved.is_relative_to(root) for root in test_paths), (
                 f"{f} is a singular SQL test but is not under any configured "
                 f"test-paths dir {test_paths}"
+            )
+        elif "seeds" in f.parts:
+            assert any(resolved.is_relative_to(root) for root in seed_paths), (
+                f"{f} is a seed config file but is not under any configured "
+                f"seed-paths dir {seed_paths}"
             )
         else:
             assert any(resolved.is_relative_to(root) for root in model_paths), (
