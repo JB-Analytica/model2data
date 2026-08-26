@@ -17,12 +17,17 @@ class ColumnDef:
     data_type: str
     settings: set[str] = field(default_factory=set)
     note: Optional[dict] = None
+    description: Optional[str] = None
+    enum_values: Optional[list[str]] = None
+    default: Optional[object] = None
 
 
 @dataclass
 class TableDef:
     name: str
     columns: list[ColumnDef] = field(default_factory=list)
+    description: Optional[str] = None
+    composite_keys: list[dict] = field(default_factory=list)
 
 
 # -------------------------------
@@ -34,13 +39,46 @@ def _strip_quotes(value: str) -> str:
     return value.strip().strip('"').strip("'")
 
 
-def _parse_column_settings(raw: Optional[str]) -> tuple[set[str], Optional[dict]]:
-    """Parse column settings and extract note if present."""
+def _parse_default_value(raw: str) -> Optional[object]:
+    """Parse a `default:` setting value into a native Python type.
+
+    Backtick expressions (e.g. `now()`) are SQL expressions, not static
+    values, so they are deliberately left unparsed (returns None).
+    """
+    raw = raw.strip()
     if not raw:
-        return set(), None
+        return None
+    if raw.startswith("`") and raw.endswith("`"):
+        return None
+    if (raw.startswith("'") and raw.endswith("'")) or (raw.startswith('"') and raw.endswith('"')):
+        return _strip_quotes(raw)
+    lowered = raw.lower()
+    if lowered == "true":
+        return True
+    if lowered == "false":
+        return False
+    try:
+        return int(raw)
+    except ValueError:
+        pass
+    try:
+        return float(raw)
+    except ValueError:
+        pass
+    return None
+
+
+def _parse_column_settings(
+    raw: Optional[str],
+) -> tuple[set[str], Optional[dict], Optional[str], Optional[object]]:
+    """Parse column settings, extracting note/description and default if present."""
+    if not raw:
+        return set(), None, None, None
 
     settings = set()
     note_dict = None
+    description = None
+    default_value = None
 
     # Split by comma, but be careful with nested structures
     parts = []
@@ -72,16 +110,31 @@ def _parse_column_settings(raw: Optional[str]) -> tuple[set[str], Optional[dict]
             # Remove surrounding quotes if present
             note_str = _strip_quotes(note_str)
             try:
-                # Try to parse as JSON
+                # Try to parse as JSON (min/max convention)
                 note_dict = json.loads(note_str)
             except json.JSONDecodeError:
-                # If JSON parsing fails, ignore the note
-                pass
+                # Otherwise treat the raw text as a plain-text description
+                if note_str:
+                    description = note_str
+        elif part.lower().startswith("default:"):
+            default_str = part[len("default:") :].strip()
+            default_value = _parse_default_value(default_str)
         else:
             # Regular setting (pk, not null, unique, etc.)
             settings.add(part.strip("'").strip('"').lower())
 
-    return settings, note_dict
+    return settings, note_dict, description, default_value
+
+
+# Many-to-many (`<>`) refs are captured but not fed into FK-based generation.
+# Exposed out-of-band (mirroring generate.faker's stats-tracking pattern) so
+# `parse_dbml`'s existing 2-tuple return signature stays backward compatible.
+_last_many_to_many_refs: list[dict] = []
+
+
+def get_many_to_many_refs() -> list[dict]:
+    """Return the `<>` refs captured by the most recent parse_dbml() call."""
+    return list(_last_many_to_many_refs)
 
 
 def normalize_identifier(value: str) -> str:
@@ -93,16 +146,46 @@ def normalize_identifier(value: str) -> str:
     return cleaned
 
 
+def _parse_composite_key_line(cleaned: str) -> Optional[dict]:
+    """Parse an `indexes {}` block line like `(a, b) [pk]` or `(a) [unique]`."""
+    match = re.match(r"^\(([^)]+)\)\s*(?:\[(.+)\])?$", cleaned)
+    if not match:
+        return None
+
+    columns = [_strip_quotes(c) for c in match.group(1).split(",")]
+    columns = [c for c in columns if c]
+    if not columns:
+        return None
+
+    settings_str = match.group(2) or ""
+    settings_tokens = [s.strip().strip("'").strip('"').lower() for s in settings_str.split(",")]
+
+    key_type = None
+    if "pk" in settings_tokens:
+        key_type = "pk"
+    elif "unique" in settings_tokens:
+        key_type = "unique"
+
+    if key_type is None:
+        return None
+
+    return {"columns": columns, "type": key_type}
+
+
 def parse_dbml(dbml_path: Path) -> tuple[dict[str, TableDef], list[dict]]:
     text = dbml_path.read_text(encoding="utf-8")
     lines = text.splitlines()
     tables: dict[str, TableDef] = {}
     refs: list[dict] = []
+    enums: dict[str, list[str]] = {}
+    many_to_many_refs: list[dict] = []
 
     current_table: Optional[TableDef] = None
+    current_enum_name: Optional[str] = None
+    current_enum_values: list[str] = []
     in_indexes_block = False
     in_note_block = False
-    note_block_depth = 0
+    note_block_lines: list[str] = []
     in_ref_block = False
 
     for raw_line in lines:
@@ -114,12 +197,49 @@ def parse_dbml(dbml_path: Path) -> tuple[dict[str, TableDef], list[dict]]:
         if not cleaned:
             continue
 
-        triple_quote_count = cleaned.count("'''")
-        if triple_quote_count:
-            note_block_depth = (note_block_depth + triple_quote_count) % 2
-            if cleaned.startswith("Note:"):
+        # ----------------------
+        # ENUM PARSING
+        # ----------------------
+        if current_enum_name is not None:
+            if cleaned.startswith("}"):
+                enums[current_enum_name.lower()] = list(current_enum_values)
+                current_enum_name = None
+                current_enum_values = []
                 continue
-        if note_block_depth:
+            enum_val = cleaned.split("[", 1)[0].strip()
+            enum_val = _strip_quotes(enum_val)
+            if enum_val:
+                current_enum_values.append(enum_val)
+            continue
+
+        if current_table is None and re.match(r"^enum\s+", cleaned, re.IGNORECASE):
+            enum_name_section = (
+                re.sub(r"^enum\s+", "", cleaned, flags=re.IGNORECASE).split("{", 1)[0].strip()
+            )
+            current_enum_name = _strip_quotes(enum_name_section)
+            current_enum_values = []
+            continue
+
+        if in_note_block:
+            if "'''" in cleaned:
+                # Closing (or opening+closing) triple-quote in this line.
+                before = cleaned.split("'''", 1)[0].strip()
+                if before:
+                    note_block_lines.append(_strip_quotes(before))
+                in_note_block = False
+                text_note = "\n".join(note_block_lines).strip()
+                if current_table is not None and text_note:
+                    current_table.description = text_note
+                note_block_lines = []
+                continue
+            if cleaned == "}":
+                text_note = "\n".join(note_block_lines).strip()
+                if current_table is not None and text_note:
+                    current_table.description = text_note
+                note_block_lines = []
+                in_note_block = False
+                continue
+            note_block_lines.append(_strip_quotes(cleaned))
             continue
 
         # ----------------------
@@ -140,20 +260,40 @@ def parse_dbml(dbml_path: Path) -> tuple[dict[str, TableDef], list[dict]]:
             if in_indexes_block:
                 if cleaned.endswith("}"):
                     in_indexes_block = False
-                continue
-            if in_note_block:
-                if cleaned.endswith("}"):
-                    in_note_block = False
+                    inner = cleaned[:-1].strip()
+                    if inner:
+                        key = _parse_composite_key_line(inner)
+                        if key:
+                            current_table.composite_keys.append(key)
+                    continue
+                key = _parse_composite_key_line(cleaned)
+                if key:
+                    current_table.composite_keys.append(key)
                 continue
             if cleaned.startswith("}"):
                 tables[current_table.name] = current_table
                 current_table = None
                 continue
-            if cleaned.startswith("Note:"):
+            if cleaned.lower().startswith("note:"):
+                note_str = cleaned.split(":", 1)[1].strip()
+                if note_str.startswith("'''"):
+                    remainder = note_str[3:]
+                    if remainder.endswith("'''") and len(remainder) >= 3:
+                        text_note = remainder[:-3].strip()
+                        if text_note:
+                            current_table.description = text_note
+                    else:
+                        in_note_block = True
+                        note_block_lines = [remainder.strip()] if remainder.strip() else []
+                    continue
+                note_str = _strip_quotes(note_str.strip("'"))
+                if note_str:
+                    current_table.description = note_str
                 continue
             # Multi-line table note: `Note {` ... `}` (not a column definition)
             if cleaned.startswith("Note") and cleaned.rstrip().endswith("{"):
                 in_note_block = True
+                note_block_lines = []
                 continue
 
             col_match = re.match(
@@ -170,7 +310,9 @@ def parse_dbml(dbml_path: Path) -> tuple[dict[str, TableDef], list[dict]]:
             if len(col_type.split()) > 3:
                 continue
 
-            settings, note_dict = _parse_column_settings(col_match.group(3))
+            settings, note_dict, description, default_value = _parse_column_settings(
+                col_match.group(3)
+            )
 
             current_table.columns.append(
                 ColumnDef(
@@ -178,6 +320,8 @@ def parse_dbml(dbml_path: Path) -> tuple[dict[str, TableDef], list[dict]]:
                     data_type=col_type,
                     settings=settings,
                     note=note_dict,
+                    description=description,
+                    default=default_value,
                 )
             )
 
@@ -197,7 +341,7 @@ def parse_dbml(dbml_path: Path) -> tuple[dict[str, TableDef], list[dict]]:
 
             # Match: "table"."column" > "table"."column"
             ref_match = re.match(
-                r'(".*?"|`.*?`|[\w]+)\.(".*?"|`.*?`|[\w]+)\s*([<>])\s*'
+                r'(".*?"|`.*?`|[\w]+)\.(".*?"|`.*?`|[\w]+)\s*(<>|[<>])\s*'
                 r'(".*?"|`.*?`|[\w]+)\.(".*?"|`.*?`|[\w]+)',
                 cleaned,
             )
@@ -206,10 +350,19 @@ def parse_dbml(dbml_path: Path) -> tuple[dict[str, TableDef], list[dict]]:
 
             left_table, left_column, operator, right_table, right_column = ref_match.groups()
 
-            # Ignore <> and other non-FK relations
-            if operator not in (">", "<"):
+            if operator == "<>":
+                many_to_many_refs.append(
+                    {
+                        "source_table": _strip_quotes(left_table),
+                        "source_column": _strip_quotes(left_column),
+                        "target_table": _strip_quotes(right_table),
+                        "target_column": _strip_quotes(right_column),
+                    }
+                )
                 continue
 
+            # The regex only ever captures "<>", "<", or ">"; "<>" is handled
+            # above, so any remaining operator here is "<" or ">".
             if operator == "<":
                 left_table, right_table = right_table, left_table
                 left_column, right_column = right_column, left_column
@@ -223,5 +376,18 @@ def parse_dbml(dbml_path: Path) -> tuple[dict[str, TableDef], list[dict]]:
                 }
             )
             continue
+
+    # ----------------------
+    # RESOLVE ENUM TYPES
+    # ----------------------
+    if enums:
+        for table in tables.values():
+            for column in table.columns:
+                enum_values = enums.get(column.data_type.strip().lower())
+                if enum_values is not None:
+                    column.enum_values = list(enum_values)
+
+    global _last_many_to_many_refs
+    _last_many_to_many_refs = many_to_many_refs
 
     return tables, refs

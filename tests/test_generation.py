@@ -365,3 +365,76 @@ def test_duplicate_fk_refs_do_not_double_count_indegree():
     order = _topological_table_order(tables, refs)
 
     assert order.index("parent") < order.index("child")
+
+
+def test_composite_unique_key_deduplicates_generated_rows():
+    # Small value space (5 x 5 = 25 combos) with 20 rows requested forces
+    # collisions that the composite-key dedup pass must resolve.
+    tables = {
+        "pairs": TableDef(
+            name="pairs",
+            columns=[
+                ColumnDef("a", "int", {"not null"}, note={"min": 0, "max": 4}),
+                ColumnDef("b", "int", {"not null"}, note={"min": 0, "max": 4}),
+            ],
+            composite_keys=[{"columns": ["a", "b"], "type": "unique"}],
+        )
+    }
+
+    df = generate_data_from_dbml(tables, [], base_rows=20, seed=7)["pairs"]
+
+    combos = list(zip(df["a"], df["b"], strict=True))
+    assert len(combos) == len(set(combos)) == 20
+
+
+def test_composite_pk_key_deduplicates_generated_rows():
+    tables = {
+        "assignments": TableDef(
+            name="assignments",
+            columns=[
+                ColumnDef("project_id", "int", {"not null"}, note={"min": 0, "max": 5}),
+                ColumnDef("employee_id", "int", {"not null"}, note={"min": 0, "max": 5}),
+            ],
+            composite_keys=[{"columns": ["project_id", "employee_id"], "type": "pk"}],
+        )
+    }
+
+    df = generate_data_from_dbml(tables, [], base_rows=15, seed=3)["assignments"]
+
+    combos = list(zip(df["project_id"], df["employee_id"], strict=True))
+    assert len(combos) == len(set(combos)) == 15
+
+
+def test_composite_key_with_unsupported_type_is_ignored():
+    tables = {
+        "pairs": TableDef(
+            name="pairs",
+            columns=[ColumnDef("a", "int"), ColumnDef("b", "int")],
+            composite_keys=[{"columns": ["a", "b"], "type": "index"}],
+        )
+    }
+    df = generate_data_from_dbml(tables, [], base_rows=10, seed=1)["pairs"]
+    assert len(df) == 10
+
+
+def test_composite_key_referencing_missing_column_is_ignored():
+    tables = {
+        "pairs": TableDef(
+            name="pairs",
+            columns=[ColumnDef("a", "int"), ColumnDef("b", "int")],
+            composite_keys=[{"columns": ["a", "does_not_exist"], "type": "unique"}],
+        )
+    }
+    df = generate_data_from_dbml(tables, [], base_rows=10, seed=1)["pairs"]
+    assert len(df) == 10
+
+
+def test_no_composite_keys_leaves_generation_unaffected():
+    tables = {
+        "users": TableDef(
+            name="users",
+            columns=[ColumnDef("id", "int", {"pk"}), ColumnDef("name", "varchar")],
+        )
+    }
+    df = generate_data_from_dbml(tables, [], base_rows=10, seed=1)["users"]
+    assert len(df) == 10

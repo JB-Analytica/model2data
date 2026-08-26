@@ -99,6 +99,9 @@ def generate_column_values(
     Generate synthetic values for a single column.
     Respects FKs, uniqueness, and optional min/max hints in column notes.
     """
+    if column.enum_values:
+        return [random.choice(column.enum_values) for _ in range(row_count)]
+
     if fk_series is not None and not fk_series.empty:
         fk_values = fk_series.tolist()
         return [random.choice(fk_values) for _ in range(row_count)]
@@ -187,7 +190,7 @@ def generate_column_values(
         sample_size = int(row_count * null_fraction)
         if sample_size:
             for idx in random.sample(range(row_count), k=sample_size):
-                values[idx] = None
+                values[idx] = column.default
 
     return values
 

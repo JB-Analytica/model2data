@@ -1,6 +1,9 @@
 """Tests for column-name-based Faker inference in generate.faker."""
 
+import random
 import re
+
+import pandas as pd
 
 from model2data.generate.faker import (
     _deduplicate,
@@ -77,3 +80,67 @@ class TestNameInference:
         # Only one possible value: dedup can't succeed, but must terminate.
         result = _deduplicate(["x", "x", "x"], generator=lambda: "x", max_attempts=3)
         assert result == ["x", "x", "x"]
+
+
+class TestEnumGeneration:
+    def test_enum_values_only_ever_come_from_the_enum_set(self):
+        allowed = {"active", "inactive", "pending"}
+        for seed in range(5):
+            random.seed(seed)
+            col = ColumnDef(
+                name="status",
+                data_type="status_enum",
+                settings={"not null"},
+                enum_values=["active", "inactive", "pending"],
+            )
+            values = generate_column_values(col, row_count=200)
+            assert len(values) == 200
+            assert set(values) <= allowed
+
+    def test_enum_takes_priority_over_fk_series(self):
+        col = ColumnDef(
+            name="status",
+            data_type="status_enum",
+            settings={"not null"},
+            enum_values=["a", "b"],
+        )
+        fk_series = pd.Series([1, 2, 3])
+        values = generate_column_values(col, row_count=10, fk_series=fk_series)
+        assert set(values) <= {"a", "b"}
+
+    def test_nullable_enum_column_can_still_produce_none_without_default(self):
+        random.seed(0)
+        col = ColumnDef(name="status", data_type="status_enum", enum_values=["a", "b"])
+        values = generate_column_values(col, row_count=200)
+        assert {v for v in values if v is not None} <= {"a", "b"}
+
+
+class TestDefaultValueFill:
+    def test_nullable_column_with_default_never_produces_none(self):
+        random.seed(0)
+        col = ColumnDef(
+            name="status",
+            data_type="varchar",
+            settings=set(),
+            default="active",
+        )
+        values = generate_column_values(col, row_count=200)
+        assert None not in values
+        assert "active" in values
+
+    def test_nullable_column_without_default_can_produce_none(self):
+        random.seed(0)
+        col = ColumnDef(name="status", data_type="varchar", settings=set())
+        values = generate_column_values(col, row_count=200)
+        assert None in values
+
+    def test_not_null_column_ignores_default_null_fill_path(self):
+        random.seed(0)
+        col = ColumnDef(
+            name="status",
+            data_type="varchar",
+            settings={"not null"},
+            default="active",
+        )
+        values = generate_column_values(col, row_count=50)
+        assert None not in values

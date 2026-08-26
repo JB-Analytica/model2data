@@ -144,6 +144,14 @@ Connection details are read from environment variables (`MODEL2DATA_PG_HOST`, `M
 
 After generation, the CLI prints a short summary — tables and rows generated, relationships found in the DBML, and any columns that fell back to generic placeholder text because neither their type nor name could be matched.
 
+Pass `--unit-tests` to also generate deterministic dbt unit test fixtures (`tests/unit/test_stg_<table>.yml`) from the actually-generated seed rows:
+
+```bash
+model2data --file examples/hackernews.dbml --rows 200 --seed 42 --unit-tests
+```
+
+This targets dbt-core's native unit testing feature, which requires **dbt-core >= 1.8**. Since this project only requires `dbt-core>=1.5.0` by default, unit test generation is opt-in — leave the flag off if your dbt-core version is older.
+
 ---
 
 ## Generated dbt project structure
@@ -172,8 +180,13 @@ dbt_{project_name}/
 
 - **Seeds**: CSV files with generated synthetic data.
 - **Staging Models**: Basic dbt models that load from seeds.
-- **Sources & Tests**: YAML configs defining sources and basic tests (not_null, unique).
+- **Sources & Tests**: YAML configs defining sources and column tests (`not_null`, `unique`,
+  `relationships`, and `accepted_values` for DBML `Enum`-typed columns). Table and column
+  `Note` text from the DBML becomes `description:` fields. Composite primary/unique keys
+  declared in an `indexes { }` block get a singular SQL test under `tests/`.
 - **Profiles**: Pre-configured for DuckDB (file-based) or Postgres (via env vars), with schema handling.
+- **Unit tests** (opt-in via `--unit-tests`): `tests/unit/test_stg_<table>.yml` fixtures built
+  from real generated rows. Requires dbt-core >= 1.8.
 
 ---
 
@@ -200,6 +213,9 @@ dbt_{project_name}/
 - [x] Postgres adapter support (`--adapter postgres`)
 - [x] Name-aware synthetic data (email, name, address, phone, etc. instead of generic text)
 - [x] Post-run generation summary (tables, rows, relationships, unmapped columns)
+- [x] DBML `Enum` support, real table/column notes as dbt descriptions, composite keys from
+      `indexes { }`, `default:` values, and opt-in deterministic dbt unit test scaffolding
+      (`--unit-tests`)
 - [ ] Additional database adapters (e.g., Snowflake, BigQuery).
 - [ ] Enhanced data type handling and custom generators.
 - [ ] Improved schema exploration and developer tooling.
