@@ -1,6 +1,41 @@
 // SaaS Multi-Tenant Platform Schema
-// Showcases: Multi-tenant isolation, Faker data types, min/max constraints for numeric fields
+// Showcases: Multi-tenant isolation, Faker data types, min/max constraints for numeric fields, Enums
 // Example: model2data generate --file examples/saas_platform.dbml --rows 20 --seed 42
+
+Enum user_role {
+  admin
+  member
+  viewer
+}
+
+Enum plan_tier_type {
+  free
+  starter
+  pro
+  enterprise
+}
+
+Enum subscription_status {
+  trialing
+  active
+  past_due
+  canceled
+}
+
+Enum invoice_status {
+  draft
+  open
+  paid
+  void
+}
+
+Enum audit_event_type {
+  login
+  logout
+  create
+  update
+  delete
+}
 
 Table organizations {
   id bigint [pk, not null]
@@ -16,15 +51,15 @@ Table users {
   email email [not null]
   first_name first_name [not null]
   last_name last_name [not null]
-  role user_name
+  role user_role
 }
 
 Table subscriptions {
   id bigint [pk, not null]
   organization_id bigint [not null]
-  plan_tier text [not null]
+  plan_tier plan_tier_type [not null]
   monthly_price numeric [not null, note: '{"min": 0, "max": 999}']
-  status text
+  status subscription_status
   current_period_start timestamp [not null]
   current_period_end timestamp
 }
@@ -34,7 +69,7 @@ Table invoices {
   organization_id bigint [not null]
   subscription_id bigint [not null]
   amount numeric [not null, note: '{"min": 0, "max": 999}']
-  status text
+  status invoice_status
   created_at timestamp [not null]
 }
 
@@ -57,7 +92,7 @@ Table audit_events {
   id bigint [pk, not null]
   organization_id bigint [not null]
   user_id bigint
-  event_type text [not null]
+  event_type audit_event_type [not null]
   resource_id text
   resource_type text
   created_at timestamp [not null]

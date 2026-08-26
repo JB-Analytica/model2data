@@ -6,6 +6,9 @@ from typing import Any, Union
 import pandas as pd
 import yaml
 
+from model2data.generate.faker import is_free_text_type
+from model2data.generate.relationships import classify_refs
+
 
 def _yaml_field_lines(key: str, value: str, indent: str) -> list[str]:
     """Render `key: value` as safely-escaped YAML lines at the given indent."""
@@ -28,8 +31,23 @@ def generate_dbt_yml(dest: Path, tables: dict, refs: list[dict], source_name: st
     # -------------------------
     # Build foreign key map
     # -------------------------
+    # Only emit a `relationships` test for refs the generator actually makes
+    # FK-aware: direct FK refs (target column is a pk/"id"), plus attribute
+    # refs that ride along an existing FK between the same two tables (see
+    # generate.core's attribute-mirroring pass). An attribute ref with no
+    # accompanying FK is left as unrelated random data by the generator, so
+    # testing it against the parent table would be a guaranteed false
+    # failure.
+    fk_refs_classified, attribute_refs_classified = classify_refs(tables, refs)
+    fk_table_pairs = {(fk["source_table"], fk["target_table"]) for fk in fk_refs_classified}
+    eligible_refs = list(fk_refs_classified) + [
+        ref
+        for ref in attribute_refs_classified
+        if (ref["source_table"], ref["target_table"]) in fk_table_pairs
+    ]
+
     fk_map = defaultdict(list)
-    for ref in refs:
+    for ref in eligible_refs:
         fk_map[(ref["source_table"], ref["source_column"])].append(ref)
 
     # -------------------------
@@ -102,9 +120,10 @@ def generate_dbt_yml(dest: Path, tables: dict, refs: list[dict], source_name: st
                         lines.append(f"          - {test}")
                     elif "accepted_values" in test:
                         lines.append("          - accepted_values:")
-                        lines.append("              values:")
+                        lines.append("              arguments:")
+                        lines.append("                values:")
                         for value in test["accepted_values"]["values"]:
-                            lines.append(f"                - {value!r}")
+                            lines.append(f"                  - {value!r}")
                     else:
                         # relationships test with arguments
                         for k, v in test.items():
@@ -121,6 +140,44 @@ def generate_dbt_yml(dest: Path, tables: dict, refs: list[dict], source_name: st
     # Composite key singular tests
     # -------------------------
     _generate_composite_key_tests(dest, tables)
+
+    # -------------------------
+    # Seed column-type overrides
+    # -------------------------
+    _generate_seed_config(dest, tables)
+
+
+def _generate_seed_config(dest: Path, tables: dict) -> None:
+    """
+    Force every free-text column (see `is_free_text_type`) to VARCHAR in
+    the seed loader config, instead of letting dbt/duckdb sniff the type
+    from CSV content. Some generated text is all-digit (EAN13 barcodes,
+    zero-padded postcodes, ...) and would otherwise be silently loaded as
+    an integer, overflowing or dropping leading zeros.
+    """
+    lines = ["version: 2", "", "seeds:"]
+    any_column_types = False
+
+    for table in tables.values():
+        column_types = {
+            col.name: "varchar" for col in table.columns if is_free_text_type(col.data_type)
+        }
+        if not column_types:
+            continue
+
+        any_column_types = True
+        lines.append(f"  - name: {table.name}")
+        lines.append("    config:")
+        lines.append("      column_types:")
+        for col_name, col_type in column_types.items():
+            lines.append(f"        {col_name}: {col_type}")
+
+    if not any_column_types:
+        return
+
+    seed_raw_path = dest / "seeds" / "raw"
+    seed_raw_path.mkdir(parents=True, exist_ok=True)
+    (seed_raw_path / "__seed_config.yml").write_text("\n".join(lines))
 
 
 def _generate_composite_key_tests(dest: Path, tables: dict) -> None:

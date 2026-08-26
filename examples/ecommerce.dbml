@@ -1,6 +1,15 @@
 // E-Commerce Platform Schema
-// Showcases: Foreign keys, min/max constraints, Faker data types for realistic data
+// Showcases: Foreign keys (both standalone Ref blocks and inline column-level
+// [ref: > ...] settings), min/max constraints, Faker data types, Enums
 // Example: model2data generate --file examples/ecommerce.dbml --rows 50 --seed 42
+
+Enum order_status {
+  pending
+  processing
+  shipped
+  delivered
+  cancelled
+}
 
 Table customers {
   id bigint [pk, not null]
@@ -27,13 +36,13 @@ Table orders {
   customer_id bigint [not null]
   order_date timestamp [not null]
   total_amount numeric [not null, note: '{"min": 10, "max": 5000}']
-  status text
+  status order_status
 }
 
 Table order_items {
   id bigint [pk, not null]
-  order_id bigint [not null]
-  product_id bigint [not null]
+  order_id bigint [not null, ref: > orders.id]
+  product_id bigint [not null, ref: > products.id]
   quantity int [not null, note: '{"min": 1, "max": 10}']
   unit_price numeric [not null, note: '{"min": 5.99, "max": 999.99}']
 }
@@ -48,14 +57,6 @@ Table product_reviews {
 
 Ref {
   orders.customer_id > customers.id
-}
-
-Ref {
-  order_items.order_id > orders.id
-}
-
-Ref {
-  order_items.product_id > products.id
 }
 
 Ref {
