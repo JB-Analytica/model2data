@@ -577,7 +577,7 @@ def test_cli_all_output_messages_present(tmp_path):
 
 
 def test_cli_without_unit_tests_flag_creates_no_unit_test_dir(tmp_path):
-    """--unit-tests defaults to off: no tests/unit/ directory should appear."""
+    """--unit-tests defaults to off: no unit test YAML should appear."""
     dbml_file = tmp_path / "test.dbml"
     dbml_file.write_text(
         """
@@ -596,11 +596,11 @@ def test_cli_without_unit_tests_flag_creates_no_unit_test_dir(tmp_path):
         os.chdir(original_cwd)
 
     assert result.exit_code == 0
-    assert not (tmp_path / "dbt_test" / "tests" / "unit").exists()
+    assert not list((tmp_path / "dbt_test" / "models" / "staging").glob("ut_*.yml"))
 
 
 def test_cli_with_unit_tests_flag_generates_unit_test_yaml(tmp_path):
-    """--unit-tests writes tests/unit/test_stg_<table>.yml and prints the dbt-core note."""
+    """--unit-tests writes models/staging/ut_stg_<table>.yml and prints the dbt-core note."""
     dbml_file = tmp_path / "test.dbml"
     dbml_file.write_text(
         """
@@ -632,7 +632,7 @@ def test_cli_with_unit_tests_flag_generates_unit_test_yaml(tmp_path):
     assert result.exit_code == 0
     assert "dbt-core >= 1.8" in result.stdout
 
-    unit_yml = tmp_path / "dbt_test" / "tests" / "unit" / "test_stg_users.yml"
+    unit_yml = tmp_path / "dbt_test" / "models" / "staging" / "ut_stg_users.yml"
     assert unit_yml.exists()
 
     import yaml

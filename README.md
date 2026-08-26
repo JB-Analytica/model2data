@@ -97,7 +97,9 @@ flowchart LR
    (int, date, timestamp, ...), name-aware inference for everything else (`email`, `phone`,
    `city`, ...), foreign keys resolved against already-generated parent rows.
 3. **Scaffold.** Writes a complete dbt project around that data: CSV seeds, staging models with
-   `source`/`not_null`/`unique`/`relationships` tests, and a profile for DuckDB (zero-config,
+   `source`/`not_null`/`unique`/`relationships` tests, `accepted_values` tests for DBML
+   `Enum`-typed columns, singular SQL tests for composite primary/unique keys, table and column
+   `description:` fields pulled from DBML notes, and a profile for DuckDB (zero-config,
    file-based) or Postgres.
 
 ---
@@ -144,7 +146,7 @@ Connection details are read from environment variables (`MODEL2DATA_PG_HOST`, `M
 
 After generation, the CLI prints a short summary — tables and rows generated, relationships found in the DBML, and any columns that fell back to generic placeholder text because neither their type nor name could be matched.
 
-Pass `--unit-tests` to also generate deterministic dbt unit test fixtures (`tests/unit/test_stg_<table>.yml`) from the actually-generated seed rows:
+Pass `--unit-tests` to also generate deterministic dbt unit test fixtures (`models/staging/ut_stg_<table>.yml`) from the actually-generated seed rows:
 
 ```bash
 model2data --file examples/hackernews.dbml --rows 200 --seed 42 --unit-tests
@@ -161,32 +163,36 @@ The generated dbt project includes:
 ```
 dbt_{project_name}/
 ├── seeds/
-│   └── {project_name}/
+│   └── raw/
 │       ├── table1.csv
 │       └── table2.csv
 ├── models/
-│   └── {project_name}/
-│       └── staging/
-│           ├── __sources.yml
-│           ├── stg_table1.sql
-│           ├── stg_table1.yml
-│           └── ...
+│   └── staging/
+│       ├── __sources.yml
+│       ├── stg_table1.sql
+│       ├── stg_table1.yml
+│       ├── ut_stg_table1.yml  # only with --unit-tests
+│       └── ...
+├── data-tests/
+│   └── unique_combination_stg_table1_col_a_col_b.sql  # only for composite pk/unique keys
 ├── macros/
 │   └── generate_schema_name.sql
 ├── dbt_project.yml
 ├── profiles.yml  # DuckDB or Postgres config, depending on --adapter
-└── {project_name}.duckdb  # DuckDB adapter only
+└── {project_name}_profile.duckdb  # DuckDB adapter only
 ```
 
 - **Seeds**: CSV files with generated synthetic data.
 - **Staging Models**: Basic dbt models that load from seeds.
 - **Sources & Tests**: YAML configs defining sources and column tests (`not_null`, `unique`,
   `relationships`, and `accepted_values` for DBML `Enum`-typed columns). Table and column
-  `Note` text from the DBML becomes `description:` fields. Composite primary/unique keys
-  declared in an `indexes { }` block get a singular SQL test under `tests/`.
+  `Note` text from the DBML becomes `description:` fields.
+- **Composite key tests**: Composite primary/unique keys declared in an `indexes { }` block get
+  a singular SQL test under `data-tests/`, dbt's configured `test-paths`.
 - **Profiles**: Pre-configured for DuckDB (file-based) or Postgres (via env vars), with schema handling.
-- **Unit tests** (opt-in via `--unit-tests`): `tests/unit/test_stg_<table>.yml` fixtures built
-  from real generated rows. Requires dbt-core >= 1.8.
+- **Unit tests** (opt-in via `--unit-tests`): `models/staging/ut_stg_<table>.yml` fixtures built
+  from real generated rows, co-located with each staging model so dbt (which only parses unit
+  tests from `model-paths`) picks them up. Requires dbt-core >= 1.8.
 
 ---
 
