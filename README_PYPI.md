@@ -58,40 +58,6 @@ access required.
 
 ## How it works
 
-```mermaid
-flowchart LR
-    subgraph input [" "]
-        A["📄 DBML schema"]
-    end
-
-    subgraph m2d ["model2data"]
-        direction LR
-        B["Parse\ntables, columns,\nrelationships"] --> C["Generate\nFaker + name-aware\ninference, FK-aware"]
-        C --> D["Scaffold\nseeds · staging models\ntests · profile"]
-    end
-
-    subgraph output ["Generated dbt project"]
-        direction TB
-        E["seeds/*.csv"]
-        F["models/staging/*.sql + *.yml"]
-        G["profiles.yml\n(DuckDB or Postgres)"]
-    end
-
-    A --> B
-    D --> E
-    D --> F
-    D --> G
-    E & F & G --> H["dbt seed && dbt run"]
-    H --> I[("Analytics-ready\ndataset")]
-
-    classDef m2dStyle fill:#0A3866,stroke:#2196F0,color:#F6F8FB
-    classDef outStyle fill:#182333,stroke:#A8C9EE,color:#F6F8FB
-    classDef endStyle fill:#FA9306,stroke:#FA9306,color:#182333
-    class B,C,D m2dStyle
-    class E,F,G outStyle
-    class H,I endStyle
-```
-
 1. **Parse.** Reads tables, columns, types, and `Ref` relationships from a DBML file.
 2. **Generate.** Produces synthetic values per column — typed generation for known SQL types
    (int, date, timestamp, ...), name-aware inference for everything else (`email`, `phone`,

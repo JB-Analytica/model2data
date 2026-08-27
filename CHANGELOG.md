@@ -5,6 +5,35 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.0.0] - 2026-08-27
+
+First stable release. No functional changes to generation or parsing since 0.5.1 — this release
+is about the project's presentation and long-term stance, not new behavior.
+
+### Added
+- `LLMS.md`: instructions for LLM/coding-agent users, covering the full DBML feature set
+  model2data understands and the exact command sequence to go from a schema description to a
+  running dbt project.
+
+### Fixed
+- **The PyPI project page's description rendered broken.** Both embedded images used paths
+  relative to the GitHub repository, which PyPI's renderer doesn't resolve — they appeared as
+  broken image icons. The architecture diagram, a GitHub-flavored-Markdown Mermaid code fence,
+  rendered as a raw, unparsed code block on PyPI (which doesn't support Mermaid) instead of a
+  diagram. Fixed with a PyPI-specific `README_PYPI.md` (absolute image URLs, no Mermaid fence —
+  the diagram's content is already covered in the prose immediately below it) now used as the
+  package's `readme` in `pyproject.toml`; `README.md` keeps the richer GitHub-rendered version
+  unchanged. Verified with `twine check` and a manual inspection of the packaged METADATA.
+
+### Changed
+- Rewrote the README's "Roadmap" section as "Project status": as of 1.0.0, model2data is
+  considered feature-complete for its intended use case, with no active roadmap of new
+  capabilities — see the README for what was deliberately left out of scope for anyone
+  interested in contributing it.
+- Updated the README's "Limitations" section, which had gone stale relative to the DBML fidelity
+  work landed across 0.4.x/0.5.x (composite keys, self-references, both `Ref` syntaxes, parse
+  warnings, etc.).
+
 ## [0.5.1] - 2026-08-26
 
 Continued 1.0-readiness hardening: this round tested genuinely new hand-authored DBML schemas
