@@ -220,8 +220,8 @@ wants to pick them up as a contribution:
 - Additional database adapters (e.g. Snowflake, BigQuery).
 - A rule-based semantic layer scaffold (`semantic_models.yml`/basic metrics) derived from the
   parsed schema shape.
-- Example mart-layer models on top of staging (the generated `dbt_project.yml` already reserves a
-  `marts` schema/materialization config for this).
+- Example mart-layer models on top of staging (the generated `dbt_project.yml` carries a
+  ready-to-uncomment `marts` schema/materialization config for this).
 - Locale-aware generation (`--locale`) for non-English/US synthetic data.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) if you'd like to work on any of these.

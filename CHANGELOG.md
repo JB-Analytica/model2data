@@ -41,6 +41,12 @@ same neighborhood — also fixed below, with 495 new parametrized regression cas
   examples: a bare `dbt build` on a fresh database reaches `ERROR=0` for each. A permanent
   dbt-CLI regression test (`tests/test_dbt_integration.py::
   test_bare_dbt_build_succeeds_on_a_fresh_database`) now runs exactly that.
+- **Every `dbt build` printed an "unused configuration paths" warning.** The generated
+  `dbt_project.yml` declared a `models.<project>.marts` config block, but model2data only ever
+  generates staging models, so the path matched no resource and dbt warned about it on every
+  single run. The block is now commented out, with a note explaining when to uncomment it — the
+  scaffolding intent is preserved for anyone adding their own marts models, without the noise.
+
 - **The PyPI project page's description rendered broken.** Both embedded images used paths
   relative to the GitHub repository, which PyPI's renderer doesn't resolve — they appeared as
   broken image icons. The architecture diagram, a GitHub-flavored-Markdown Mermaid code fence,

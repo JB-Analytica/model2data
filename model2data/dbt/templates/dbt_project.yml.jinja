@@ -21,9 +21,13 @@ models:
     staging:
       +schema: staging
       +materialized: view
-    marts:
-      +schema: marts
-      +materialized: table
+    # model2data generates staging models only. Uncomment when you add your
+    # own models under models/marts/ -- dbt warns about configuration paths
+    # that match no resources, so leaving this active would print an
+    # "unused configuration paths" warning on every run.
+    # marts:
+    #   +schema: marts
+    #   +materialized: table
 
 seeds:
   +schema: raw
