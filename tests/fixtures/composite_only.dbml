@@ -1,0 +1,11 @@
+// Table with ONLY a composite key, no single-column id/pk at all.
+Table monthly_metrics {
+  region varchar [not null]
+  year integer [not null]
+  month integer [not null]
+  revenue decimal
+
+  indexes {
+    (region, year, month) [pk]
+  }
+}

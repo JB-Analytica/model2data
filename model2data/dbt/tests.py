@@ -1,4 +1,5 @@
 import datetime
+import re
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Union
@@ -103,12 +104,12 @@ def generate_dbt_yml(dest: Path, tables: dict, refs: list[dict], source_name: st
                     {
                         "relationships": {
                             "to": f"ref('stg_{fk['target_table']}')",
-                            "field": fk["target_column"],
+                            "field": _dbt_column_ref(fk["target_column"]),
                         }
                     }
                 )
 
-            col_doc: dict[str, Any] = {"name": col.name}
+            col_doc: dict[str, Any] = {"name": _dbt_column_ref(col.name)}
             description = getattr(col, "description", None)
             if description:
                 col_doc["description"] = description
@@ -175,6 +176,25 @@ def _quote_sql_identifier(name: str) -> str:
     the standard ANSI SQL convention.
     """
     return '"' + name.replace('"', '""') + '"'
+
+
+_BARE_SQL_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _dbt_column_ref(name: str) -> str:
+    """Return a column identifier the way it should appear in generated dbt
+    schema YAML (a `columns:` entry's `name:`, or a `relationships` test's
+    `field:`).
+
+    dbt's built-in generic tests (`not_null`, `unique`, `relationships`, ...)
+    interpolate that YAML value directly into compiled SQL as-is (e.g.
+    `select {{ column_name }} as ...`), with no quoting of their own. A
+    DBML identifier that needed quoting to contain a space or other special
+    character (`"display name"`) therefore breaks the compiled SQL unless
+    the YAML value is pre-quoted here -- dbt's own documented workaround for
+    exactly this case.
+    """
+    return name if _BARE_SQL_IDENTIFIER_RE.match(name) else _quote_sql_identifier(name)
 
 
 def _generate_composite_key_tests(dest: Path, tables: dict) -> None:

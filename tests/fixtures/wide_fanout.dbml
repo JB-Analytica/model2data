@@ -1,0 +1,70 @@
+// Wide/deep schema: a central fact table with 8+ FK columns pointing at many
+// different parent (dimension) tables, to stress the topological sort and
+// FK lookup logic beyond the 4 bundled examples.
+
+Table countries {
+  id integer [pk]
+  name varchar [not null]
+}
+
+Table currencies {
+  id integer [pk]
+  code varchar [not null, unique]
+}
+
+Table channels {
+  id integer [pk]
+  name varchar [not null]
+}
+
+Table payment_methods {
+  id integer [pk]
+  name varchar [not null]
+}
+
+Table shipping_carriers {
+  id integer [pk]
+  name varchar [not null]
+}
+
+Table sales_reps {
+  id integer [pk]
+  name varchar [not null]
+}
+
+Table warehouses {
+  id integer [pk]
+  location varchar
+}
+
+Table promo_codes {
+  id integer [pk]
+  code varchar [unique]
+}
+
+Table customers {
+  id integer [pk]
+  country_id integer [ref: > countries.id]
+  name varchar [not null]
+}
+
+Table products {
+  id integer [pk]
+  warehouse_id integer [ref: > warehouses.id]
+  name varchar [not null]
+}
+
+Table sales_fact {
+  id integer [pk]
+  customer_id integer [ref: > customers.id]
+  product_id integer [ref: > products.id]
+  country_id integer [ref: > countries.id]
+  currency_id integer [ref: > currencies.id]
+  channel_id integer [ref: > channels.id]
+  payment_method_id integer [ref: > payment_methods.id]
+  shipping_carrier_id integer [ref: > shipping_carriers.id]
+  sales_rep_id integer [ref: > sales_reps.id]
+  promo_code_id integer [ref: > promo_codes.id]
+  amount decimal [not null]
+  order_date date
+}

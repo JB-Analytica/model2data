@@ -3,7 +3,12 @@ import yaml
 
 from model2data.cli import main as generate_cli
 from model2data.dbt.project import create_project_scaffold
-from model2data.dbt.tests import _to_native_value, generate_dbt_yml, generate_unit_tests
+from model2data.dbt.tests import (
+    _dbt_column_ref,
+    _to_native_value,
+    generate_dbt_yml,
+    generate_unit_tests,
+)
 from model2data.parse.dbml import ColumnDef, TableDef
 
 
@@ -355,7 +360,12 @@ def test_generate_dbt_yml_handles_identifier_with_space(tmp_path):
     stg_text = (tmp_path / "models" / "staging" / "stg_my weird table.yml").read_text()
     stg_yaml = yaml.safe_load(stg_text)
     col_names = {c["name"] for c in stg_yaml["models"][0]["columns"]}
-    assert "a column" in col_names
+    # dbt's built-in generic tests (not_null, unique, ...) splice the YAML
+    # `name:` value directly into compiled SQL with no quoting of their own
+    # (`select {{ column_name }} ...`); a real `dbt build` against an
+    # unquoted "a column" fails with a SQL parser error. The generated YAML
+    # must pre-quote any column name that isn't a bare SQL identifier.
+    assert '"a column"' in col_names
 
     test_files = list((tmp_path / "data-tests").glob("*.sql"))
     assert len(test_files) == 1
@@ -378,7 +388,9 @@ def test_generate_dbt_yml_handles_identifier_with_colon(tmp_path):
     stg_text = (tmp_path / "models" / "staging" / "stg_orders.yml").read_text()
     stg_yaml = yaml.safe_load(stg_text)  # raises if the colon broke YAML syntax
     col_names = {c["name"] for c in stg_yaml["models"][0]["columns"]}
-    assert "status: code" in col_names
+    # Quoted for the same reason as the space case above: an unquoted colon
+    # in a generic test's compiled SQL is a syntax error.
+    assert '"status: code"' in col_names
 
 
 def test_generate_dbt_yml_handles_identifier_with_single_quote(tmp_path):
@@ -396,7 +408,11 @@ def test_generate_dbt_yml_handles_identifier_with_single_quote(tmp_path):
     stg_text = (tmp_path / "models" / "staging" / "stg_users.yml").read_text()
     stg_yaml = yaml.safe_load(stg_text)
     col_names = {c["name"] for c in stg_yaml["models"][0]["columns"]}
-    assert "user's name" in col_names
+    # ANSI double-quoted (not escaped for YAML/Jinja): a bare "user's name"
+    # in a generic test's compiled SQL is a syntax error (see the space/
+    # colon cases above); the embedded apostrophe is safe inside the outer
+    # double quotes and needs no further escaping.
+    assert '"user\'s name"' in col_names
 
 
 def test_generate_unit_tests_handles_identifier_with_single_quote(tmp_path):
@@ -428,3 +444,55 @@ def test_single_column_index_entry_produces_no_singular_test(tmp_path):
     tests_dir = tmp_path / "data-tests"
     sql_files = list(tests_dir.glob("*.sql")) if tests_dir.exists() else []
     assert sql_files == []
+
+
+def test_dbt_column_ref_quotes_only_when_needed():
+    """Regression test: dbt's generic tests (not_null, unique,
+    relationships, accepted_values, ...) splice the schema YAML's
+    `name`/`field` value directly into compiled SQL with no quoting of
+    their own. A real `dbt build` against a generated project with a
+    space/colon/special-char column name failed with a SQL parser error
+    until `_dbt_column_ref` started pre-quoting non-bare identifiers.
+    """
+    assert _dbt_column_ref("id") == "id"
+    assert _dbt_column_ref("user_id") == "user_id"
+    assert _dbt_column_ref("display name") == '"display name"'
+    assert _dbt_column_ref("status:code") == '"status:code"'
+    assert _dbt_column_ref('has"quote') == '"has""quote"'
+
+
+def test_relationships_test_field_is_quoted_for_special_target_column(tmp_path):
+    """The `field:` of a generated `relationships` test is the *target*
+    (parent) column name -- also spliced raw into compiled SQL by dbt's
+    relationships test macro, so it needs the same quoting as a table's own
+    `columns: - name:` entries.
+    """
+    tables = {
+        "accounts": TableDef(
+            name="accounts",
+            columns=[ColumnDef("account id", "int", {"pk"})],
+        ),
+        "orders": TableDef(
+            name="orders",
+            columns=[ColumnDef("id", "int", {"pk"}), ColumnDef("account_id", "int", set())],
+        ),
+    }
+    refs = [
+        {
+            "source_table": "orders",
+            "source_column": "account_id",
+            "target_table": "accounts",
+            "target_column": "account id",
+        }
+    ]
+    generate_dbt_yml(tmp_path, tables, refs, source_name="shop")
+
+    stg_text = (tmp_path / "models" / "staging" / "stg_orders.yml").read_text()
+    stg_yaml = yaml.safe_load(stg_text)
+    orders_col = next(c for c in stg_yaml["models"][0]["columns"] if c["name"] == "account_id")
+    relationship_test = next(
+        t["relationships"]
+        for t in orders_col["tests"]
+        if isinstance(t, dict) and "relationships" in t
+    )
+    assert relationship_test["field"] == '"account id"'
