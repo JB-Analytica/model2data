@@ -107,14 +107,38 @@ def is_free_text_type(data_type: str) -> bool:
 _stats_state: dict[str, list[tuple[str, str]]] = {"unmapped": []}
 
 
+# Columns whose `unique`/`pk` de-duplication ran out of retries and left real
+# duplicate values behind -- which then fail the `unique` dbt test generated
+# for that same column. Same rationale as core's unresolved-composite-key
+# tracking: the bounded retry is an accepted tradeoff, but a silent one would
+# leave the user reverse-engineering a failing `dbt build`.
+_duplicate_unique_columns: list[str] = []
+
+
 def reset_stats() -> None:
     """Clear the record of columns that fell back to generic text."""
     _stats_state["unmapped"] = []
+    _duplicate_unique_columns.clear()
 
 
 def get_unmapped_columns() -> list[tuple[str, str]]:
     """Return (column_name, data_type) pairs generated with a generic fallback."""
     return list(_stats_state["unmapped"])
+
+
+def reset_duplicate_unique_columns() -> None:
+    """Clear the record of unique columns left with duplicate values.
+
+    Separate from reset_stats() so generate_data_from_dbml can clear this
+    per-run state itself, the way it already clears its own cycle/dedup
+    state -- otherwise counts leak across successive calls in-process.
+    """
+    _duplicate_unique_columns.clear()
+
+
+def get_duplicate_unique_columns() -> list[str]:
+    """Return "column: N duplicate value(s)" labels for unique columns left duplicated."""
+    return list(_duplicate_unique_columns)
 
 
 def _infer_by_name(column_name: str) -> Optional[Callable[[], object]]:
@@ -135,6 +159,7 @@ def generate_column_values(
     fk_series: Optional[pd.Series] = None,
     ensure_unique: bool = False,
     force_not_null: bool = False,
+    table_name: Optional[str] = None,
 ) -> list:
     """
     Generate synthetic values for a single column.
@@ -148,6 +173,10 @@ def generate_column_values(
     column setting says so but SQL primary-key semantics forbid nulls in any
     of its columns regardless.
     """
+    # Qualify the label so two same-named columns in different tables
+    # (an `id` on each of two tables) stay distinguishable in the report.
+    unique_label = f"{table_name}.{column.name}" if table_name else column.name
+
     if column.enum_values:
         return [random.choice(column.enum_values) for _ in range(row_count)]
 
@@ -178,7 +207,7 @@ def generate_column_values(
     elif "uuid" in base_type or "hash" in base_type:
         values = [str(uuid.uuid4()) for _ in range(row_count)]
         if ensure_unique:
-            values = _deduplicate(values, lambda: str(uuid.uuid4()))
+            values = _deduplicate(values, lambda: str(uuid.uuid4()), column_name=unique_label)
 
     # -----------------------------------------------------
     # Integers
@@ -206,7 +235,11 @@ def generate_column_values(
                 # and accept the same tiny-value-space tradeoff as
                 # _deduplicate.
                 values = [random.randint(min_val, max_val) for _ in range(row_count)]
-                values = _deduplicate(values, lambda: random.randint(min_val, max_val))
+                values = _deduplicate(
+                    values,
+                    lambda: random.randint(min_val, max_val),
+                    column_name=unique_label,
+                )
         else:
             values = [random.randint(min_val, max_val) for _ in range(row_count)]
 
@@ -220,7 +253,11 @@ def generate_column_values(
             max_val = 10_000
         values = [round(random.uniform(min_val, max_val), 2) for _ in range(row_count)]
         if ensure_unique:
-            values = _deduplicate(values, lambda: round(random.uniform(min_val, max_val), 2))
+            values = _deduplicate(
+                values,
+                lambda: round(random.uniform(min_val, max_val), 2),
+                column_name=unique_label,
+            )
 
     # -----------------------------------------------------
     # Booleans
@@ -249,7 +286,11 @@ def generate_column_values(
         name_generator = _infer_by_name(column.name)
         if name_generator is not None:
             values = [name_generator() for _ in range(row_count)]
-            values = _deduplicate(values, name_generator) if ensure_unique else values
+            values = (
+                _deduplicate(values, name_generator, column_name=unique_label)
+                if ensure_unique
+                else values
+            )
         else:
             try:
                 values = [fake.format(base_type) for _ in range(row_count)]
@@ -276,21 +317,34 @@ def generate_column_values(
 # ---------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------
-def _deduplicate(values: list, generator: Callable[[], object], max_attempts: int = 20) -> list:
+def _deduplicate(
+    values: list,
+    generator: Callable[[], object],
+    max_attempts: int = 20,
+    column_name: Optional[str] = None,
+) -> list:
     """
     Best-effort de-duplication for name-inferred values (e.g. unique emails).
     Retries collisions a bounded number of times, then accepts remaining
-    duplicates rather than looping forever on a small value space.
+    duplicates rather than looping forever on a small value space -- recording
+    the column so the CLI can report it instead of failing silently.
     """
     seen: set = set()
     result = []
+    unresolved = 0
     for value in values:
         attempts = 0
         while value in seen and attempts < max_attempts:
             value = generator()
             attempts += 1
+        if value in seen:
+            unresolved += 1
         seen.add(value)
         result.append(value)
+
+    if unresolved and column_name:
+        _duplicate_unique_columns.append(f"{column_name}: {unresolved} duplicate value(s)")
+
     return result
 
 

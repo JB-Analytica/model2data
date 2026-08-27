@@ -12,8 +12,16 @@ from model2data.dbt.project import (
     create_staging_models,
 )
 from model2data.dbt.tests import generate_dbt_yml, generate_unit_tests
-from model2data.generate.core import generate_data_from_dbml, get_cyclic_tables
-from model2data.generate.faker import get_unmapped_columns, reset_stats
+from model2data.generate.core import (
+    generate_data_from_dbml,
+    get_cyclic_tables,
+    get_unresolved_composite_keys,
+)
+from model2data.generate.faker import (
+    get_duplicate_unique_columns,
+    get_unmapped_columns,
+    reset_stats,
+)
 from model2data.parse.dbml import get_parse_warnings, parse_dbml
 from model2data.utils import normalize_identifier
 
@@ -177,6 +185,8 @@ def main(
     total_rows = sum(len(df) for df in generated_tables.values())
     unmapped = get_unmapped_columns()
     cyclic_tables = get_cyclic_tables()
+    unresolved_keys = get_unresolved_composite_keys()
+    duplicate_unique = get_duplicate_unique_columns()
 
     typer.echo("\n📊 Summary")
     typer.echo(f"  Tables generated:        {len(generated_tables)}")
@@ -193,6 +203,20 @@ def main(
             "  ⚠️  Tables in an unresolved FK cycle (data may not respect "
             f"all relationships): {', '.join(cyclic_tables)}"
         )
+    if unresolved_keys:
+        typer.echo(
+            "  ⚠️  Composite keys left with duplicate rows (their generated dbt "
+            "test will fail — try a lower --rows, or widen the key's value space):"
+        )
+        for label in unresolved_keys:
+            typer.echo(f"    - {label}")
+    if duplicate_unique:
+        typer.echo(
+            "  ⚠️  Unique columns left with duplicate values (their generated dbt "
+            "test will fail — try a lower --rows, or widen the column's value space):"
+        )
+        for label in duplicate_unique:
+            typer.echo(f"    - {label}")
     if parse_warnings:
         typer.echo(f"  ⚠️  DBML lines model2data could not fully parse: {len(parse_warnings)}")
         for warning in parse_warnings:

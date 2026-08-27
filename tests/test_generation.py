@@ -4,7 +4,9 @@ from model2data.generate.core import (
     _topological_table_order,
     generate_data_from_dbml,
     get_cyclic_tables,
+    get_unresolved_composite_keys,
 )
+from model2data.generate.faker import get_duplicate_unique_columns
 from model2data.parse.dbml import ColumnDef, TableDef, parse_dbml
 
 
@@ -454,6 +456,88 @@ def test_composite_unique_key_deduplicates_generated_rows():
 
     combos = list(zip(df["a"], df["b"], strict=True))
     assert len(combos) == len(set(combos)) == 20
+
+
+def test_saturated_composite_key_is_reported_not_silently_duplicated():
+    # The dedup retry is deliberately bounded, so a value space smaller than
+    # the requested row count *will* leave duplicates -- 3 x 3 = 9 possible
+    # combinations for 40 rows cannot be made unique at all. That's an
+    # accepted tradeoff, but it must not be silent: the project's own
+    # generated composite-key dbt test fails on those duplicates, and a user
+    # should learn why from model2data rather than by reverse-engineering a
+    # failing `dbt build`.
+    tables = {
+        "pairs": TableDef(
+            name="pairs",
+            columns=[
+                ColumnDef("a", "int", {"not null"}, note={"min": 0, "max": 2}),
+                ColumnDef("b", "int", {"not null"}, note={"min": 0, "max": 2}),
+            ],
+            composite_keys=[{"columns": ["a", "b"], "type": "pk"}],
+        )
+    }
+
+    generate_data_from_dbml(tables, [], base_rows=40, seed=7)
+
+    unresolved = get_unresolved_composite_keys()
+    assert len(unresolved) == 1
+    assert "pairs (a, b)" in unresolved[0]
+    assert "duplicate row(s)" in unresolved[0]
+
+
+def test_saturated_unique_column_is_reported_not_silently_duplicated():
+    # Single-column counterpart of the composite case above: a `unique`/`pk`
+    # column whose explicit min/max range is too narrow for the row count
+    # exhausts _deduplicate's retry budget and keeps real duplicates, which
+    # fail the `unique` dbt test generated for that column.
+    tables = {
+        "things": TableDef(
+            name="things",
+            columns=[ColumnDef("id", "int", {"pk"}, note={"min": 1, "max": 3})],
+        )
+    }
+
+    generate_data_from_dbml(tables, [], base_rows=40, seed=3)
+
+    duplicates = get_duplicate_unique_columns()
+    assert len(duplicates) == 1
+    assert duplicates[0].startswith("things.id: ")
+    assert "duplicate value(s)" in duplicates[0]
+
+
+def test_unique_column_with_room_reports_nothing():
+    tables = {
+        "things": TableDef(
+            name="things",
+            columns=[ColumnDef("id", "int", {"pk"})],
+        )
+    }
+
+    df = generate_data_from_dbml(tables, [], base_rows=40, seed=3)["things"]
+
+    assert df["id"].is_unique
+    assert get_duplicate_unique_columns() == []
+
+
+def test_resolvable_composite_key_reports_nothing():
+    # The mirror of the test above: when the dedup pass genuinely succeeds,
+    # the warning must stay silent (no false positives).
+    tables = {
+        "pairs": TableDef(
+            name="pairs",
+            columns=[
+                ColumnDef("a", "int", {"not null"}, note={"min": 0, "max": 49}),
+                ColumnDef("b", "int", {"not null"}, note={"min": 0, "max": 49}),
+            ],
+            composite_keys=[{"columns": ["a", "b"], "type": "pk"}],
+        )
+    }
+
+    df = generate_data_from_dbml(tables, [], base_rows=20, seed=7)["pairs"]
+
+    combos = list(zip(df["a"], df["b"], strict=True))
+    assert len(combos) == len(set(combos)) == 20
+    assert get_unresolved_composite_keys() == []
 
 
 def test_composite_pk_key_deduplicates_generated_rows():

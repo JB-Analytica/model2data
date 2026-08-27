@@ -7,7 +7,10 @@ from typing import Optional
 import pandas as pd
 from faker import Faker
 
-from model2data.generate.faker import generate_column_values
+from model2data.generate.faker import (
+    generate_column_values,
+    reset_duplicate_unique_columns,
+)
 from model2data.generate.relationships import (
     build_fk_lookup,
     classify_refs,
@@ -34,6 +37,25 @@ def get_cyclic_tables() -> list[str]:
     return list(_cycle_state["cyclic_tables"])
 
 
+# Composite keys the most recent run could not make fully unique. The dedup
+# retry is deliberately bounded (see _deduplicate_composite_keys), so a key
+# whose value space is too small for the requested row count ends up with
+# real duplicates -- which then fail the composite-key dbt test the project
+# generates for that very key. Recorded here so the CLI can say so up front
+# instead of leaving the user to work backwards from a failing `dbt build`.
+_dedup_state: dict[str, list[str]] = {"unresolved_composite_keys": []}
+
+
+def reset_dedup_state() -> None:
+    """Clear the record of composite keys left with duplicate combinations."""
+    _dedup_state["unresolved_composite_keys"] = []
+
+
+def get_unresolved_composite_keys() -> list[str]:
+    """Return "table (col_a, col_b)" labels for composite keys left duplicated."""
+    return list(_dedup_state["unresolved_composite_keys"])
+
+
 # ---------------------------------------------------------
 # Public API
 # ---------------------------------------------------------
@@ -54,6 +76,8 @@ def generate_data_from_dbml(
         Faker.seed(seed)
 
     reset_cycle_state()
+    reset_dedup_state()
+    reset_duplicate_unique_columns()
 
     # ---------------------------------------------------------
     # Classify references
@@ -118,6 +142,7 @@ def generate_data_from_dbml(
                 fk_series=fk_series,
                 ensure_unique=ensure_unique,
                 force_not_null=column.name in composite_pk_columns,
+                table_name=table_name,
             )
 
         df = pd.DataFrame(data)
@@ -237,6 +262,7 @@ def _deduplicate_composite_keys(
                     fk_pools[col_name] = pool
 
         seen: set = set()
+        unresolved = 0
         for idx in df.index:
             combo = tuple(df.at[idx, c] for c in key_columns)
             attempts = 0
@@ -251,7 +277,18 @@ def _deduplicate_composite_keys(
                         df.at[idx, col_name] = generate_column_values(col_def, row_count=1)[0]
                 combo = tuple(df.at[idx, c] for c in key_columns)
                 attempts += 1
+            # Retry budget spent and still colliding: this row keeps a
+            # duplicate combination. Usually means the key's value space is
+            # too small for the requested row count (e.g. a bridge table with
+            # far more rows than parent-id pairs to draw from).
+            if combo in seen:
+                unresolved += 1
             seen.add(combo)
+
+        if unresolved:
+            _dedup_state["unresolved_composite_keys"].append(
+                f"{table_name} ({', '.join(key_columns)}): {unresolved} duplicate row(s)"
+            )
 
     return df
 
@@ -298,6 +335,7 @@ def _resolve_self_referencing_fks(
             fk_series=df[parent_column],
             ensure_unique=ensure_unique,
             force_not_null=column.name in composite_pk_columns,
+            table_name=table_name,
         )
 
     return df

@@ -77,6 +77,19 @@ same neighborhood — also fixed below, with 495 new parametrized regression cas
   deliberately keeps its previous, more permissive behavior — standard SQL unique constraints don't
   forbid nulls in their member columns, unlike primary keys.
 
+- **Uniqueness that the generator gave up on was accepted silently.** Both de-duplication passes
+  are deliberately bounded (retry a collision N times, then move on rather than loop forever on a
+  value space that's too small) — but when that budget ran out, the duplicate was kept with no
+  signal of any kind. The generated project then failed its *own* `unique` /
+  `unique_combination_*` dbt test, leaving the user to reverse-engineer why from a red
+  `dbt build`. Both paths now record what they couldn't resolve — `_deduplicate_composite_keys`
+  for composite keys, `_deduplicate` for single-column `unique`/`pk` columns — and the CLI reports
+  each one in its summary, naming the table/column and the number of duplicates left, with the two
+  actionable fixes (lower `--rows`, or widen the key's value space). Verified end-to-end: a
+  deliberately saturated schema now warns about exactly the three tests that subsequently fail in
+  a real `dbt build`, and a healthy schema stays silent. The bounded retry itself is unchanged —
+  it's the silence that was the bug.
+
 ### Changed
 - Rewrote the README's "Roadmap" section as "Project status": as of 1.0.0, model2data is
   considered feature-complete for its intended use case, with no active roadmap of new
