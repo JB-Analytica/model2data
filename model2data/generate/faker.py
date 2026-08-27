@@ -142,10 +142,6 @@ def generate_column_values(
     if column.enum_values:
         return [random.choice(column.enum_values) for _ in range(row_count)]
 
-    if fk_series is not None and not fk_series.empty:
-        fk_values = fk_series.tolist()
-        return [random.choice(fk_values) for _ in range(row_count)]
-
     dtype = column.data_type.lower()
     base_type = dtype.split("(")[0].strip()
     values: list = []
@@ -157,10 +153,20 @@ def generate_column_values(
         min_val = column.note.get("min")
         max_val = column.note.get("max")
 
+    if fk_series is not None and not fk_series.empty:
+        # A plain branch of the same if/elif chain (rather than an early
+        # return) so a nullable FK column can actually come back null for
+        # some rows -- e.g. an optional `manager_id` on a top-level
+        # employee, or an order with no customer -- matching how every
+        # other branch here already respects `not null`/`pk` via the
+        # nullability pass below.
+        fk_values = fk_series.tolist()
+        values = [random.choice(fk_values) for _ in range(row_count)]
+
     # -----------------------------------------------------
     # UUIDs / hashes
     # -----------------------------------------------------
-    if "uuid" in base_type or "hash" in base_type:
+    elif "uuid" in base_type or "hash" in base_type:
         values = [str(uuid.uuid4()) for _ in range(row_count)]
         if ensure_unique:
             values = _deduplicate(values, lambda: str(uuid.uuid4()))

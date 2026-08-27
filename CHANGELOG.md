@@ -7,8 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [1.0.0] - 2026-08-27
 
-First stable release. No functional changes to generation or parsing since 0.5.1 — this release
-is about the project's presentation and long-term stance, not new behavior.
+First stable release. Mostly about the project's presentation and long-term stance, plus a final
+scrutiny pass that turned up a handful of generation bugs in genuinely untested territory
+(a fresh domain schema, a large 18-table schema, and real Postgres) — all fixed below before
+tagging.
 
 ### Added
 - `LLMS.md`: instructions for LLM/coding-agent users, covering the full DBML feature set
@@ -24,6 +26,36 @@ is about the project's presentation and long-term stance, not new behavior.
   the diagram's content is already covered in the prose immediately below it) now used as the
   package's `readme` in `pyproject.toml`; `README.md` keeps the richer GitHub-rendered version
   unchanged. Verified with `twine check` and a manual inspection of the packaged METADATA.
+- **A composite key made of FK columns (the standard join/bridge-table pattern) could silently
+  break referential integrity.** `_deduplicate_composite_keys`'s bounded-retry loop regenerated a
+  colliding row's FK columns via the column's own type-based generator instead of resampling from
+  the real parent id pool, so a retry could leave a `post_tags.post_id` (for example) that
+  matched no real `posts.id` at all. Only surfaced under differential parent/bridge cardinality
+  (small parent tables, a much larger bridge table) — every table getting the same `--rows` count
+  kept collisions rare enough to hide it. Fixed by threading `fk_lookup`/`generated` into the
+  dedup pass so a retry on an FK column resamples from the actual parent column (self-refs use
+  the table's own already-resolved column). Regression test added.
+- **An enum column crashed generation outright if the enum's name happened to contain "int" as a
+  substring** (e.g. `maintenance_type`, `sprint_status`). `_coerce_integer_dtypes` substring-
+  matched the raw declared type against `int`/`integer`/`bigint`/`smallint` with no enum guard,
+  so it mistook the column for numeric and crashed casting its real string values ("repair",
+  "cleaning", ...) to `Int64`. Fixed by skipping enum columns in that check, mirroring the
+  enum-first guard `generate_column_values` already uses. Regression test added.
+- **A nullable foreign-key column could never actually generate a null**, even across hundreds of
+  rows — contradicting `LLMS.md`'s own documented behavior for self-referencing FKs ("some rows,
+  e.g. top-level managers, can still have no parent") and, more broadly, any ordinary nullable FK
+  (an order with no customer, an optional `manager_id`). `generate_column_values` returned early
+  as soon as an `fk_series` was supplied, before the shared nullability pass at the end of the
+  function ever ran. Fixed by folding the FK branch into the same if/elif dispatch chain so it
+  falls through to nullability handling like every other branch. Two regression tests added
+  (nullable FK can be null; `not null` FK is never null).
+- **A `[unique]` column (not the primary key) had no actual uniqueness guarantee**, despite
+  getting the same dbt `unique` schema test as a `pk` column — generation only ever passed
+  `ensure_unique=True` for `pk` columns, so a unique column (a promo code, VIN, email) could
+  non-deterministically fail its own generated dbt test on a chance collision in the fallback-text
+  generator's effective value space. Fixed by treating `unique` the same as `pk` for generation
+  purposes at both call sites (main column generation and self-referencing FK resolution).
+  Regression test added.
 
 ### Changed
 - Rewrote the README's "Roadmap" section as "Project status": as of 1.0.0, model2data is

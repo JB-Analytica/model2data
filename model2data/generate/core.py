@@ -86,7 +86,12 @@ def generate_data_from_dbml(
                 if parent_df is not None and parent_column in parent_df.columns:
                     fk_series = parent_df[parent_column]
 
-            ensure_unique = "pk" in column.settings
+            # "unique" columns get exactly the same dbt `unique` schema test
+            # as "pk" columns (see dbt/tests.py) but, unlike pk, weren't
+            # actually enforced during generation -- so a demo project's own
+            # generated test could fail non-deterministically on a chance
+            # collision (e.g. a "unique" promo_code or VIN column).
+            ensure_unique = "pk" in column.settings or "unique" in column.settings
             data[column.name] = generate_column_values(
                 column=column,
                 row_count=row_count,
@@ -96,7 +101,7 @@ def generate_data_from_dbml(
 
         df = pd.DataFrame(data)
         df = _resolve_self_referencing_fks(df, table_def, table_name, fk_lookup, row_count)
-        df = _deduplicate_composite_keys(df, table_def)
+        df = _deduplicate_composite_keys(df, table_def, table_name, fk_lookup, generated)
 
         # -----------------------------------------------------
         # Second pass: attribute mirroring (non-FK refs)
@@ -151,6 +156,14 @@ def _coerce_integer_dtypes(df: pd.DataFrame, table_def: TableDef) -> pd.DataFram
     nulls as empty cells, matching the DBML-declared type.
     """
     for column in table_def.columns:
+        if column.enum_values:
+            # An enum column's data_type is the *enum's name*, not a SQL
+            # scalar type -- and that name can innocently contain "int" as a
+            # substring (e.g. "maintenance_type"), which would otherwise
+            # false-positive the check below and crash trying to cast the
+            # column's real string values to Int64. Values here are always
+            # generated as strings (see generate_column_values), never ints.
+            continue
         base_type = column.data_type.lower().split("(")[0].strip()
         if any(key in base_type for key in ["int", "integer", "bigint", "smallint"]):
             df[column.name] = df[column.name].astype("Int64")
@@ -161,6 +174,9 @@ def _coerce_integer_dtypes(df: pd.DataFrame, table_def: TableDef) -> pd.DataFram
 def _deduplicate_composite_keys(
     df: pd.DataFrame,
     table_def: TableDef,
+    table_name: str,
+    fk_lookup: dict[tuple[str, str], tuple[str, str]],
+    generated: dict[str, pd.DataFrame],
     max_attempts: int = 20,
 ) -> pd.DataFrame:
     """
@@ -181,6 +197,24 @@ def _deduplicate_composite_keys(
 
         regen_columns = [(c, columns_by_name[c]) for c in key_columns]
 
+        # A composite key's columns are very often FKs (the standard way to
+        # model a join/bridge table's PK). Regenerating those blind, via the
+        # column's own type-based generator, would silently break the
+        # relationship -- the retry needs to keep sampling from the real
+        # parent id pool instead. Self-refs use this table's own
+        # already-resolved column (dedup runs after self-ref resolution).
+        fk_pools: dict[str, list] = {}
+        for col_name, _ in regen_columns:
+            fk_target = fk_lookup.get((table_name, col_name))
+            if not fk_target:
+                continue
+            parent_table, parent_column = fk_target
+            parent_df = df if parent_table == table_name else generated.get(parent_table)
+            if parent_df is not None and parent_column in parent_df.columns:
+                pool = parent_df[parent_column].tolist()
+                if pool:
+                    fk_pools[col_name] = pool
+
         seen: set = set()
         for idx in df.index:
             combo = tuple(df.at[idx, c] for c in key_columns)
@@ -190,7 +224,10 @@ def _deduplicate_composite_keys(
                 # the retry can actually reach unused combinations, not just
                 # unused values of a single column.
                 for col_name, col_def in regen_columns:
-                    df.at[idx, col_name] = generate_column_values(col_def, row_count=1)[0]
+                    if col_name in fk_pools:
+                        df.at[idx, col_name] = random.choice(fk_pools[col_name])
+                    else:
+                        df.at[idx, col_name] = generate_column_values(col_def, row_count=1)[0]
                 combo = tuple(df.at[idx, c] for c in key_columns)
                 attempts += 1
             seen.add(combo)
@@ -226,7 +263,7 @@ def _resolve_self_referencing_fks(
         if parent_table != table_name or parent_column not in df.columns:
             continue
 
-        ensure_unique = "pk" in column.settings
+        ensure_unique = "pk" in column.settings or "unique" in column.settings
         df[column.name] = generate_column_values(
             column=column,
             row_count=row_count,

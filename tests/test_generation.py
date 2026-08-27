@@ -56,7 +56,10 @@ def test_parent_child_fk_generation_and_ordering():
     children = data["children"]
     parents = data["parents"]
 
-    assert children["parent_id"].isin(parents["id"]).all()
+    # parent_id is nullable (no `not null`/`pk`), so some rows can
+    # legitimately come back with no parent -- only non-null values need to
+    # resolve to a real parent row.
+    assert children["parent_id"].dropna().isin(parents["id"]).all()
 
 
 def test_attribute_reference_mirroring():
@@ -224,7 +227,8 @@ def test_inline_ref_produces_fk_aware_values(tmp_path):
     orders = data["orders"]
     users = data["users"]
 
-    assert orders["user_id"].isin(users["id"]).all()
+    # user_id is nullable here, so only non-null values need to resolve.
+    assert orders["user_id"].dropna().isin(users["id"]).all()
 
 
 def test_disconnected_tables_are_generated():
@@ -470,6 +474,173 @@ def test_composite_pk_key_deduplicates_generated_rows():
     assert len(combos) == len(set(combos)) == 15
 
 
+def test_unique_non_pk_column_is_actually_deduplicated():
+    # Regression test: a `[unique]` column gets exactly the same dbt
+    # `unique` schema test as a `[pk]` column (see dbt/tests.py), but
+    # generation only ever passed `ensure_unique=True` for `pk` columns --
+    # so a "unique" column (e.g. a promo code, VIN, or email) had no actual
+    # uniqueness guarantee and could non-deterministically fail its own
+    # generated dbt test on a chance collision in the fallback-text
+    # generator's small effective value space.
+    tables = {
+        "promotions": TableDef(
+            name="promotions",
+            columns=[
+                ColumnDef("id", "int", {"pk"}),
+                # note forces a range small enough that a collision is
+                # near-certain across 50 rows if not deduplicated, but still
+                # comfortably large enough (201 possible values) that 50
+                # unique values are actually achievable.
+                # "not null" keeps this test focused purely on the
+                # uniqueness guarantee (dbt's own `unique` test already
+                # excludes nulls, same reasoning as `.dropna()` would give).
+                ColumnDef("code", "int", {"unique", "not null"}, note={"min": 0, "max": 200}),
+            ],
+        )
+    }
+
+    df = generate_data_from_dbml(tables, [], base_rows=50, seed=1)["promotions"]
+
+    codes = df["code"].tolist()
+    assert len(codes) == len(set(codes))
+
+
+def test_nullable_fk_column_can_actually_be_null():
+    # Regression test: generate_column_values used to early-return as soon
+    # as an fk_series was supplied, before the nullability pass at the
+    # bottom of the function ever ran. That meant a nullable FK column
+    # (no `not null`/`pk`) could never come back null, no matter how many
+    # rows were generated -- contradicting the documented behavior (LLMS.md:
+    # a self-referencing FK "can still have no parent") and, more broadly,
+    # any ordinary nullable FK (e.g. an order with no customer).
+    tables = {
+        "customers": TableDef(name="customers", columns=[ColumnDef("id", "int", {"pk"})]),
+        "orders": TableDef(
+            name="orders",
+            columns=[ColumnDef("id", "int", {"pk"}), ColumnDef("customer_id", "int")],
+        ),
+    }
+    refs = [
+        {
+            "source_table": "orders",
+            "source_column": "customer_id",
+            "target_table": "customers",
+            "target_column": "id",
+        }
+    ]
+
+    data = generate_data_from_dbml(tables, refs, base_rows=300, seed=1)
+
+    customer_ids = data["orders"]["customer_id"]
+    assert customer_ids.isna().any()
+    assert customer_ids.dropna().isin(data["customers"]["id"]).all()
+
+
+def test_not_null_fk_column_is_never_null():
+    tables = {
+        "customers": TableDef(name="customers", columns=[ColumnDef("id", "int", {"pk"})]),
+        "orders": TableDef(
+            name="orders",
+            columns=[ColumnDef("id", "int", {"pk"}), ColumnDef("customer_id", "int", {"not null"})],
+        ),
+    }
+    refs = [
+        {
+            "source_table": "orders",
+            "source_column": "customer_id",
+            "target_table": "customers",
+            "target_column": "id",
+        }
+    ]
+
+    data = generate_data_from_dbml(tables, refs, base_rows=300, seed=1)
+
+    assert not data["orders"]["customer_id"].isna().any()
+
+
+def test_enum_column_whose_name_contains_int_does_not_crash_dtype_coercion():
+    # Regression test: an enum's *name* becomes the column's declared
+    # data_type in DBML (e.g. `status maintenance_type`), and that name can
+    # innocently contain "int" as a substring ("ma-int-enance_type").
+    # _coerce_integer_dtypes used to substring-match on the raw type string
+    # with no enum guard, so it mistook the column for an integer column and
+    # crashed trying to cast its real string values ("repair", "cleaning",
+    # ...) to Int64.
+    tables = {
+        "maintenance_records": TableDef(
+            name="maintenance_records",
+            columns=[
+                ColumnDef("id", "int", {"pk"}),
+                ColumnDef(
+                    "maintenance_type",
+                    "maintenance_type",
+                    {"not null"},
+                    enum_values=["oil_change", "repair", "cleaning"],
+                ),
+            ],
+        )
+    }
+
+    df = generate_data_from_dbml(tables, [], base_rows=10, seed=1)["maintenance_records"]
+
+    assert set(df["maintenance_type"]) <= {"oil_change", "repair", "cleaning"}
+
+
+def test_composite_key_dedup_retry_preserves_fk_validity(monkeypatch):
+    # Regression test: a join/bridge table's composite key is almost always
+    # built from FK columns (posts/tags -> post_tags is the canonical
+    # example). When two parent tables are small relative to the bridge
+    # table's row count, the dedup retry loop fires constantly -- and it
+    # used to regenerate colliding FK columns via the column's own
+    # type-based generator instead of resampling from the real parent id
+    # pool, silently producing post_id/tag_id values that referenced no
+    # real parent row at all.
+    import model2data.generate.core as core
+
+    tables = {
+        "posts": TableDef(name="posts", columns=[ColumnDef("id", "int", {"pk"})]),
+        "tags": TableDef(name="tags", columns=[ColumnDef("id", "int", {"pk"})]),
+        "post_tags": TableDef(
+            name="post_tags",
+            columns=[
+                ColumnDef("post_id", "int", {"not null"}),
+                ColumnDef("tag_id", "int", {"not null"}),
+            ],
+            composite_keys=[{"columns": ["post_id", "tag_id"], "type": "pk"}],
+        ),
+    }
+    refs = [
+        {
+            "source_table": "post_tags",
+            "source_column": "post_id",
+            "target_table": "posts",
+            "target_column": "id",
+        },
+        {
+            "source_table": "post_tags",
+            "source_column": "tag_id",
+            "target_table": "tags",
+            "target_column": "id",
+        },
+    ]
+
+    # Force posts/tags to 5 rows each (25 possible combos) while post_tags
+    # gets 200 rows, guaranteeing heavy dedup-retry activity.
+    def small_parents_large_bridge(table_name, base_rows):
+        return 5 if table_name in ("posts", "tags") else base_rows
+
+    monkeypatch.setattr(core, "_determine_row_count", small_parents_large_bridge)
+
+    data = generate_data_from_dbml(tables, refs, base_rows=200, seed=123)
+
+    post_ids = set(data["posts"]["id"].tolist())
+    tag_ids = set(data["tags"]["id"].tolist())
+    post_tags = data["post_tags"]
+
+    assert set(post_tags["post_id"].tolist()) <= post_ids
+    assert set(post_tags["tag_id"].tolist()) <= tag_ids
+
+
 def test_composite_key_with_unsupported_type_is_ignored():
     tables = {
         "pairs": TableDef(
@@ -588,8 +759,10 @@ def test_composite_ref_produces_fk_aware_values_for_both_columns():
 
     parent_order_ids = set(data["order_variants"]["order_id"])
     parent_variant_ids = set(data["order_variants"]["variant_id"])
-    assert set(data["order_items"]["order_id"]).issubset(parent_order_ids)
-    assert set(data["order_items"]["variant_id"]).issubset(parent_variant_ids)
+    # Both FK columns are nullable here, so only non-null values need to
+    # resolve to a real parent row.
+    assert set(data["order_items"]["order_id"].dropna()).issubset(parent_order_ids)
+    assert set(data["order_items"]["variant_id"].dropna()).issubset(parent_variant_ids)
 
 
 def test_disconnected_table_does_not_trigger_cycle_warning():
