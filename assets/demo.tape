@@ -45,7 +45,10 @@ Sleep 300ms
 Type "cd dbt_ecommerce && dbt build"
 Sleep 300ms
 Enter
-Sleep 5500ms
+# dbt itself takes ~4s of this, so the sleep has to be generous enough that
+# the finished PASS=.../ERROR=0 summary actually sits on screen long enough
+# to read -- it is the whole point of this segment.
+Sleep 9000ms
 
 Type "clear"
 Enter
