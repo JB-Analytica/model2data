@@ -41,6 +41,15 @@ same neighborhood — also fixed below, with 495 new parametrized regression cas
   examples: a bare `dbt build` on a fresh database reaches `ERROR=0` for each. A permanent
   dbt-CLI regression test (`tests/test_dbt_integration.py::
   test_bare_dbt_build_succeeds_on_a_fresh_database`) now runs exactly that.
+- **The PyPI page had no project links, classifiers, keywords, author, or license metadata**, so
+  its sidebar was effectively empty and there was no link back to the repository, issues, or
+  changelog from the package page. All now declared in `pyproject.toml`.
+- **Five links in the PyPI description pointed at repository-relative paths** (`LICENSE`,
+  `CONTRIBUTING.md`, `DEVELOPMENT.md`, `CODE_OF_CONDUCT.md`, `LLMS.md`) and so 404'd on PyPI —
+  the same class of bug as the broken images fixed above, just in link targets rather than image
+  sources. `README_PYPI.md` now uses absolute GitHub URLs; `README.md` keeps the relative ones,
+  which are correct there.
+
 - **`--seed` did not actually produce identical data across runs.** `_random_datetime` anchored
   its window on `datetime.now()` but offset by a whole number of seconds, so the anchor's
   microsecond component leaked straight through into every generated timestamp: two runs with the

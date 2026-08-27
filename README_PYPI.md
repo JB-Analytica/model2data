@@ -3,7 +3,7 @@
 [![PyPI](https://img.shields.io/pypi/v/model2data)](https://pypi.org/project/model2data/)
 [![CI](https://github.com/JB-Analytica/model2data/actions/workflows/ci.yml/badge.svg)](https://github.com/JB-Analytica/model2data/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/JB-Analytica/model2data/branch/main/graph/badge.svg)](https://codecov.io/gh/JB-Analytica/model2data)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/JB-Analytica/model2data/blob/main/LICENSE)
 
 **Turn a data model into a running analytics stack in one command.**
 
@@ -176,7 +176,7 @@ dbt_{project_name}/
 ## Using model2data with an LLM
 
 If you want to go from a plain-English description of a data model straight to a running,
-demo-ready dbt project, [LLMS.md](LLMS.md) is written for an LLM/agent to read: it covers the
+demo-ready dbt project, [LLMS.md](https://github.com/JB-Analytica/model2data/blob/main/LLMS.md) is written for an LLM/agent to read: it covers the
 full DBML feature set model2data understands (enums, notes, defaults, composite keys, both
 relationship syntaxes, self-references) and the exact command sequence to run. Point an
 LLM-backed coding assistant at it and describe your data model — it can author the DBML and run
@@ -232,7 +232,7 @@ wants to pick them up as a contribution:
   ready-to-uncomment `marts` schema/materialization config for this).
 - Locale-aware generation (`--locale`) for non-English/US synthetic data.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) if you'd like to work on any of these.
+See [CONTRIBUTING.md](https://github.com/JB-Analytica/model2data/blob/main/CONTRIBUTING.md) if you'd like to work on any of these.
 
 ---
 
@@ -244,11 +244,11 @@ We welcome contributions!
 - Submit PRs to add new DBML examples, custom data generators, or improvements.
 - Ensure all new features include tests if possible.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines, and [DEVELOPMENT.md](DEVELOPMENT.md) for the local dev setup and release process.
+See [CONTRIBUTING.md](https://github.com/JB-Analytica/model2data/blob/main/CONTRIBUTING.md) for detailed guidelines, and [DEVELOPMENT.md](https://github.com/JB-Analytica/model2data/blob/main/DEVELOPMENT.md) for the local dev setup and release process.
 
 ## Code of Conduct
 
-Please read our [Code of Conduct](CODE_OF_CONDUCT.md) to understand our community standards.
+Please read our [Code of Conduct](https://github.com/JB-Analytica/model2data/blob/main/CODE_OF_CONDUCT.md) to understand our community standards.
 
 ---
 
