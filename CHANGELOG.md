@@ -5,6 +5,168 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.0.0] - 2026-08-27
+
+First stable release. Mostly about the project's presentation and long-term stance, plus a final
+scrutiny pass that turned up a handful of generation bugs in genuinely untested territory
+(a fresh domain schema, a large 18-table schema, and real Postgres) — all fixed below before
+tagging. A follow-up depth pass then hammered those same four fixes specifically (many seeds, many
+row counts, extreme value-space-vs-row-count ratios, and real end-to-end `dbt build` runs, not
+just Python-level checks) instead of sweeping new territory again, and found one more bug in the
+same neighborhood — also fixed below, with 495 new parametrized regression cases
+(`tests/test_release_stress.py`) added as permanent coverage.
+
+### Added
+- `LLMS.md`: instructions for LLM/coding-agent users, covering the full DBML feature set
+  model2data understands and the exact command sequence to go from a schema description to a
+  running dbt project.
+
+### Fixed
+- **`dbt build` failed on every freshly generated project**, with or without `--unit-tests`,
+  typically as `Runtime Error in model stg_<table> ... Table with name <table> does not exist`.
+  Staging models read from `{{ source('raw', '<table>') }}`, and the generated
+  `models/staging/__sources.yml` declared each seed as a dbt *source*. But a dbt source is only an
+  assertion that some relation already exists — it carries no DAG edge back to the seed that
+  actually materializes it. `dbt build` schedules seeds and models in a single dependency-ordered
+  pass, so with no edge joining the two, a staging model (or a unit test needing to introspect
+  the real relation) could be scheduled before its seed had ever been loaded. It went unnoticed
+  for the project's whole history because CI only ever ran `dbt seed` and `dbt run` as separate,
+  already-ordered steps, never a bare `dbt build` against a fresh database.
+  Fixed by having staging models `ref('<table>')` the seeds instead: seeds are first-class refable
+  dbt nodes, so `ref()` creates the real DAG edge and one `dbt build` now orders seeds before the
+  models that read them. `--unit-tests` fixtures reference the seeds the same way. The now-dead
+  `__sources.yml` is no longer generated; the table descriptions it carried (DBML `Note` → dbt
+  docs) moved to the seeds properties YAML at `seeds/raw/__seed_config.yml`, so raw tables stay
+  documented on the node that actually exists. Verified from a clean install on all four bundled
+  examples: a bare `dbt build` on a fresh database reaches `ERROR=0` for each. A permanent
+  dbt-CLI regression test (`tests/test_dbt_integration.py::
+  test_bare_dbt_build_succeeds_on_a_fresh_database`) now runs exactly that.
+- **The PyPI page had no project links, classifiers, keywords, author, or license metadata**, so
+  its sidebar was effectively empty and there was no link back to the repository, issues, or
+  changelog from the package page. All now declared in `pyproject.toml`.
+- **Five links in the PyPI description pointed at repository-relative paths** (`LICENSE`,
+  `CONTRIBUTING.md`, `DEVELOPMENT.md`, `CODE_OF_CONDUCT.md`, `LLMS.md`) and so 404'd on PyPI —
+  the same class of bug as the broken images fixed above, just in link targets rather than image
+  sources. `README_PYPI.md` now uses absolute GitHub URLs; `README.md` keeps the relative ones,
+  which are correct there.
+
+- **`--seed` did not actually produce identical data across runs.** `_random_datetime` anchored
+  its window on `datetime.now()` but offset by a whole number of seconds, so the anchor's
+  microsecond component leaked straight through into every generated timestamp: two runs with the
+  same seed produced rows differing only in their sub-second fraction. Every other column was
+  byte-identical, which is why it went unnoticed — but it was enough to make committed seed
+  fixtures churn on each regeneration, defeating the entire purpose of `--seed`. The window is now
+  anchored to midnight, so timestamps carry no sub-second component and same-seed runs are
+  byte-identical. (Date and timestamp columns are still generated relative to the current date, so
+  regenerating on a later day shifts them — determinism holds for a given day.)
+- **`zip()` without `strict=` when expanding a composite `Ref`.** Guarded by an explicit
+  length-equality check immediately above, so not reachable in practice, but now stated
+  explicitly rather than relying on that guard staying in place. Surfaced by the ruff fix below.
+
+### Changed
+- Ruff's `target-version` was pinned to `py39`, below the project's own `requires-python =
+  ">=3.10"`, so it lint-checked against a Python older than any supported version and never
+  flagged 3.10+ idioms. Now `py310`.
+
+- **Every `dbt build` printed a deprecation warning.** Generated schema tests passed their
+  parameters as bare keys (`relationships:` with `to:`/`field:` directly under it), the shape dbt
+  now deprecates in favour of nesting them under `arguments:` — so every run of every generated
+  project ended with a `MissingArgumentsPropertyInGenericTestDeprecation` block. Noise in a
+  project whose whole purpose is to be handed straight to someone else. Generated tests now use
+  the `arguments:` shape, which required raising the dbt-core floor, since older versions
+  hard-error on it (verified: 1.10.4 and 1.10.5 both reject it).
+- **Raised the dbt-core floor to `>=1.11`** (from `>=1.8.5`; `dbt-duckdb`/`dbt-postgres` likewise),
+  now tracking [dbt's own support policy](https://docs.getdbt.com/docs/dbt-versions) rather than a
+  hand-picked date cutoff — dbt Labs supports each minor for one year, and 1.11 is the oldest that
+  still is. This makes generated projects warning-free on every dbt-core version dbt itself
+  supports, and lets the two now-obsolete caveats go: the 1.8.x unit-test failure on
+  reserved-word column names, and the "unit tests need a newer dbt than the base floor" note.
+  CI's floor job pins 1.11 and runs a real bare `dbt build` against both it and the latest
+  release. Users pinned to older dbt-core can stay on model2data 0.5.x.
+
+- **Every `dbt build` printed an "unused configuration paths" warning.** The generated
+  `dbt_project.yml` declared a `models.<project>.marts` config block, but model2data only ever
+  generates staging models, so the path matched no resource and dbt warned about it on every
+  single run. The block is now commented out, with a note explaining when to uncomment it — the
+  scaffolding intent is preserved for anyone adding their own marts models, without the noise.
+
+- **The PyPI project page's description rendered broken.** Both embedded images used paths
+  relative to the GitHub repository, which PyPI's renderer doesn't resolve — they appeared as
+  broken image icons. The architecture diagram, a GitHub-flavored-Markdown Mermaid code fence,
+  rendered as a raw, unparsed code block on PyPI (which doesn't support Mermaid) instead of a
+  diagram. Fixed with a PyPI-specific `README_PYPI.md` (absolute image URLs, no Mermaid fence —
+  the diagram's content is already covered in the prose immediately below it) now used as the
+  package's `readme` in `pyproject.toml`; `README.md` keeps the richer GitHub-rendered version
+  unchanged. Verified with `twine check` and a manual inspection of the packaged METADATA.
+- **A composite key made of FK columns (the standard join/bridge-table pattern) could silently
+  break referential integrity.** `_deduplicate_composite_keys`'s bounded-retry loop regenerated a
+  colliding row's FK columns via the column's own type-based generator instead of resampling from
+  the real parent id pool, so a retry could leave a `post_tags.post_id` (for example) that
+  matched no real `posts.id` at all. Only surfaced under differential parent/bridge cardinality
+  (small parent tables, a much larger bridge table) — every table getting the same `--rows` count
+  kept collisions rare enough to hide it. Fixed by threading `fk_lookup`/`generated` into the
+  dedup pass so a retry on an FK column resamples from the actual parent column (self-refs use
+  the table's own already-resolved column). Regression test added.
+- **An enum column crashed generation outright if the enum's name happened to contain "int" as a
+  substring** (e.g. `maintenance_type`, `sprint_status`). `_coerce_integer_dtypes` substring-
+  matched the raw declared type against `int`/`integer`/`bigint`/`smallint` with no enum guard,
+  so it mistook the column for numeric and crashed casting its real string values ("repair",
+  "cleaning", ...) to `Int64`. Fixed by skipping enum columns in that check, mirroring the
+  enum-first guard `generate_column_values` already uses. Regression test added.
+- **A nullable foreign-key column could never actually generate a null**, even across hundreds of
+  rows — contradicting `LLMS.md`'s own documented behavior for self-referencing FKs ("some rows,
+  e.g. top-level managers, can still have no parent") and, more broadly, any ordinary nullable FK
+  (an order with no customer, an optional `manager_id`). `generate_column_values` returned early
+  as soon as an `fk_series` was supplied, before the shared nullability pass at the end of the
+  function ever ran. Fixed by folding the FK branch into the same if/elif dispatch chain so it
+  falls through to nullability handling like every other branch. Two regression tests added
+  (nullable FK can be null; `not null` FK is never null).
+- **A `[unique]` column (not the primary key) had no actual uniqueness guarantee**, despite
+  getting the same dbt `unique` schema test as a `pk` column — generation only ever passed
+  `ensure_unique=True` for `pk` columns, so a unique column (a promo code, VIN, email) could
+  non-deterministically fail its own generated dbt test on a chance collision in the fallback-text
+  generator's effective value space. Fixed by treating `unique` the same as `pk` for generation
+  purposes at both call sites (main column generation and self-referencing FK resolution).
+  Regression test added.
+- **A composite primary key's member columns could still end up `null`, when declared only via an
+  `indexes { (a, b) [pk] }` block with no `pk`/`not null` on the individual columns themselves** —
+  the standard DBML shape for a join/bridge table's key (`examples/tagging_m2m.dbml`'s
+  `post_tags.post_id`/`tag_id` is a real, shipped example of exactly this). The nullability pass in
+  `generate_column_values` only ever looked at a column's own `settings`, with no awareness of
+  table-level composite-key membership, so ~14–20% of rows in such a column came back `null` —
+  which, since the column is also almost always an FK in this pattern, looked exactly like a
+  dangling/orphaned reference, and was confirmed to actually fail the generated
+  `unique_combination_stg_post_tags_post_id_tag_id` dbt test outright (`FAIL 4`) on a real seed/run/
+  build once enough rows made a null/null collision likely. Found while stress-testing bug 1's fix
+  above across many more seeds and row counts than its original single repro case. Fixed with a new
+  `force_not_null` parameter threaded from `generate_data_from_dbml`/`_resolve_self_referencing_fks`
+  (which compute the table's composite-*pk* column set) down into `generate_column_values`,
+  overriding the nullability pass for exactly those columns. A composite *unique* (non-pk) key
+  deliberately keeps its previous, more permissive behavior — standard SQL unique constraints don't
+  forbid nulls in their member columns, unlike primary keys.
+
+- **Uniqueness that the generator gave up on was accepted silently.** Both de-duplication passes
+  are deliberately bounded (retry a collision N times, then move on rather than loop forever on a
+  value space that's too small) — but when that budget ran out, the duplicate was kept with no
+  signal of any kind. The generated project then failed its *own* `unique` /
+  `unique_combination_*` dbt test, leaving the user to reverse-engineer why from a red
+  `dbt build`. Both paths now record what they couldn't resolve — `_deduplicate_composite_keys`
+  for composite keys, `_deduplicate` for single-column `unique`/`pk` columns — and the CLI reports
+  each one in its summary, naming the table/column and the number of duplicates left, with the two
+  actionable fixes (lower `--rows`, or widen the key's value space). Verified end-to-end: a
+  deliberately saturated schema now warns about exactly the three tests that subsequently fail in
+  a real `dbt build`, and a healthy schema stays silent. The bounded retry itself is unchanged —
+  it's the silence that was the bug.
+
+### Changed
+- Rewrote the README's "Roadmap" section as "Project status": as of 1.0.0, model2data is
+  considered feature-complete for its intended use case, with no active roadmap of new
+  capabilities — see the README for what was deliberately left out of scope for anyone
+  interested in contributing it.
+- Updated the README's "Limitations" section, which had gone stale relative to the DBML fidelity
+  work landed across 0.4.x/0.5.x (composite keys, self-references, both `Ref` syntaxes, parse
+  warnings, etc.).
+
 ## [0.5.1] - 2026-08-26
 
 Continued 1.0-readiness hardening: this round tested genuinely new hand-authored DBML schemas

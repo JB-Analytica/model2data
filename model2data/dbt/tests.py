@@ -10,6 +10,17 @@ import yaml
 from model2data.generate.faker import is_free_text_type
 from model2data.generate.relationships import classify_refs
 
+# dbt nests a generic test's parameters under `arguments:`. Passing them as
+# bare keys still works but is deprecated, and warns on every single run --
+# noisy for a tool whose output is meant to be handed straight to someone
+# else. This project's dbt-core floor is above the version where `arguments:`
+# became authoritative, so always emit the modern shape.
+
+
+def _generic_test(name: str, arguments: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Build one generic-test entry with its parameters nested under `arguments:`."""
+    return {name: {"arguments": arguments}}
+
 
 def _dump_yaml(data: dict) -> str:
     """Dump a plain Python structure to YAML, safely escaping every value.
@@ -26,10 +37,15 @@ def _dump_yaml(data: dict) -> str:
 def generate_dbt_yml(dest: Path, tables: dict, refs: list[dict], source_name: str = "hackernews"):
     """
     Generate:
-      1) __sources.yml with all raw_* seeds (no tests)
-      2) One .yml per staging model (stg_*) with tests
-      3) One singular SQL test per composite key (indexes block pk/unique)
+      1) One .yml per staging model (stg_*) with tests
+      2) One singular SQL test per composite key (indexes block pk/unique)
+      3) A seeds properties YAML (descriptions + column-type overrides)
     Table and column names are used exactly as in DBML.
+
+    `source_name` is accepted for backwards compatibility and is unused: the
+    generated project has no dbt `sources:` block. Staging models `ref()` the
+    seeds directly (see `create_staging_models`), so the raw tables are
+    documented as seeds rather than as sources.
     """
 
     staging_path = dest / "models" / "staging"
@@ -58,29 +74,6 @@ def generate_dbt_yml(dest: Path, tables: dict, refs: list[dict], source_name: st
         fk_map[(ref["source_table"], ref["source_column"])].append(ref)
 
     # -------------------------
-    # Generate __sources.yml
-    # -------------------------
-    source_tables = []
-    for table in tables.values():
-        seed_name = table.name  # keep exact name
-        table_desc = getattr(table, "description", None) or f"Table {seed_name}"
-        source_tables.append({"name": seed_name, "description": table_desc})
-
-    sources_doc = {
-        "version": 2,
-        "sources": [
-            {
-                "name": "raw",
-                "schema": "raw",
-                "description": f"{source_name.capitalize()} raw seed data",
-                "tables": source_tables,
-            }
-        ],
-    }
-    sources_file = staging_path / "__sources.yml"
-    sources_file.write_text(_dump_yaml(sources_doc))
-
-    # -------------------------
     # Generate individual staging model YAMLs
     # -------------------------
     for table in tables.values():
@@ -96,17 +89,18 @@ def generate_dbt_yml(dest: Path, tables: dict, refs: list[dict], source_name: st
             if "unique" in settings or "pk" in settings:
                 tests.append("unique")
             if getattr(col, "enum_values", None):
-                tests.append({"accepted_values": {"values": list(col.enum_values)}})
+                tests.append(_generic_test("accepted_values", {"values": list(col.enum_values)}))
 
             fk_refs = fk_map.get((table.name, col.name), [])
             for fk in fk_refs:
                 tests.append(
-                    {
-                        "relationships": {
+                    _generic_test(
+                        "relationships",
+                        {
                             "to": f"ref('stg_{fk['target_table']}')",
                             "field": _dbt_column_ref(fk["target_column"]),
-                        }
-                    }
+                        },
+                    )
                 )
 
             col_doc: dict[str, Any] = {"name": _dbt_column_ref(col.name)}
@@ -132,18 +126,28 @@ def generate_dbt_yml(dest: Path, tables: dict, refs: list[dict], source_name: st
     _generate_composite_key_tests(dest, tables)
 
     # -------------------------
-    # Seed column-type overrides
+    # Seed descriptions + column-type overrides
     # -------------------------
-    _generate_seed_config(dest, tables)
+    _generate_seed_properties(dest, tables)
 
 
-def _generate_seed_config(dest: Path, tables: dict) -> None:
+def _generate_seed_properties(dest: Path, tables: dict) -> None:
     """
-    Force every free-text column (see `is_free_text_type`) to VARCHAR in
-    the seed loader config, instead of letting dbt/duckdb sniff the type
-    from CSV content. Some generated text is all-digit (EAN13 barcodes,
-    zero-padded postcodes, ...) and would otherwise be silently loaded as
-    an integer, overflowing or dropping leading zeros.
+    Write the seeds properties YAML, which carries two things per seed:
+
+    1. `description` -- the table's DBML `Note`, so raw tables stay documented
+       in `dbt docs`. These descriptions used to live in a `sources:` block;
+       staging models now `ref()` the seeds directly, so the seed node is
+       where the documentation belongs.
+    2. `config.column_types` -- force every free-text column (see
+       `is_free_text_type`) to VARCHAR in the seed loader config, instead of
+       letting dbt/duckdb sniff the type from CSV content. Some generated
+       text is all-digit (EAN13 barcodes, zero-padded postcodes, ...) and
+       would otherwise be silently loaded as an integer, overflowing or
+       dropping leading zeros.
+
+    A seed gets an entry when it has either of the two; `config` is omitted
+    for a seed with no free-text columns.
     """
     seed_entries = []
 
@@ -151,10 +155,12 @@ def _generate_seed_config(dest: Path, tables: dict) -> None:
         column_types = {
             col.name: "varchar" for col in table.columns if is_free_text_type(col.data_type)
         }
-        if not column_types:
-            continue
+        description = getattr(table, "description", None) or f"Table {table.name}"
 
-        seed_entries.append({"name": table.name, "config": {"column_types": column_types}})
+        entry: dict[str, Any] = {"name": table.name, "description": description}
+        if column_types:
+            entry["config"] = {"column_types": column_types}
+        seed_entries.append(entry)
 
     if not seed_entries:
         return
@@ -231,7 +237,7 @@ def generate_unit_tests(
     """
     Generate dbt unit test YAML fixtures (requires dbt-core >= 1.8).
 
-    Since staging models are pure `select * from {{ source(...) }}` passthroughs,
+    Since staging models are pure `select * from {{ ref(...) }}` passthroughs,
     a handful of already-generated rows can serve as both `given` and `expect`.
 
     Written alongside each staging model (under `model-paths`, which is where
@@ -249,7 +255,7 @@ def generate_unit_tests(
         sample_rows = _rows_as_native_dicts(df.head(sample_size))
         stg_name = f"stg_{table.name}"
         # table.name is spliced into a single-quoted Jinja string literal (the
-        # source() call is evaluated by dbt as an expression, not treated as
+        # ref() call is evaluated by dbt as an expression, not treated as
         # a literal YAML string); escape any embedded single quote so an
         # unusual DBML identifier can't break that call.
         escaped_name = table.name.replace("'", "\\'")
@@ -261,7 +267,7 @@ def generate_unit_tests(
                     "model": stg_name,
                     "given": [
                         {
-                            "input": f"source('raw', '{escaped_name}')",
+                            "input": f"ref('{escaped_name}')",
                             "rows": sample_rows,
                         }
                     ],

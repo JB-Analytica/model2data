@@ -115,7 +115,11 @@ def test_create_staging_models_correct_content(temp_dir):
 
     # Verify content includes key elements
     assert "stg_raw_stories" in content.lower() or "raw_stories" in content
-    assert "source('raw', 'raw_stories')" in content
+    # `ref()`, not `source()`: a source has no DAG edge back to the seed that
+    # materializes it, so a single-pass `dbt build` on a fresh database could
+    # schedule this model before its seed was loaded.
+    assert "ref('raw_stories')" in content
+    assert "source(" not in content
     assert "select *" in content.lower()
 
 
@@ -323,7 +327,7 @@ def test_staging_models_preserves_csv_name(temp_dir):
 
 def test_create_staging_models_escapes_single_quote_in_seed_name(temp_dir):
     """A seed CSV name containing a single quote (from a quoted DBML
-    identifier like `it's a table`) must not break the Jinja source() call.
+    identifier like `it's a table`) must not break the Jinja ref() call.
     """
     seeds_path = temp_dir / "seeds" / "raw"
     seeds_path.mkdir(parents=True, exist_ok=True)
@@ -335,7 +339,7 @@ def test_create_staging_models_escapes_single_quote_in_seed_name(temp_dir):
     model_file = temp_dir / "models" / "staging" / "stg_it's a table.sql"
     assert model_file.exists()
     content = model_file.read_text()
-    assert "source('raw', 'it\\'s a table')" in content
+    assert "ref('it\\'s a table')" in content
 
 
 def test_create_project_scaffold_handles_nested_path(temp_dir):

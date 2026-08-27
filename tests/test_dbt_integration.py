@@ -9,8 +9,15 @@ build`/`dbt ls`. Pure Python assertions on file paths (see
 test_dbt_tests.py::test_generated_file_paths_match_dbt_project_yml_resource_paths)
 can't catch this class of bug on their own either, because they can drift out
 of sync with `dbt_project.yml`'s actual config exactly the same way the
-production code just did. This test is the one thing that authoritatively
+production code just did. These tests are the one thing that authoritatively
 proves dbt itself finds and runs what model2data generates.
+
+The seed-ordering bug (staging models reading from a `source` that had no DAG
+edge back to the seed behind it, so a one-pass `dbt build` on a fresh database
+could run a model before its seed) survived just as long, and for the same
+reason -- CI ran `dbt seed` and `dbt run` as separate, already-ordered steps
+and never a bare `dbt build` from clean. Hence
+test_bare_dbt_build_succeeds_on_a_fresh_database below.
 
 dbt-core and dbt-duckdb are base dependencies (not the postgres extra), and
 DuckDB is file-based with no external service, so this needs nothing beyond
@@ -78,15 +85,8 @@ def test_generated_project_is_discovered_and_builds_clean(tmp_path, monkeypatch)
 
     _run_dbt("deps", cwd=project_dir)
 
-    # Seed and run first: dbt has no DAG edge from a seed to the source it
-    # backs, so on a completely fresh database `dbt build` alone can schedule
-    # a unit test (which needs to introspect the real relation's columns)
-    # before the seed that creates that relation. Seeding first sidesteps
-    # that ordering gap; it's not related to any of the three bugs this test
-    # guards against.
-    _run_dbt("seed", cwd=project_dir)
-    _run_dbt("run", cwd=project_dir)
-
+    # No `dbt seed`/`dbt run` warm-up: staging models `ref()` their seeds, so
+    # the single `dbt build` below orders seeds before models on its own.
     test_nodes = _run_dbt("ls", "--resource-type", "test", cwd=project_dir).stdout
     assert "unique_combination_stg_project_assignments_project_id_employee_id" in test_nodes, (
         "composite-key singular test not discovered by dbt -- "
@@ -102,3 +102,44 @@ def test_generated_project_is_discovered_and_builds_clean(tmp_path, monkeypatch)
         )
 
     _run_dbt("build", cwd=project_dir)
+
+
+@pytest.mark.skipif(DBT is None, reason="dbt CLI not found on PATH")
+def test_bare_dbt_build_succeeds_on_a_fresh_database(tmp_path, monkeypatch):
+    """A bare `dbt build` must succeed on a freshly generated project against a
+    completely fresh database, with no `dbt seed`/`dbt run` warm-up.
+
+    This is the regression test for the ordering bug that shipped through the
+    project's whole history: staging models read from `source('raw', <seed>)`,
+    and a dbt source carries no DAG edge to the seed that materializes it. `dbt
+    build` runs seeds and models in one DAG pass, so with nothing forcing the
+    order it could schedule a staging model before its seed existed and fail
+    with "Table with name <seed> does not exist". Nothing caught it because CI
+    only ever ran `dbt seed` and `dbt run` as separate, already-ordered steps.
+    Staging models now `ref()` their seeds, which is a real DAG edge.
+
+    Kept deliberately narrow -- one `dbt deps`, one `dbt build`, nothing
+    else -- so it stays a direct statement of the invariant even if the
+    node-discovery test above changes shape.
+    """
+    monkeypatch.chdir(tmp_path)
+
+    generate_cli(
+        file=EXAMPLE_DBML,
+        rows=50,
+        seed=42,
+        name="freshbuild",
+        force=True,
+        adapter="duckdb",
+        unit_tests=True,
+    )
+
+    project_dir = tmp_path / "dbt_freshbuild"
+    assert not list(project_dir.glob("*.duckdb")), (
+        "the generated project must start with no database file for this test to mean anything"
+    )
+
+    _run_dbt("deps", cwd=project_dir)
+    result = _run_dbt("build", cwd=project_dir)
+
+    assert "ERROR=0" in result.stdout, f"`dbt build` reported errors:\n{result.stdout}"

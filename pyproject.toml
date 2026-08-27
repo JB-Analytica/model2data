@@ -4,13 +4,40 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "model2data"
-version = "0.5.1"
+version = "1.0.0"
 description = "Generate analytics-ready datasets from DBML models"
-readme = "README.md"
+readme = "README_PYPI.md"
 requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "JB Analytica" }]
+keywords = [
+    "dbt",
+    "dbml",
+    "synthetic-data",
+    "test-data",
+    "analytics-engineering",
+    "data-engineering",
+    "duckdb",
+    "seed-data",
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Database",
+    "Topic :: Software Development :: Testing",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+]
 dependencies = [
-    "dbt-core>=1.8.5",
-    "dbt-duckdb>=1.8.4",
+    "dbt-core>=1.11",
+    "dbt-duckdb>=1.11",
     "faker>=37.12.0",
     "pandas>=2.3.3",
     "pyyaml>=6.0.3",
@@ -19,7 +46,7 @@ dependencies = [
 
 [project.optional-dependencies]
 postgres = [
-  "dbt-postgres>=1.8.0",
+  "dbt-postgres>=1.11",
 ]
 dev = [
   "pytest",
@@ -30,6 +57,12 @@ dev = [
   "types-pyyaml",
   "poethepoet>=0.38.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/JB-Analytica/model2data"
+Repository = "https://github.com/JB-Analytica/model2data"
+Issues = "https://github.com/JB-Analytica/model2data/issues"
+Changelog = "https://github.com/JB-Analytica/model2data/blob/main/CHANGELOG.md"
 
 [project.scripts]
 model2data = "model2data.cli:app"
@@ -46,7 +79,7 @@ model2data = [
 
 # Ruff configuration (fast Python linter)
 [tool.ruff]
-target-version = "py39"
+target-version = "py310"
 line-length = 100
 
 [tool.ruff.lint]

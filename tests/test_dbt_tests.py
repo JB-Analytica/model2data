@@ -98,19 +98,17 @@ def test_accepted_values_test_generated_for_enum_column(tmp_path):
     assert "inactive" in content
     assert "pending" in content
 
-    # Flat (non-`arguments:`-nested) generic test config, matching the
-    # `relationships` test below it -- this project's dbt-core floor
-    # (>=1.8, see pyproject.toml) predates dbt-core's `arguments:` nesting
-    # support entirely (verified: it hard-errors below dbt-core 1.10.5), so
-    # generated tests intentionally use the older, universally-compatible
-    # flat config shape. Current dbt-core versions still accept it (with a
-    # soft deprecation warning, not a failure).
+    # Generic test parameters are nested under `arguments:`, the shape dbt
+    # wants. Passing them as bare keys still works but warns on every run,
+    # and this project's dbt-core floor (>=1.11, tracking dbt's own support
+    # policy) is well above the version where `arguments:` became
+    # authoritative -- so generated projects build warning-free.
     parsed = yaml.safe_load(content)
     status_tests = next(c["tests"] for c in parsed["models"][0]["columns"] if c["name"] == "status")
     accepted_values_test = next(
         t["accepted_values"] for t in status_tests if "accepted_values" in t
     )
-    assert set(accepted_values_test["values"]) == {"active", "inactive", "pending"}
+    assert set(accepted_values_test["arguments"]["values"]) == {"active", "inactive", "pending"}
 
 
 def test_table_and_column_descriptions_round_trip_as_valid_yaml(tmp_path):
@@ -131,10 +129,11 @@ def test_table_and_column_descriptions_round_trip_as_valid_yaml(tmp_path):
     }
     generate_dbt_yml(tmp_path, tables, [], source_name="shop")
 
-    sources_text = (tmp_path / "models" / "staging" / "__sources.yml").read_text()
-    sources_yaml = yaml.safe_load(sources_text)
-    table_entry = sources_yaml["sources"][0]["tables"][0]
-    assert table_entry["description"] == "Stores registered users: profile + contact info"
+    seeds_text = (tmp_path / "seeds" / "raw" / "__seed_config.yml").read_text()
+    seeds_yaml = yaml.safe_load(seeds_text)
+    seed_entry = seeds_yaml["seeds"][0]
+    assert seed_entry["name"] == "users"
+    assert seed_entry["description"] == "Stores registered users: profile + contact info"
 
     stg_text = (tmp_path / "models" / "staging" / "stg_users.yml").read_text()
     stg_yaml = yaml.safe_load(stg_text)
@@ -143,11 +142,116 @@ def test_table_and_column_descriptions_round_trip_as_valid_yaml(tmp_path):
 
 
 def test_table_without_description_falls_back_to_placeholder(tmp_path):
+    """A table with no DBML `Note` and no free-text columns still gets a seed
+    entry -- the entry is emitted for a description *or* column_types, and
+    `config` is omitted when there are no free-text columns to override.
+    """
     tables = {"users": TableDef(name="users", columns=[ColumnDef("id", "int", {"pk"})])}
     generate_dbt_yml(tmp_path, tables, [], source_name="shop")
 
-    sources_yaml = yaml.safe_load((tmp_path / "models" / "staging" / "__sources.yml").read_text())
-    assert sources_yaml["sources"][0]["tables"][0]["description"] == "Table users"
+    seeds_yaml = yaml.safe_load((tmp_path / "seeds" / "raw" / "__seed_config.yml").read_text())
+    seed_entry = seeds_yaml["seeds"][0]
+    assert seed_entry["name"] == "users"
+    assert seed_entry["description"] == "Table users"
+    assert "config" not in seed_entry
+
+
+def test_no_sources_yml_is_written(tmp_path):
+    """The generated project must declare no dbt `sources:` at all.
+
+    A dbt source is an assertion that a relation already exists; it carries no
+    DAG edge to the seed that materializes it. While staging models read from
+    `source('raw', ...)`, a single-pass `dbt build` on a fresh database could
+    schedule a staging model before its seed had been loaded, failing with
+    "Table with name <seed> does not exist". Staging models `ref()` the seeds
+    instead, and the sources block is gone.
+    """
+    tables = {
+        "users": TableDef(
+            name="users",
+            description="Registered users",
+            columns=[ColumnDef("id", "int", {"pk"}), ColumnDef("name", "varchar")],
+        )
+    }
+    generate_dbt_yml(tmp_path, tables, [], source_name="shop")
+
+    assert not (tmp_path / "models" / "staging" / "__sources.yml").exists()
+    for yml_file in tmp_path.rglob("*.yml"):
+        assert "sources:" not in yml_file.read_text(), (
+            f"{yml_file} still declares a dbt sources block"
+        )
+
+
+def test_staging_sql_refs_the_seed_not_a_source(tmp_path, monkeypatch):
+    """End-to-end through the CLI: every generated staging model must build
+    its DAG edge with `ref('<seed>')`, and no `__sources.yml` may be left
+    behind.
+    """
+    monkeypatch.chdir(tmp_path)
+
+    dbml_file = tmp_path / "shop.dbml"
+    dbml_file.write_text(
+        """
+    Table users {
+        id int [pk]
+        name varchar
+    }
+    """
+    )
+
+    generate_cli(
+        file=dbml_file,
+        rows=5,
+        seed=1,
+        name="refcheck",
+        force=True,
+        adapter="duckdb",
+    )
+
+    project_dir = tmp_path / "dbt_refcheck"
+    sql = (project_dir / "models" / "staging" / "stg_users.sql").read_text()
+    assert "ref('users')" in sql
+    assert "source(" not in sql
+    assert not (project_dir / "models" / "staging" / "__sources.yml").exists()
+
+
+def test_seed_description_emitted_without_any_free_text_columns(tmp_path):
+    """A table with a DBML description but no free-text columns still needs a
+    seed entry. `_generate_seed_properties` used to `continue` past any table
+    with no `column_types`, which would silently drop that table's
+    documentation now that descriptions live on the seed node.
+    """
+    tables = {
+        "counters": TableDef(
+            name="counters",
+            description="Numeric counters only: no text columns at all",
+            columns=[ColumnDef("id", "int", {"pk"}), ColumnDef("hits", "int", {"not null"})],
+        ),
+        "articles": TableDef(
+            name="articles",
+            description="Articles with a text body",
+            columns=[ColumnDef("id", "int", {"pk"}), ColumnDef("body", "text", {"not null"})],
+        ),
+    }
+    generate_dbt_yml(tmp_path, tables, [], source_name="shop")
+
+    seeds_yaml = yaml.safe_load((tmp_path / "seeds" / "raw" / "__seed_config.yml").read_text())
+    entries = {entry["name"]: entry for entry in seeds_yaml["seeds"]}
+
+    assert entries["counters"]["description"] == "Numeric counters only: no text columns at all"
+    assert "config" not in entries["counters"]
+
+    assert entries["articles"]["description"] == "Articles with a text body"
+    assert entries["articles"]["config"]["column_types"] == {"body": "varchar"}
+
+
+def test_no_tables_writes_no_seed_properties_file(tmp_path):
+    """With no tables at all there is nothing to document or configure, so the
+    seeds properties YAML is skipped rather than written empty.
+    """
+    generate_dbt_yml(tmp_path, {}, [], source_name="shop")
+
+    assert not (tmp_path / "seeds" / "raw" / "__seed_config.yml").exists()
 
 
 def test_composite_key_singular_test_sql_written(tmp_path):
@@ -265,7 +369,7 @@ def test_generate_unit_tests_produces_valid_yaml_with_expected_rows(tmp_path):
 
     unit_test = data["unit_tests"][0]
     assert unit_test["model"] == "stg_users"
-    assert unit_test["given"][0]["input"] == "source('raw', 'users')"
+    assert unit_test["given"][0]["input"] == "ref('users')"
     assert len(unit_test["given"][0]["rows"]) == 2
     assert unit_test["given"][0]["rows"] == unit_test["expect"]["rows"]
     assert unit_test["given"][0]["rows"][0] == {"id": 1, "name": "Alice"}
@@ -353,9 +457,9 @@ def test_generate_dbt_yml_handles_identifier_with_space(tmp_path):
     }
     generate_dbt_yml(tmp_path, tables, [], source_name="shop")
 
-    sources_text = (tmp_path / "models" / "staging" / "__sources.yml").read_text()
-    sources_yaml = yaml.safe_load(sources_text)
-    assert sources_yaml["sources"][0]["tables"][0]["name"] == "my weird table"
+    seeds_text = (tmp_path / "seeds" / "raw" / "__seed_config.yml").read_text()
+    seeds_yaml = yaml.safe_load(seeds_text)
+    assert seeds_yaml["seeds"][0]["name"] == "my weird table"
 
     stg_text = (tmp_path / "models" / "staging" / "stg_my weird table.yml").read_text()
     stg_yaml = yaml.safe_load(stg_text)
@@ -428,7 +532,7 @@ def test_generate_unit_tests_handles_identifier_with_single_quote(tmp_path):
     yml_file = tmp_path / "models" / "staging" / "ut_stg_it's a table.yml"
     data = yaml.safe_load(yml_file.read_text())
     given_input = data["unit_tests"][0]["given"][0]["input"]
-    assert given_input == "source('raw', 'it\\'s a table')"
+    assert given_input == "ref('it\\'s a table')"
 
 
 def test_single_column_index_entry_produces_no_singular_test(tmp_path):
@@ -495,4 +599,42 @@ def test_relationships_test_field_is_quoted_for_special_target_column(tmp_path):
         for t in orders_col["tests"]
         if isinstance(t, dict) and "relationships" in t
     )
-    assert relationship_test["field"] == '"account id"'
+    assert relationship_test["arguments"]["field"] == '"account id"'
+
+
+def test_generic_tests_nest_parameters_under_arguments(tmp_path):
+    """Generic test params must be nested under `arguments:`.
+
+    Passing them as bare keys is deprecated: dbt still accepts it, but warns
+    on every single run, which is noise in a project meant to be handed
+    straight to someone else. Pinned here because the flat shape fails
+    loudly only as a warning, so nothing else would catch a regression.
+    """
+    tables = {
+        "orders": TableDef(
+            name="orders",
+            columns=[
+                ColumnDef("id", "int", {"pk"}),
+                ColumnDef("customer_id", "int", {"not null"}),
+            ],
+        ),
+        "customers": TableDef(name="customers", columns=[ColumnDef("id", "int", {"pk"})]),
+    }
+    refs = [
+        {
+            "source_table": "orders",
+            "source_column": "customer_id",
+            "target_table": "customers",
+            "target_column": "id",
+        }
+    ]
+
+    generate_dbt_yml(tmp_path, tables, refs, source_name="shop")
+
+    parsed = yaml.safe_load((tmp_path / "models" / "staging" / "stg_orders.yml").read_text())
+    col = next(c for c in parsed["models"][0]["columns"] if c["name"] == "customer_id")
+    relationships = next(t["relationships"] for t in col["tests"] if isinstance(t, dict))
+
+    assert set(relationships) == {"arguments"}, "params must live under `arguments:`"
+    assert relationships["arguments"]["to"] == "ref('stg_customers')"
+    assert relationships["arguments"]["field"] == "id"
