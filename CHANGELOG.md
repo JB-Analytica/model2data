@@ -41,6 +41,24 @@ same neighborhood — also fixed below, with 495 new parametrized regression cas
   examples: a bare `dbt build` on a fresh database reaches `ERROR=0` for each. A permanent
   dbt-CLI regression test (`tests/test_dbt_integration.py::
   test_bare_dbt_build_succeeds_on_a_fresh_database`) now runs exactly that.
+- **`--seed` did not actually produce identical data across runs.** `_random_datetime` anchored
+  its window on `datetime.now()` but offset by a whole number of seconds, so the anchor's
+  microsecond component leaked straight through into every generated timestamp: two runs with the
+  same seed produced rows differing only in their sub-second fraction. Every other column was
+  byte-identical, which is why it went unnoticed — but it was enough to make committed seed
+  fixtures churn on each regeneration, defeating the entire purpose of `--seed`. The window is now
+  anchored to midnight, so timestamps carry no sub-second component and same-seed runs are
+  byte-identical. (Date and timestamp columns are still generated relative to the current date, so
+  regenerating on a later day shifts them — determinism holds for a given day.)
+- **`zip()` without `strict=` when expanding a composite `Ref`.** Guarded by an explicit
+  length-equality check immediately above, so not reachable in practice, but now stated
+  explicitly rather than relying on that guard staying in place. Surfaced by the ruff fix below.
+
+### Changed
+- Ruff's `target-version` was pinned to `py39`, below the project's own `requires-python =
+  ">=3.10"`, so it lint-checked against a Python older than any supported version and never
+  flagged 3.10+ idioms. Now `py310`.
+
 - **Every `dbt build` printed a deprecation warning.** Generated schema tests passed their
   parameters as bare keys (`relationships:` with `to:`/`field:` directly under it), the shape dbt
   now deprecates in favour of nesting them under `arguments:` — so every run of every generated

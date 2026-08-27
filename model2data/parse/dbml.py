@@ -300,7 +300,7 @@ def _try_parse_ref_line(cleaned: str, refs: list[dict], many_to_many_refs: list[
         # that composite key is itself enforced via an `indexes {}`
         # pk/unique block on the parent. Solving joint-value consistency
         # across independently-generated FK columns is out of scope here.
-        for left_column, right_column in zip(left_columns, right_columns):
+        for left_column, right_column in zip(left_columns, right_columns, strict=True):
             _record_ref(
                 refs,
                 many_to_many_refs,

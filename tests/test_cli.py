@@ -703,3 +703,77 @@ def test_cli_with_unit_tests_flag_generates_unit_test_yaml(tmp_path):
 
     data = yaml.safe_load(unit_yml.read_text())
     assert data["unit_tests"][0]["model"] == "stg_users"
+
+
+def test_cli_reports_unresolvable_uniqueness_in_summary(tmp_path):
+    """Both de-duplication passes give up after a bounded number of retries.
+
+    That tradeoff is fine; accepting the duplicates *silently* is not, because
+    the generated project then fails its own `unique` / `unique_combination_*`
+    dbt tests with nothing explaining why. This schema is deliberately
+    saturated -- 3x3 possible id pairs for 40 rows -- so both passes must run
+    out of room and both warnings must appear.
+    """
+    dbml_file = tmp_path / "saturated.dbml"
+    dbml_file.write_text(
+        """
+    Table posts {
+        id int [pk, note: '{"min": 1, "max": 3}']
+    }
+
+    Table tags {
+        id int [pk, note: '{"min": 1, "max": 3}']
+    }
+
+    Table post_tags {
+        post_id int [not null]
+        tag_id int [not null]
+
+        indexes {
+            (post_id, tag_id) [pk]
+        }
+    }
+
+    Ref: post_tags.post_id > posts.id
+    Ref: post_tags.tag_id > tags.id
+    """
+    )
+
+    original_cwd = os.getcwd()
+    try:
+        os.chdir(tmp_path)
+        result = runner.invoke(app, ["--file", str(dbml_file), "--rows", "40", "--seed", "3"])
+    finally:
+        os.chdir(original_cwd)
+
+    assert result.exit_code == 0
+    assert "Composite keys left with duplicate rows" in result.stdout
+    assert "post_tags (post_id, tag_id)" in result.stdout
+    assert "Unique columns left with duplicate values" in result.stdout
+    # Table-qualified, so two same-named `id` columns stay distinguishable.
+    assert "posts.id" in result.stdout
+    assert "tags.id" in result.stdout
+
+
+def test_cli_summary_is_quiet_when_uniqueness_is_satisfiable(tmp_path):
+    """The mirror of the test above: no false positives on a healthy schema."""
+    dbml_file = tmp_path / "roomy.dbml"
+    dbml_file.write_text(
+        """
+    Table posts {
+        id int [pk]
+        title varchar
+    }
+    """
+    )
+
+    original_cwd = os.getcwd()
+    try:
+        os.chdir(tmp_path)
+        result = runner.invoke(app, ["--file", str(dbml_file), "--rows", "40", "--seed", "3"])
+    finally:
+        os.chdir(original_cwd)
+
+    assert result.exit_code == 0
+    assert "duplicate row(s)" not in result.stdout
+    assert "duplicate value(s)" not in result.stdout

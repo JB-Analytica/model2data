@@ -349,8 +349,17 @@ def _deduplicate(
 
 
 def _random_datetime(start_days: int = -365, end_days: int = 0) -> datetime:
-    start = datetime.now() + timedelta(days=start_days)
-    end = datetime.now() + timedelta(days=end_days)
-    delta = end - start
-    random_second = random.randint(0, int(delta.total_seconds()))
+    """Pick a random timestamp in a window around today, to whole seconds.
+
+    The window is anchored to midnight rather than `datetime.now()`. The
+    random offset is a whole number of seconds, so anchoring on `now()` let
+    its sub-second component leak straight through into every generated
+    timestamp -- two runs with the same `--seed` produced values differing
+    only in their microseconds, which quietly broke the reproducibility
+    `--seed` exists to provide.
+    """
+    midnight = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    start = midnight + timedelta(days=start_days)
+    end = midnight + timedelta(days=end_days)
+    random_second = random.randint(0, int((end - start).total_seconds()))
     return start + timedelta(seconds=random_second)

@@ -858,3 +858,30 @@ def test_disconnected_table_does_not_trigger_cycle_warning():
     generate_data_from_dbml(tables, [], base_rows=5, seed=0)
 
     assert get_cyclic_tables() == []
+
+
+def test_timestamp_generation_is_reproducible_across_runs():
+    """Regression test: `--seed` must make timestamps byte-identical.
+
+    `_random_datetime` used to anchor on `datetime.now()` while offsetting by
+    a whole number of seconds, so the anchor's microseconds leaked into every
+    generated timestamp and two same-seed runs differed in the sub-second
+    component alone -- enough to make committed seed fixtures churn on every
+    regeneration, which is exactly what `--seed` is supposed to prevent.
+    """
+    tables = {
+        "events": TableDef(
+            name="events",
+            columns=[
+                ColumnDef("id", "int", {"pk"}),
+                ColumnDef("created_at", "timestamp", {"not null"}),
+            ],
+        )
+    }
+
+    first = generate_data_from_dbml(tables, [], base_rows=25, seed=99)["events"]
+    second = generate_data_from_dbml(tables, [], base_rows=25, seed=99)["events"]
+
+    assert list(first["created_at"]) == list(second["created_at"])
+    # No sub-second component at all, so a CSV round-trip stays stable too.
+    assert all(ts.endswith(":00") or "." not in ts for ts in map(str, first["created_at"]))
