@@ -8,8 +8,8 @@ project. Read this before authoring a DBML file for `model2data`.
 
 `model2data` takes a [DBML](https://dbml.dbdiagram.io/docs/) schema file and generates, in one
 command: realistic, relationship-preserving synthetic data (as dbt seed CSVs) and a complete,
-runnable dbt project around it — staging models, schema tests, sources, and a DuckDB or Postgres
-profile. No production data, no hand-written mock CSVs, no dbt boilerplate.
+runnable dbt project around it — staging models that `ref()` those seeds, schema tests, and a
+DuckDB or Postgres profile. No production data, no hand-written mock CSVs, no dbt boilerplate.
 
 ## The end-to-end workflow
 
@@ -31,10 +31,13 @@ rough ERD, a client's requirements):
 3. **Verify it actually works before showing anyone**:
    ```bash
    cd dbt_<name>
-   dbt deps && dbt seed && dbt run && dbt build
+   dbt build
    ```
-   `dbt build` runs the models *and* every generated test (including unit tests if you passed
-   `--unit-tests`). If anything fails, don't hand this to a client — go back to step 1. Also
+   `dbt build` is the whole verification: staging models `ref()` their seeds, so this one
+   command loads the seeds, builds the models, and runs every generated test (including unit
+   tests if you passed `--unit-tests`) in one dependency-ordered pass, on a fresh database. No
+   `dbt deps`/`dbt seed`/`dbt run` warm-up needed — the generated project declares no packages,
+   so `dbt deps` is a no-op. If anything fails, don't hand this to a client — go back to step 1. Also
    check `model2data`'s own CLI output from step 2: it prints a summary including any DBML lines
    it couldn't fully parse, or any FK cycles it detected — treat those as things to fix in the
    DBML before demoing.

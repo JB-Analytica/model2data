@@ -34,7 +34,14 @@ def create_project_scaffold(dest: Path, project_name: str, profile_name: str) ->
 
 def create_staging_models(dest: Path, project_name: str) -> None:
     """
-    Creates staging models in models/staging/ folder that reference raw seed tables as sources.
+    Creates staging models in models/staging/ that `ref()` the raw seed tables.
+
+    Seeds are first-class refable dbt nodes, so `ref('<seed>')` gives the
+    staging model a real DAG edge to the seed that materializes it. Declaring
+    the same seeds as a dbt *source* instead would not: a source is an
+    assertion that a relation already exists, with no dependency on the seed
+    behind it, so a single-pass `dbt build` could schedule a staging model
+    before its seed had been loaded.
     """
     seeds_path = dest / "seeds" / "raw"
     models_path = dest / "models" / "staging"
@@ -47,12 +54,12 @@ def create_staging_models(dest: Path, project_name: str) -> None:
         if not model_file.exists():
             # table_name is spliced into a single-quoted Jinja string literal;
             # escape any embedded single quote so a DBML identifier containing
-            # one can't break the source() call.
+            # one can't break the ref() call.
             escaped_name = table_name.replace("'", "\\'")
             sql_content = f"""\
 -- Auto-generated staging model for {table_name}
 select *
-from {{{{ source('raw', '{escaped_name}') }}}}
+from {{{{ ref('{escaped_name}') }}}}
                 """
             model_file.write_text(sql_content)
 

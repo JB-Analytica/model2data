@@ -22,6 +22,25 @@ same neighborhood — also fixed below, with 495 new parametrized regression cas
   running dbt project.
 
 ### Fixed
+- **`dbt build` failed on every freshly generated project**, with or without `--unit-tests`,
+  typically as `Runtime Error in model stg_<table> ... Table with name <table> does not exist`.
+  Staging models read from `{{ source('raw', '<table>') }}`, and the generated
+  `models/staging/__sources.yml` declared each seed as a dbt *source*. But a dbt source is only an
+  assertion that some relation already exists — it carries no DAG edge back to the seed that
+  actually materializes it. `dbt build` schedules seeds and models in a single dependency-ordered
+  pass, so with no edge joining the two, a staging model (or a unit test needing to introspect
+  the real relation) could be scheduled before its seed had ever been loaded. It went unnoticed
+  for the project's whole history because CI only ever ran `dbt seed` and `dbt run` as separate,
+  already-ordered steps, never a bare `dbt build` against a fresh database.
+  Fixed by having staging models `ref('<table>')` the seeds instead: seeds are first-class refable
+  dbt nodes, so `ref()` creates the real DAG edge and one `dbt build` now orders seeds before the
+  models that read them. `--unit-tests` fixtures reference the seeds the same way. The now-dead
+  `__sources.yml` is no longer generated; the table descriptions it carried (DBML `Note` → dbt
+  docs) moved to the seeds properties YAML at `seeds/raw/__seed_config.yml`, so raw tables stay
+  documented on the node that actually exists. Verified from a clean install on all four bundled
+  examples: a bare `dbt build` on a fresh database reaches `ERROR=0` for each. A permanent
+  dbt-CLI regression test (`tests/test_dbt_integration.py::
+  test_bare_dbt_build_succeeds_on_a_fresh_database`) now runs exactly that.
 - **The PyPI project page's description rendered broken.** Both embedded images used paths
   relative to the GitHub repository, which PyPI's renderer doesn't resolve — they appeared as
   broken image icons. The architecture diagram, a GitHub-flavored-Markdown Mermaid code fence,

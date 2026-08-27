@@ -9,14 +9,14 @@
 
 Give `model2data` a [DBML](https://dbml.dbdiagram.io/docs/) schema — hand-written or exported
 from an existing database — and it generates realistic, relationship-preserving synthetic data
-*and* a complete, runnable dbt project around it: seeds, staging models, sources, tests, and a
+*and* a complete, runnable dbt project around it: seeds, staging models, tests, and a
 DuckDB or Postgres profile. No sample data to hunt down, no dbt boilerplate to hand-write, no
 production data to risk exposing.
 
 ```bash
 pip install model2data
 model2data --file examples/hackernews.dbml --rows 200 --seed 42
-cd dbt_hackernews && dbt seed && dbt run
+cd dbt_hackernews && dbt build
 ```
 
 That's a working analytics stack — real (synthetic) data, tested dbt models, queryable in
@@ -42,8 +42,9 @@ access required.
   dependency order.
 - **Deterministic.** Pass `--seed` and the same schema always produces the same data — safe to
   commit fixtures, safe to diff across CI runs.
-- **A real dbt project, not just CSVs.** Seeds, staging models, sources, schema tests, and a
-  ready-to-use profile — the thing you'd otherwise spend an afternoon scaffolding by hand.
+- **A real dbt project, not just CSVs.** Seeds, staging models that `ref()` them, schema tests,
+  and a ready-to-use profile — the thing you'd otherwise spend an afternoon scaffolding by hand.
+  A single `dbt build` loads, transforms, and tests the whole thing.
 
 ## Who is model2data for?
 
@@ -81,7 +82,7 @@ flowchart LR
     D --> E
     D --> F
     D --> G
-    E & F & G --> H["dbt seed && dbt run"]
+    E & F & G --> H["dbt build"]
     H --> I[("Analytics-ready\ndataset")]
 
     classDef m2dStyle fill:#0A3866,stroke:#2196F0,color:#F6F8FB
@@ -96,10 +97,10 @@ flowchart LR
 2. **Generate.** Produces synthetic values per column — typed generation for known SQL types
    (int, date, timestamp, ...), name-aware inference for everything else (`email`, `phone`,
    `city`, ...), foreign keys resolved against already-generated parent rows.
-3. **Scaffold.** Writes a complete dbt project around that data: CSV seeds, staging models with
-   `source`/`not_null`/`unique`/`relationships` tests, `accepted_values` tests for DBML
-   `Enum`-typed columns, singular SQL tests for composite primary/unique keys, table and column
-   `description:` fields pulled from DBML notes, and a profile for DuckDB (zero-config,
+3. **Scaffold.** Writes a complete dbt project around that data: CSV seeds, staging models that
+   `ref()` those seeds, `not_null`/`unique`/`relationships` tests, `accepted_values` tests for
+   DBML `Enum`-typed columns, singular SQL tests for composite primary/unique keys, table and
+   column `description:` fields pulled from DBML notes, and a profile for DuckDB (zero-config,
    file-based) or Postgres.
 
 ---
@@ -124,14 +125,18 @@ model2data --file examples/hackernews.dbml --rows 200 --seed 42
 
 This creates a `dbt_hackernews/` folder with your data and dbt setup.
 
-Run dbt to load and transform the data:
+Run dbt to load, transform, and test the data:
 
 ```bash
 cd dbt_hackernews
-dbt deps
-dbt seed
-dbt run
+dbt build
 ```
+
+Staging models `ref()` their seeds, so a single `dbt build` loads the seeds, builds the models,
+and runs every generated test in one dependency-ordered pass — no separate `dbt seed`/`dbt run`
+needed, even on a brand-new database. (The individual `dbt deps`, `dbt seed`, and `dbt run`
+commands still work if you'd rather drive the steps yourself; the generated project declares no
+packages, so `dbt deps` is a no-op.)
 
 Your analytics-ready dataset is now in DuckDB!
 
@@ -170,11 +175,11 @@ The generated dbt project includes:
 dbt_{project_name}/
 ├── seeds/
 │   └── raw/
+│       ├── __seed_config.yml  # seed descriptions + column-type overrides
 │       ├── table1.csv
 │       └── table2.csv
 ├── models/
 │   └── staging/
-│       ├── __sources.yml
 │       ├── stg_table1.sql
 │       ├── stg_table1.yml
 │       ├── ut_stg_table1.yml  # only with --unit-tests
@@ -188,11 +193,15 @@ dbt_{project_name}/
 └── {project_name}_profile.duckdb  # DuckDB adapter only
 ```
 
-- **Seeds**: CSV files with generated synthetic data.
-- **Staging Models**: Basic dbt models that load from seeds.
-- **Sources & Tests**: YAML configs defining sources and column tests (`not_null`, `unique`,
-  `relationships`, and `accepted_values` for DBML `Enum`-typed columns). Table and column
-  `Note` text from the DBML becomes `description:` fields.
+- **Seeds**: CSV files with generated synthetic data, plus `__seed_config.yml` — each seed's
+  `description:` (from the table's DBML `Note`) and the column-type overrides that keep
+  all-digit text columns (barcodes, zero-padded postcodes, ...) from being loaded as integers.
+- **Staging Models**: Basic dbt models that `ref()` their seed. Using `ref()` rather than
+  declaring the seeds as dbt `sources` is what gives each model a real DAG edge to the seed
+  behind it, so one `dbt build` orders seeds before models on a fresh database.
+- **Tests**: A YAML per staging model with column tests (`not_null`, `unique`, `relationships`,
+  and `accepted_values` for DBML `Enum`-typed columns). Column `Note` text from the DBML becomes
+  `description:` fields.
 - **Composite key tests**: Composite primary/unique keys declared in an `indexes { }` block get
   a singular SQL test under `data-tests/`, dbt's configured `test-paths`.
 - **Profiles**: Pre-configured for DuckDB (file-based) or Postgres (via env vars), with schema handling.
