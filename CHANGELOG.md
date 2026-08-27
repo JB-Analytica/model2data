@@ -10,7 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 First stable release. Mostly about the project's presentation and long-term stance, plus a final
 scrutiny pass that turned up a handful of generation bugs in genuinely untested territory
 (a fresh domain schema, a large 18-table schema, and real Postgres) — all fixed below before
-tagging.
+tagging. A follow-up depth pass then hammered those same four fixes specifically (many seeds, many
+row counts, extreme value-space-vs-row-count ratios, and real end-to-end `dbt build` runs, not
+just Python-level checks) instead of sweeping new territory again, and found one more bug in the
+same neighborhood — also fixed below, with 495 new parametrized regression cases
+(`tests/test_release_stress.py`) added as permanent coverage.
 
 ### Added
 - `LLMS.md`: instructions for LLM/coding-agent users, covering the full DBML feature set
@@ -56,6 +60,22 @@ tagging.
   generator's effective value space. Fixed by treating `unique` the same as `pk` for generation
   purposes at both call sites (main column generation and self-referencing FK resolution).
   Regression test added.
+- **A composite primary key's member columns could still end up `null`, when declared only via an
+  `indexes { (a, b) [pk] }` block with no `pk`/`not null` on the individual columns themselves** —
+  the standard DBML shape for a join/bridge table's key (`examples/tagging_m2m.dbml`'s
+  `post_tags.post_id`/`tag_id` is a real, shipped example of exactly this). The nullability pass in
+  `generate_column_values` only ever looked at a column's own `settings`, with no awareness of
+  table-level composite-key membership, so ~14–20% of rows in such a column came back `null` —
+  which, since the column is also almost always an FK in this pattern, looked exactly like a
+  dangling/orphaned reference, and was confirmed to actually fail the generated
+  `unique_combination_stg_post_tags_post_id_tag_id` dbt test outright (`FAIL 4`) on a real seed/run/
+  build once enough rows made a null/null collision likely. Found while stress-testing bug 1's fix
+  above across many more seeds and row counts than its original single repro case. Fixed with a new
+  `force_not_null` parameter threaded from `generate_data_from_dbml`/`_resolve_self_referencing_fks`
+  (which compute the table's composite-*pk* column set) down into `generate_column_values`,
+  overriding the nullability pass for exactly those columns. A composite *unique* (non-pk) key
+  deliberately keeps its previous, more permissive behavior — standard SQL unique constraints don't
+  forbid nulls in their member columns, unlike primary keys.
 
 ### Changed
 - Rewrote the README's "Roadmap" section as "Project status": as of 1.0.0, model2data is

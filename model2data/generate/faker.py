@@ -134,10 +134,19 @@ def generate_column_values(
     row_count: int,
     fk_series: Optional[pd.Series] = None,
     ensure_unique: bool = False,
+    force_not_null: bool = False,
 ) -> list:
     """
     Generate synthetic values for a single column.
     Respects FKs, uniqueness, and optional min/max hints in column notes.
+
+    `force_not_null` lets a caller override the nullability pass below for a
+    column whose *individual* settings don't carry `not null`/`pk` but is
+    still never allowed to be null -- namely a composite primary key member
+    declared only via an `indexes {} [pk]` block (see
+    generate.core._deduplicate_composite_keys's caller), where no single
+    column setting says so but SQL primary-key semantics forbid nulls in any
+    of its columns regardless.
     """
     if column.enum_values:
         return [random.choice(column.enum_values) for _ in range(row_count)]
@@ -254,7 +263,7 @@ def generate_column_values(
     # -----------------------------------------------------
     # Nullability
     # -----------------------------------------------------
-    if "not null" not in column.settings and "pk" not in column.settings:
+    if not force_not_null and "not null" not in column.settings and "pk" not in column.settings:
         null_fraction = max(0, min(0.2, 1 - (row_count / (row_count + 50))))
         sample_size = int(row_count * null_fraction)
         if sample_size:

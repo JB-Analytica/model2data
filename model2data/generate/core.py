@@ -73,6 +73,26 @@ def generate_data_from_dbml(
 
         data: dict[str, list] = {}
 
+        # A composite *primary* key's member columns are frequently declared
+        # only via an `indexes {} [pk]` block (the standard DBML shape for a
+        # join/bridge table's key -- see examples/tagging_m2m.dbml's
+        # post_tags), with no `pk`/`not null` on the individual columns
+        # themselves. SQL primary-key semantics forbid nulls in any such
+        # column regardless of where the constraint was declared, so those
+        # columns need the same not-null treatment as an explicit `pk`
+        # column below -- otherwise the nullability pass can null out a
+        # supposedly-required key column (and, when it's also an FK, make
+        # that value look like a dangling reference to no real parent row).
+        # A composite *unique* (non-pk) key doesn't get this treatment:
+        # standard SQL unique constraints don't forbid nulls in their
+        # member columns.
+        composite_pk_columns: set[str] = {
+            column_name
+            for key in table_def.composite_keys
+            if key.get("type") == "pk"
+            for column_name in key.get("columns") or []
+        }
+
         # -----------------------
         # First pass: columns + FKs
         # -----------------------
@@ -97,6 +117,7 @@ def generate_data_from_dbml(
                 row_count=row_count,
                 fk_series=fk_series,
                 ensure_unique=ensure_unique,
+                force_not_null=column.name in composite_pk_columns,
             )
 
         df = pd.DataFrame(data)
@@ -254,6 +275,13 @@ def _resolve_self_referencing_fks(
     unrelated random values instead. Once `df` exists we know the real
     parent-column values and can fix it up here.
     """
+    composite_pk_columns: set[str] = {
+        column_name
+        for key in table_def.composite_keys
+        if key.get("type") == "pk"
+        for column_name in key.get("columns") or []
+    }
+
     for column in table_def.columns:
         fk_target = fk_lookup.get((table_name, column.name))
         if not fk_target:
@@ -269,6 +297,7 @@ def _resolve_self_referencing_fks(
             row_count=row_count,
             fk_series=df[parent_column],
             ensure_unique=ensure_unique,
+            force_not_null=column.name in composite_pk_columns,
         )
 
     return df
