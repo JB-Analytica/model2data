@@ -46,9 +46,7 @@ def test_cli_basic_generation(tmp_path):
     assert "🪪 Ensuring dbt profile exists" in result.stdout
     assert "🎉 model2data generation complete!" in result.stdout
     assert "Next steps:" in result.stdout
-    assert "dbt deps" in result.stdout
-    assert "dbt seed" in result.stdout
-    assert "dbt run" in result.stdout
+    assert "dbt build" in result.stdout
 
 
 def test_cli_with_seed(tmp_path):
@@ -635,9 +633,7 @@ def test_cli_all_output_messages_present(tmp_path):
         "🪪 Ensuring dbt profile exists",
         "🎉 model2data generation complete!",
         "Next steps:",
-        "dbt deps",
-        "dbt seed",
-        "dbt run",
+        "dbt build",
     ]
 
     for message in expected_messages:

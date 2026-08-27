@@ -10,6 +10,17 @@ import yaml
 from model2data.generate.faker import is_free_text_type
 from model2data.generate.relationships import classify_refs
 
+# dbt nests a generic test's parameters under `arguments:`. Passing them as
+# bare keys still works but is deprecated, and warns on every single run --
+# noisy for a tool whose output is meant to be handed straight to someone
+# else. This project's dbt-core floor is above the version where `arguments:`
+# became authoritative, so always emit the modern shape.
+
+
+def _generic_test(name: str, arguments: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Build one generic-test entry with its parameters nested under `arguments:`."""
+    return {name: {"arguments": arguments}}
+
 
 def _dump_yaml(data: dict) -> str:
     """Dump a plain Python structure to YAML, safely escaping every value.
@@ -78,17 +89,18 @@ def generate_dbt_yml(dest: Path, tables: dict, refs: list[dict], source_name: st
             if "unique" in settings or "pk" in settings:
                 tests.append("unique")
             if getattr(col, "enum_values", None):
-                tests.append({"accepted_values": {"values": list(col.enum_values)}})
+                tests.append(_generic_test("accepted_values", {"values": list(col.enum_values)}))
 
             fk_refs = fk_map.get((table.name, col.name), [])
             for fk in fk_refs:
                 tests.append(
-                    {
-                        "relationships": {
+                    _generic_test(
+                        "relationships",
+                        {
                             "to": f"ref('stg_{fk['target_table']}')",
                             "field": _dbt_column_ref(fk["target_column"]),
-                        }
-                    }
+                        },
+                    )
                 )
 
             col_doc: dict[str, Any] = {"name": _dbt_column_ref(col.name)}

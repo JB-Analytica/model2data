@@ -15,8 +15,8 @@ production data to risk exposing.
 
 ```bash
 pip install model2data
-model2data --file examples/hackernews.dbml --rows 200 --seed 42
-cd dbt_hackernews && dbt build
+model2data --file examples/ecommerce.dbml --rows 200 --seed 42
+cd dbt_ecommerce && dbt build
 ```
 
 That's a working analytics stack — real (synthetic) data, tested dbt models, queryable in
@@ -81,20 +81,21 @@ pip install model2data
 
 ## Quick start
 
-We provide an example Hacker News dataset in `examples/hackernews.dbml`.
+We bundle several example schemas in `examples/` — this walkthrough uses the e-commerce one
+(`examples/ecommerce.dbml`: customers, products, orders, order items, and reviews).
 
 Generate a project with synthetic data:
 
 ```bash
-model2data --file examples/hackernews.dbml --rows 200 --seed 42
+model2data --file examples/ecommerce.dbml --rows 200 --seed 42
 ```
 
-This creates a `dbt_hackernews/` folder with your data and dbt setup.
+This creates a `dbt_ecommerce/` folder with your data and dbt setup.
 
 Run dbt to load, transform, and test the data:
 
 ```bash
-cd dbt_hackernews
+cd dbt_ecommerce
 dbt build
 ```
 
@@ -110,7 +111,7 @@ To target Postgres instead, install the extra and pass `--adapter postgres`:
 
 ```bash
 pip install "model2data[postgres]"
-model2data --file examples/hackernews.dbml --rows 200 --seed 42 --adapter postgres
+model2data --file examples/ecommerce.dbml --rows 200 --seed 42 --adapter postgres
 ```
 
 Connection details are read from environment variables (`MODEL2DATA_PG_HOST`, `MODEL2DATA_PG_PORT`, `MODEL2DATA_PG_USER`, `MODEL2DATA_PG_PASSWORD`, `MODEL2DATA_PG_DATABASE`), defaulting to `localhost:5432` with a `postgres`/`postgres` user for local development.
@@ -120,16 +121,11 @@ After generation, the CLI prints a short summary — tables and rows generated, 
 Pass `--unit-tests` to also generate deterministic dbt unit test fixtures (`models/staging/ut_stg_<table>.yml`) from the actually-generated seed rows:
 
 ```bash
-model2data --file examples/hackernews.dbml --rows 200 --seed 42 --unit-tests
+model2data --file examples/ecommerce.dbml --rows 200 --seed 42 --unit-tests
 ```
 
-This targets dbt-core's native unit testing feature, which requires dbt-core >= 1.8 — already
-covered by this project's `dbt-core>=1.8.5` floor, so `--unit-tests` works with the base install.
-Note: on dbt-core versions in the 1.8.x line specifically, a DBML column named after a SQL
-reserved word (e.g. `by`, as in `examples/hackernews.dbml`) can fail unit test execution with a
-`syntax error` — a dbt-core-internal identifier-quoting limitation in its unit test fixture
-rendering for that release line, not something under model2data's control. It's fixed in later
-dbt-core versions; every other `--unit-tests` path works fine on 1.8.x.
+This targets dbt-core's native unit testing feature, which works out of the box with the base
+install — see [dbt-core versions](#dbt-core-versions) below.
 
 ---
 
@@ -173,7 +169,7 @@ dbt_{project_name}/
 - **Profiles**: Pre-configured for DuckDB (file-based) or Postgres (via env vars), with schema handling.
 - **Unit tests** (opt-in via `--unit-tests`): `models/staging/ut_stg_<table>.yml` fixtures built
   from real generated rows, co-located with each staging model so dbt (which only parses unit
-  tests from `model-paths`) picks them up. Requires dbt-core >= 1.8.
+  tests from `model-paths`) picks them up.
 
 ---
 
@@ -185,6 +181,18 @@ full DBML feature set model2data understands (enums, notes, defaults, composite 
 relationship syntaxes, self-references) and the exact command sequence to run. Point an
 LLM-backed coding assistant at it and describe your data model — it can author the DBML and run
 model2data for you.
+
+---
+
+## dbt-core versions
+
+model2data requires **dbt-core >= 1.11**, tracking [dbt's own version support
+policy](https://docs.getdbt.com/docs/dbt-versions): dbt Labs supports each minor release for one
+year, and 1.11 is the oldest that still is. Generated projects build cleanly — no deprecation
+warnings — on every supported dbt-core version, and CI proves it on each push by running a real
+`dbt build` against both the stated floor and the newest release.
+
+If you're pinned to an older dbt-core, use model2data 0.5.x, which supported down to 1.8.5.
 
 ---
 

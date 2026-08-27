@@ -49,10 +49,13 @@ jobs:
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
 
-  # Continuously proves pyproject.toml's dbt-core>=1.8.5 floor claim stays
+  # Continuously proves pyproject.toml's dbt-core>=1.11 floor claim stays
   # true (not just checked once by hand), while also exercising the newest
-  # resolvable dbt-core -- the same real generate -> deps -> seed -> run ->
-  # test cycle, run against both ends of the supported range.
+  # resolvable dbt-core. The floor tracks dbt's own support policy: 1.11 is
+  # the oldest minor still receiving support from dbt Labs. Runs a real
+  # generate -> deps -> build cycle against both ends of the supported range,
+  # using a bare `dbt build` on a fresh database so the seed-before-model
+  # ordering stays covered too.
   dbt-core-floor-check:
     runs-on: ubuntu-latest
     strategy:
@@ -71,21 +74,15 @@ jobs:
       run: uv sync --extra dev
     - name: Pin dbt-core/dbt-duckdb to the stated floor
       if: matrix.dbt-version == 'floor'
-      run: uv pip install "dbt-core==1.8.5" "dbt-duckdb==1.8.4"
+      run: uv pip install "dbt-core~=1.11.0" "dbt-duckdb~=1.11.0"
     - name: Generate a project from examples/hackernews.dbml
       run: uv run model2data --file examples/hackernews.dbml --rows 50 --seed 1 --name floor_ci
     - name: dbt deps
       working-directory: dbt_floor_ci
       run: uv run dbt deps --profiles-dir .
-    - name: dbt seed
+    - name: dbt build
       working-directory: dbt_floor_ci
-      run: uv run dbt seed --profiles-dir .
-    - name: dbt run
-      working-directory: dbt_floor_ci
-      run: uv run dbt run --profiles-dir .
-    - name: dbt test
-      working-directory: dbt_floor_ci
-      run: uv run dbt test --profiles-dir .
+      run: uv run dbt build --profiles-dir .
 
   postgres-integration:
     runs-on: ubuntu-latest

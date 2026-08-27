@@ -150,8 +150,8 @@ from dbdiagram.io) — they're recognized and silently ignored, no need to strip
 - Only DuckDB (default, zero-config) and Postgres (`--adapter postgres`, needs
   `pip install "model2data[postgres]"` and connection env vars — see README.md) are supported
   targets today.
-- `--unit-tests` requires dbt-core >= 1.8 to actually run (already covered by this project's own
-  floor, so no extra action needed if you installed model2data normally).
+- model2data requires dbt-core >= 1.11 (tracking dbt's own supported-version policy). Everything
+  here, `--unit-tests` included, works with a plain `pip install model2data`.
 
 ## Full CLI reference
 
@@ -164,7 +164,7 @@ model2data --file SCHEMA.dbml [OPTIONS]
 --name, -n       TEXT      Override the generated dbt project's name (default: derived from filename)
 --force                    Overwrite the destination directory if it already exists
 --adapter, -a    TEXT      duckdb (default) or postgres
---unit-tests               Also generate dbt unit test fixtures (requires dbt-core >= 1.8)
+--unit-tests               Also generate dbt unit test fixtures
 ```
 
 For anything not covered here, see [README.md](README.md) — this file exists to make a schema

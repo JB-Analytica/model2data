@@ -41,6 +41,22 @@ same neighborhood — also fixed below, with 495 new parametrized regression cas
   examples: a bare `dbt build` on a fresh database reaches `ERROR=0` for each. A permanent
   dbt-CLI regression test (`tests/test_dbt_integration.py::
   test_bare_dbt_build_succeeds_on_a_fresh_database`) now runs exactly that.
+- **Every `dbt build` printed a deprecation warning.** Generated schema tests passed their
+  parameters as bare keys (`relationships:` with `to:`/`field:` directly under it), the shape dbt
+  now deprecates in favour of nesting them under `arguments:` — so every run of every generated
+  project ended with a `MissingArgumentsPropertyInGenericTestDeprecation` block. Noise in a
+  project whose whole purpose is to be handed straight to someone else. Generated tests now use
+  the `arguments:` shape, which required raising the dbt-core floor, since older versions
+  hard-error on it (verified: 1.10.4 and 1.10.5 both reject it).
+- **Raised the dbt-core floor to `>=1.11`** (from `>=1.8.5`; `dbt-duckdb`/`dbt-postgres` likewise),
+  now tracking [dbt's own support policy](https://docs.getdbt.com/docs/dbt-versions) rather than a
+  hand-picked date cutoff — dbt Labs supports each minor for one year, and 1.11 is the oldest that
+  still is. This makes generated projects warning-free on every dbt-core version dbt itself
+  supports, and lets the two now-obsolete caveats go: the 1.8.x unit-test failure on
+  reserved-word column names, and the "unit tests need a newer dbt than the base floor" note.
+  CI's floor job pins 1.11 and runs a real bare `dbt build` against both it and the latest
+  release. Users pinned to older dbt-core can stay on model2data 0.5.x.
+
 - **Every `dbt build` printed an "unused configuration paths" warning.** The generated
   `dbt_project.yml` declared a `models.<project>.marts` config block, but model2data only ever
   generates staging models, so the path matched no resource and dbt warned about it on every

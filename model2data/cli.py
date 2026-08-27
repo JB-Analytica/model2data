@@ -228,6 +228,4 @@ def main(
     typer.echo("\n🎉 model2data generation complete!\n")
     typer.echo("Next steps:")
     typer.echo(f"  cd {dest}")
-    typer.echo("  dbt deps")
-    typer.echo("  dbt seed")
-    typer.echo("  dbt run")
+    typer.echo("  dbt build   # loads the seeds, builds the models, runs every test")

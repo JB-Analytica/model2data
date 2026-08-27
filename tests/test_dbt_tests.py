@@ -98,19 +98,17 @@ def test_accepted_values_test_generated_for_enum_column(tmp_path):
     assert "inactive" in content
     assert "pending" in content
 
-    # Flat (non-`arguments:`-nested) generic test config, matching the
-    # `relationships` test below it -- this project's dbt-core floor
-    # (>=1.8, see pyproject.toml) predates dbt-core's `arguments:` nesting
-    # support entirely (verified: it hard-errors below dbt-core 1.10.5), so
-    # generated tests intentionally use the older, universally-compatible
-    # flat config shape. Current dbt-core versions still accept it (with a
-    # soft deprecation warning, not a failure).
+    # Generic test parameters are nested under `arguments:`, the shape dbt
+    # wants. Passing them as bare keys still works but warns on every run,
+    # and this project's dbt-core floor (>=1.11, tracking dbt's own support
+    # policy) is well above the version where `arguments:` became
+    # authoritative -- so generated projects build warning-free.
     parsed = yaml.safe_load(content)
     status_tests = next(c["tests"] for c in parsed["models"][0]["columns"] if c["name"] == "status")
     accepted_values_test = next(
         t["accepted_values"] for t in status_tests if "accepted_values" in t
     )
-    assert set(accepted_values_test["values"]) == {"active", "inactive", "pending"}
+    assert set(accepted_values_test["arguments"]["values"]) == {"active", "inactive", "pending"}
 
 
 def test_table_and_column_descriptions_round_trip_as_valid_yaml(tmp_path):
@@ -601,4 +599,42 @@ def test_relationships_test_field_is_quoted_for_special_target_column(tmp_path):
         for t in orders_col["tests"]
         if isinstance(t, dict) and "relationships" in t
     )
-    assert relationship_test["field"] == '"account id"'
+    assert relationship_test["arguments"]["field"] == '"account id"'
+
+
+def test_generic_tests_nest_parameters_under_arguments(tmp_path):
+    """Generic test params must be nested under `arguments:`.
+
+    Passing them as bare keys is deprecated: dbt still accepts it, but warns
+    on every single run, which is noise in a project meant to be handed
+    straight to someone else. Pinned here because the flat shape fails
+    loudly only as a warning, so nothing else would catch a regression.
+    """
+    tables = {
+        "orders": TableDef(
+            name="orders",
+            columns=[
+                ColumnDef("id", "int", {"pk"}),
+                ColumnDef("customer_id", "int", {"not null"}),
+            ],
+        ),
+        "customers": TableDef(name="customers", columns=[ColumnDef("id", "int", {"pk"})]),
+    }
+    refs = [
+        {
+            "source_table": "orders",
+            "source_column": "customer_id",
+            "target_table": "customers",
+            "target_column": "id",
+        }
+    ]
+
+    generate_dbt_yml(tmp_path, tables, refs, source_name="shop")
+
+    parsed = yaml.safe_load((tmp_path / "models" / "staging" / "stg_orders.yml").read_text())
+    col = next(c for c in parsed["models"][0]["columns"] if c["name"] == "customer_id")
+    relationships = next(t["relationships"] for t in col["tests"] if isinstance(t, dict))
+
+    assert set(relationships) == {"arguments"}, "params must live under `arguments:`"
+    assert relationships["arguments"]["to"] == "ref('stg_customers')"
+    assert relationships["arguments"]["field"] == "id"
