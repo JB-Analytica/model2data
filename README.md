@@ -5,6 +5,8 @@
 [![codecov](https://codecov.io/gh/JB-Analytica/model2data/branch/main/graph/badge.svg)](https://codecov.io/gh/JB-Analytica/model2data)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
+Built and maintained by [JB Analytica](https://www.jbanalytica.com/) — data platform architecture and analytics engineering.
+
 **Turn a data model into a running analytics stack in one command.**
 
 Give `model2data` a [DBML](https://dbml.dbdiagram.io/docs/) schema — hand-written or exported
@@ -251,10 +253,11 @@ If you're pinned to an older dbt-core, use model2data 0.5.x, which supported dow
 
 ## Project status
 
-As of `1.0.0`, model2data is considered **feature-complete for its intended use case**: turning a
-DBML schema into realistic synthetic data and a runnable dbt project, reliably. There's no active
-roadmap of new capabilities planned — the focus from here is maintenance: bug fixes, keeping pace
-with new dbt-core releases, and reviewing community contributions.
+As of `1.0.0`, model2data is stable and feature-complete for its intended use case: turning a
+DBML schema into realistic synthetic data and a runnable dbt project, reliably. It is actively
+maintained — CI runs a real `dbt build` against both the oldest supported dbt-core and the newest
+release on every push, so compatibility is proven rather than assumed. New capabilities are not
+the focus; correctness, dbt-core compatibility and community contributions are.
 
 Ideas that came up during development but were deliberately left out of scope, in case anyone
 wants to pick them up as a contribution:
