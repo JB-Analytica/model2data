@@ -15,16 +15,16 @@ from an existing database — and it generates realistic, relationship-preservin
 DuckDB or Postgres profile. No sample data to hunt down, no dbt boilerplate to hand-write, no
 production data to risk exposing.
 
+A working analytics stack — real (synthetic) data, tested dbt models, queryable in
+DuckDB — from a schema file, in seconds:
+
+![model2data generating a project and running it with dbt](https://raw.githubusercontent.com/JB-Analytica/model2data/main/assets/demo.gif)
+
 ```bash
 pip install model2data
 model2data --file examples/ecommerce.dbml --rows 200 --seed 42
 cd dbt_ecommerce && dbt build
 ```
-
-That's a working analytics stack — real (synthetic) data, tested dbt models, queryable in
-DuckDB — from a schema file, in seconds:
-
-![model2data generating a project and running it with dbt](https://raw.githubusercontent.com/JB-Analytica/model2data/main/assets/demo.gif)
 
 ---
 
