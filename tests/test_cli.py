@@ -777,3 +777,58 @@ def test_cli_summary_is_quiet_when_uniqueness_is_satisfiable(tmp_path):
     assert result.exit_code == 0
     assert "duplicate row(s)" not in result.stdout
     assert "duplicate value(s)" not in result.stdout
+
+
+ROWS_FOR_SCHEMA = """
+Table users {
+    id int [pk]
+    email email [unique]
+}
+Table orders {
+    id int [pk]
+    user_id int [not null]
+}
+Ref: orders.user_id > users.id
+"""
+
+
+def _run_rows_for(tmp_path, *extra_args):
+    dbml_file = tmp_path / "shop.dbml"
+    dbml_file.write_text(ROWS_FOR_SCHEMA)
+    cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        return runner.invoke(app, ["--file", str(dbml_file), "--rows", "50", *extra_args])
+    finally:
+        os.chdir(cwd)
+
+
+def test_cli_rows_for_sets_row_counts_per_table(tmp_path):
+    result = _run_rows_for(tmp_path, "--rows-for", "orders=120")
+    assert result.exit_code == 0, result.output
+
+    seeds = tmp_path / "dbt_shop" / "seeds" / "raw"
+    assert len(pd.read_csv(seeds / "orders.csv")) == 120
+    assert len(pd.read_csv(seeds / "users.csv")) == 50
+
+
+def test_cli_rows_for_is_repeatable(tmp_path):
+    result = _run_rows_for(tmp_path, "--rows-for", "users=10", "--rows-for", "orders=200")
+    assert result.exit_code == 0, result.output
+
+    seeds = tmp_path / "dbt_shop" / "seeds" / "raw"
+    assert len(pd.read_csv(seeds / "users.csv")) == 10
+    assert len(pd.read_csv(seeds / "orders.csv")) == 200
+
+
+def test_cli_rows_for_rejects_an_unknown_table(tmp_path):
+    """A typo'd table name would otherwise be discovered by counting rows."""
+    result = _run_rows_for(tmp_path, "--rows-for", "userz=10")
+    assert result.exit_code != 0
+    assert "No table named 'userz'" in result.output
+
+
+def test_cli_rows_for_rejects_malformed_values(tmp_path):
+    assert "Expected TABLE=N" in _run_rows_for(tmp_path, "--rows-for", "users").output
+    assert "whole number" in _run_rows_for(tmp_path, "--rows-for", "users=lots").output
+    assert "at least 1" in _run_rows_for(tmp_path, "--rows-for", "users=0").output

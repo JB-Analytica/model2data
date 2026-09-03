@@ -25,7 +25,7 @@ rough ERD, a client's requirements):
    model2data --file <name>.dbml --rows 200 --seed 42 --unit-tests
    ```
    Always pass `--seed` for reproducible output — useful when iterating on the DBML file, and
-   when re-running for a client demo. `--rows` controls rows generated per table (raise it for a
+   when re-running for a client demo. `--rows` controls rows generated per table, and `--rows-for TABLE=N` overrides it for individual tables — use it when the schema has small dimensions and large facts, so joins behave like the real warehouse (raise `--rows` for a
    more convincing demo dataset, e.g. `500`-`2000`; keep it low, e.g. `20`-`50`, while iterating
    quickly on the schema itself).
 3. **Verify it actually works before showing anyone**:
@@ -160,6 +160,7 @@ model2data --file SCHEMA.dbml [OPTIONS]
 
 --file, -f       PATH      Path to the DBML file (required)
 --rows, -r       INT       Rows to generate per table (default: 100)
+--rows-for       TABLE=N   Row count for one table, overriding --rows. Repeatable.
 --seed           INT       Deterministic seed — same seed + schema always produces the same data
 --name, -n       TEXT      Override the generated dbt project's name (default: derived from filename)
 --force                    Overwrite the destination directory if it already exists

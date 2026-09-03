@@ -26,7 +26,6 @@ from pathlib import Path
 
 import pytest
 
-import model2data.generate.core as core
 from model2data.generate.core import generate_data_from_dbml
 from model2data.generate.relationships import build_fk_lookup, classify_refs
 from model2data.parse.dbml import ColumnDef, TableDef, parse_dbml
@@ -187,7 +186,7 @@ def _bridge_schema():
 )
 @pytest.mark.parametrize("seed", list(range(1, 16)))  # 15 seeds
 def test_composite_key_dedup_extreme_value_space_stress(
-    seed, parent_rows, bridge_rows, uniqueness_achievable, monkeypatch
+    seed, parent_rows, bridge_rows, uniqueness_achievable
 ):
     # Extends the original bug-1 regression test
     # (test_composite_key_dedup_retry_preserves_fk_validity in
@@ -199,12 +198,13 @@ def test_composite_key_dedup_extreme_value_space_stress(
     # surface at all.
     tables, refs = _bridge_schema()
 
-    def sized_row_counts(table_name, base_rows):
-        return parent_rows if table_name in ("posts", "tags") else base_rows
-
-    monkeypatch.setattr(core, "_determine_row_count", sized_row_counts)
-
-    data = generate_data_from_dbml(tables, refs, base_rows=bridge_rows, seed=seed)
+    data = generate_data_from_dbml(
+        tables,
+        refs,
+        base_rows=bridge_rows,
+        seed=seed,
+        row_overrides={"posts": parent_rows, "tags": parent_rows},
+    )
 
     post_ids = set(data["posts"]["id"].tolist())
     tag_ids = set(data["tags"]["id"].tolist())

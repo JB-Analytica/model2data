@@ -5,6 +5,21 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.1.0] - 2026-09-03
+
+### Added
+- **Per-table row counts.** `generate_data_from_dbml(..., row_overrides={"orders": 5000})` and the
+  CLI's repeatable `--rows-for TABLE=N` set the row count for individual tables, falling back to
+  `--rows` for the rest. Real schemas are rarely uniform — a few dimension rows against a fact
+  table two orders of magnitude larger is the normal shape, and generating the same count for every
+  table makes joins and aggregates behave nothing like the warehouse being modelled.
+  `--rows-for` is validated before any files are written, so a mistyped table name fails
+  immediately instead of leaving a half-scaffolded project behind.
+
+### Changed
+- The two tests that reached into the private `_determine_row_count` via `monkeypatch` to fake
+  per-table sizing now use `row_overrides` directly.
+
 ## [1.0.0] - 2026-08-27
 
 First stable release. Mostly about the project's presentation and long-term stance, plus a final

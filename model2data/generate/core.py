@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import random
 from collections import defaultdict, deque
+from collections.abc import Mapping
 from typing import Optional
 
 import pandas as pd
@@ -64,9 +65,18 @@ def generate_data_from_dbml(
     refs: list[dict],
     base_rows: int = 100,
     seed: Optional[int] = None,
+    row_overrides: Optional[Mapping[str, int]] = None,
 ) -> dict[str, pd.DataFrame]:
     """
     Generate synthetic datasets from parsed DBML definitions.
+
+    `base_rows` is the row count for every table; `row_overrides` sets it per
+    table, keyed by DBML table name. Real schemas are rarely uniform -- a
+    handful of dimension rows against a fact table two orders of magnitude
+    larger is the normal shape, and generating 100 of each makes joins and
+    aggregates behave nothing like the warehouse being modelled. Names not
+    present in `row_overrides` fall back to `base_rows`; unknown names are
+    ignored.
 
     This function is deterministic if a seed is provided.
     It performs no filesystem I/O and returns pandas DataFrames.
@@ -93,7 +103,7 @@ def generate_data_from_dbml(
 
     for table_name in ordered_tables:
         table_def = tables[table_name]
-        row_count = _determine_row_count(table_def.name, base_rows)
+        row_count = _determine_row_count(table_def.name, base_rows, row_overrides)
 
         data: dict[str, list] = {}
 
@@ -341,10 +351,16 @@ def _resolve_self_referencing_fks(
     return df
 
 
-def _determine_row_count(table_name: str, base_rows: int) -> int:
-    """
-    Return the base number of rows for all tables.
-    """
+def _determine_row_count(
+    table_name: str,
+    base_rows: int,
+    row_overrides: Optional[Mapping[str, int]] = None,
+) -> int:
+    """Return the row count for one table: its override, else `base_rows`."""
+    if row_overrides:
+        override = row_overrides.get(table_name)
+        if override is not None:
+            return override
     return base_rows
 
 

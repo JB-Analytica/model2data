@@ -27,6 +27,53 @@ from model2data.utils import normalize_identifier
 
 SUPPORTED_ADAPTERS = ("duckdb", "postgres")
 
+
+def _parse_row_overrides(
+    raw: Optional[list[str]],
+    tables: dict,
+) -> dict[str, int]:
+    """Turn repeated `--rows-for TABLE=N` values into a {table: rows} mapping.
+
+    Fails loudly rather than silently ignoring a typo: naming a table that
+    isn't in the schema almost always means a misspelling, and quietly
+    generating the default row count for it would be discovered only by
+    counting rows in the output.
+    """
+    # `main` is also called directly as a plain function (see tests/), which
+    # bypasses Typer and leaves this parameter holding its `OptionInfo` default
+    # rather than None. Anything that isn't an actual list means "not supplied".
+    if not isinstance(raw, (list, tuple)):
+        return {}
+
+    overrides: dict[str, int] = {}
+    for item in raw:
+        table_name, separator, count = item.partition("=")
+        table_name = table_name.strip()
+        if not separator or not table_name:
+            raise typer.BadParameter(f"Expected TABLE=N, got {item!r}.", param_hint="--rows-for")
+
+        try:
+            rows = int(count)
+        except ValueError:
+            raise typer.BadParameter(
+                f"Row count for {table_name!r} must be a whole number, got {count!r}.",
+                param_hint="--rows-for",
+            ) from None
+        if rows < 1:
+            raise typer.BadParameter(
+                f"Row count for {table_name!r} must be at least 1, got {rows}.",
+                param_hint="--rows-for",
+            )
+        if table_name not in tables:
+            known = ", ".join(sorted(tables)) or "none"
+            raise typer.BadParameter(
+                f"No table named {table_name!r} in this schema. Tables: {known}.",
+                param_hint="--rows-for",
+            )
+        overrides[table_name] = rows
+    return overrides
+
+
 app = typer.Typer(
     help=(
         "model2data: Generate analytics-ready datasets from DBML models.\n\n"
@@ -58,6 +105,17 @@ def main(
         "-r",
         min=10,
         help="Number of rows to generate per table.",
+    ),
+    # noqa: B008 is only needed here (not on the other options) because a
+    # repeatable option must be annotated with a mutable `list` type.
+    rows_for: Optional[list[str]] = typer.Option(  # noqa: B008
+        None,
+        "--rows-for",
+        metavar="TABLE=N",
+        help=(
+            "Row count for one table, overriding --rows. Repeatable, e.g.\n"
+            "--rows-for customers=200 --rows-for orders=5000."
+        ),
     ),
     seed: Optional[int] = typer.Option(
         None,
@@ -124,6 +182,11 @@ def main(
         typer.echo("❌ No tables found in the provided DBML file.")
         raise typer.Exit(1)
 
+    # Validated before anything touches the filesystem: a typo'd table name here
+    # should not leave a half-scaffolded project behind for the next run to trip
+    # over with a confusing "destination already exists".
+    row_overrides = _parse_row_overrides(rows_for, tables)
+
     project_name = normalize_identifier(name or file.stem)
     dest = Path.cwd() / f"dbt_{project_name}"
     profile_name = f"{project_name}_profile"
@@ -150,6 +213,7 @@ def main(
         refs=refs,
         base_rows=rows,
         seed=seed,
+        row_overrides=row_overrides,
     )
 
     # -------------------------
