@@ -128,6 +128,14 @@ model2data --file examples/ecommerce.dbml --rows 200 --seed 42
 
 This creates a `dbt_ecommerce/` folder with your data and dbt setup.
 
+Real schemas are rarely uniform. `--rows-for` sizes individual tables, so a handful of customers
+can sit behind a large orders table the way they would in the warehouse you're modelling:
+
+```bash
+model2data --file examples/ecommerce.dbml --rows 200 --seed 42 \
+  --rows-for customers=50 --rows-for order_items=5000
+```
+
 Run dbt to load, transform, and test the data:
 
 ```bash

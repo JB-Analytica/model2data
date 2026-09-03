@@ -670,7 +670,7 @@ def test_enum_column_whose_name_contains_int_does_not_crash_dtype_coercion():
     assert set(df["maintenance_type"]) <= {"oil_change", "repair", "cleaning"}
 
 
-def test_composite_key_dedup_retry_preserves_fk_validity(monkeypatch):
+def test_composite_key_dedup_retry_preserves_fk_validity():
     # Regression test: a join/bridge table's composite key is almost always
     # built from FK columns (posts/tags -> post_tags is the canonical
     # example). When two parent tables are small relative to the bridge
@@ -679,7 +679,6 @@ def test_composite_key_dedup_retry_preserves_fk_validity(monkeypatch):
     # type-based generator instead of resampling from the real parent id
     # pool, silently producing post_id/tag_id values that referenced no
     # real parent row at all.
-    import model2data.generate.core as core
 
     tables = {
         "posts": TableDef(name="posts", columns=[ColumnDef("id", "int", {"pk"})]),
@@ -710,12 +709,13 @@ def test_composite_key_dedup_retry_preserves_fk_validity(monkeypatch):
 
     # Force posts/tags to 5 rows each (25 possible combos) while post_tags
     # gets 200 rows, guaranteeing heavy dedup-retry activity.
-    def small_parents_large_bridge(table_name, base_rows):
-        return 5 if table_name in ("posts", "tags") else base_rows
-
-    monkeypatch.setattr(core, "_determine_row_count", small_parents_large_bridge)
-
-    data = generate_data_from_dbml(tables, refs, base_rows=200, seed=123)
+    data = generate_data_from_dbml(
+        tables,
+        refs,
+        base_rows=200,
+        seed=123,
+        row_overrides={"posts": 5, "tags": 5},
+    )
 
     post_ids = set(data["posts"]["id"].tolist())
     tag_ids = set(data["tags"]["id"].tolist())
@@ -885,3 +885,76 @@ def test_timestamp_generation_is_reproducible_across_runs():
     assert list(first["created_at"]) == list(second["created_at"])
     # No sub-second component at all, so a CSV round-trip stays stable too.
     assert all(ts.endswith(":00") or "." not in ts for ts in map(str, first["created_at"]))
+
+
+def _users_and_orders() -> tuple[dict, list[dict]]:
+    tables = {
+        "users": TableDef(
+            name="users",
+            columns=[ColumnDef("id", "int", {"pk"}), ColumnDef("email", "email", {"unique"})],
+        ),
+        "orders": TableDef(
+            name="orders",
+            columns=[
+                ColumnDef("id", "int", {"pk"}),
+                ColumnDef("user_id", "int", {"not null"}),
+                ColumnDef("total", "numeric"),
+            ],
+        ),
+    }
+    refs = [
+        {
+            "source_table": "orders",
+            "source_column": "user_id",
+            "target_table": "users",
+            "target_column": "id",
+        }
+    ]
+    return tables, refs
+
+
+def test_row_overrides_set_row_counts_per_table():
+    tables, refs = _users_and_orders()
+
+    data = generate_data_from_dbml(
+        tables, refs, base_rows=50, seed=1, row_overrides={"orders": 300}
+    )
+
+    assert len(data["orders"]) == 300
+    assert len(data["users"]) == 50, "tables without an override keep base_rows"
+
+
+def test_row_overrides_default_to_base_rows_and_ignore_unknown_tables():
+    tables, refs = _users_and_orders()
+
+    data = generate_data_from_dbml(
+        tables, refs, base_rows=20, seed=1, row_overrides={"nonexistent": 999}
+    )
+
+    assert {name: len(df) for name, df in data.items()} == {"users": 20, "orders": 20}
+
+
+def test_foreign_keys_stay_valid_when_the_child_is_much_larger_than_its_parent():
+    """The point of per-table counts: a small dimension against a large fact."""
+    tables, refs = _users_and_orders()
+
+    data = generate_data_from_dbml(
+        tables, refs, base_rows=100, seed=42, row_overrides={"users": 5, "orders": 2000}
+    )
+
+    assert len(data["users"]) == 5
+    assert len(data["orders"]) == 2000
+    assert set(data["orders"]["user_id"]) <= set(data["users"]["id"])
+    # A 5-row parent still has to have unique keys for the FK to mean anything.
+    assert data["users"]["id"].is_unique
+
+
+def test_row_overrides_are_deterministic_with_a_seed():
+    tables, refs = _users_and_orders()
+    overrides = {"users": 25, "orders": 175}
+
+    first = generate_data_from_dbml(tables, refs, base_rows=50, seed=9, row_overrides=overrides)
+    second = generate_data_from_dbml(tables, refs, base_rows=50, seed=9, row_overrides=overrides)
+
+    assert first["users"].equals(second["users"])
+    assert first["orders"].equals(second["orders"])
