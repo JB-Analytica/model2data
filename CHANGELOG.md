@@ -5,6 +5,21 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+- **A column's declared type now outranks the guess made from its name.** DBML gives one place to
+  say which generator a column should use — its type — and a recognised column name used to
+  overrule it silently: `billing_country state` generated countries, `first_name email` generated
+  first names, and the declared type had no effect whatsoever. Any zero-argument Faker provider
+  works as a type name, and it now wins. This was the one behaviour users consistently read as a
+  bug rather than a rule.
+
+  SQL types that share a name with a provider (`text`, `json`, `jsonb`, `xml`, `binary`, `year`)
+  are still read as the SQL type, so the commonest declaration in any schema — `email text` —
+  keeps generating emails. Names remain the inference for everything untyped; only an explicit,
+  non-SQL provider type overrides them.
+
 ## [1.1.0] - 2026-09-03
 
 ### Added

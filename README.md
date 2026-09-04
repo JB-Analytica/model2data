@@ -39,7 +39,8 @@ access required.
 - **Privacy-safe.** Nothing but a schema definition goes in; nothing but synthetic data comes out.
 - **Realistic, not random.** Column names are matched against ~35 common patterns — `email`,
   `first_name`, `city`, `phone`, `company`, ... — so a column called `email` gets real-looking
-  emails, not `Lorem ipsum` text.
+  emails, not `Lorem ipsum` text. Type a column with any Faker provider (`billing_country state`,
+  `sku ean13`) to pick its generator outright when the name is wrong for the data.
 - **Relationship-preserving.** Foreign keys resolve to real parent rows; tables are generated in
   dependency order.
 - **Deterministic.** Pass `--seed` and the same schema always produces the same data — safe to
@@ -97,8 +98,9 @@ flowchart LR
 
 1. **Parse.** Reads tables, columns, types, and `Ref` relationships from a DBML file.
 2. **Generate.** Produces synthetic values per column — typed generation for known SQL types
-   (int, date, timestamp, ...), name-aware inference for everything else (`email`, `phone`,
-   `city`, ...), foreign keys resolved against already-generated parent rows.
+   (int, date, timestamp, ...), then a Faker provider named as the type (`sku ean13`), then
+   name-aware inference for everything else (`email`, `phone`, `city`, ...), foreign keys
+   resolved against already-generated parent rows.
 3. **Scaffold.** Writes a complete dbt project around that data: CSV seeds, staging models that
    `ref()` those seeds, `not_null`/`unique`/`relationships` tests, `accepted_values` tests for
    DBML `Enum`-typed columns, singular SQL tests for composite primary/unique keys, table and

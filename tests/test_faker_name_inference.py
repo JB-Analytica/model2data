@@ -82,6 +82,73 @@ class TestNameInference:
         assert result == ["x", "x", "x"]
 
 
+class TestTypeBeatsName:
+    """A declared Faker provider type outranks the guess made from the name.
+
+    DBML has one place to say which generator a column should use -- its type --
+    and until this held, a recognised column name silently overruled it:
+    `home_state state` generated countries and `first_name email` generated
+    first names, with the declared type having no effect at all.
+    """
+
+    def test_a_declared_provider_overrules_the_name_pattern(self):
+        values = generate_column_values(
+            ColumnDef(name="first_name", data_type="email", settings={"not null"}),
+            row_count=20,
+        )
+        assert all(EMAIL_RE.match(v) for v in values)
+
+    def test_a_column_can_be_typed_against_its_own_name(self):
+        # The case the feature exists for: a state column that isn't called one.
+        # Without this the `country` in its name won and it generated countries.
+        from faker.providers.address.en_US import Provider as UsAddress
+
+        values = generate_column_values(
+            ColumnDef(name="billing_country", data_type="state", settings={"not null"}),
+            row_count=40,
+        )
+        assert set(values) <= set(UsAddress.states)
+
+    def test_a_plain_sql_type_does_not_count_as_a_declaration(self):
+        # `text` and `json` are Faker providers by coincidence; a column typed
+        # that way means the SQL type, and its name must still be inferred.
+        for sql_type in ("text", "json", "varchar", "char(64)"):
+            values = generate_column_values(
+                ColumnDef(name="email", data_type=sql_type, settings={"not null"}),
+                row_count=10,
+            )
+            assert all(EMAIL_RE.match(v) for v in values), sql_type
+
+    def test_an_unknown_type_still_falls_back_to_the_name(self):
+        reset_stats()
+        values = generate_column_values(
+            ColumnDef(name="city", data_type="weird_custom_type", settings={"not null"}),
+            row_count=10,
+        )
+        assert all(isinstance(value, str) and value for value in values)
+        assert get_unmapped_columns() == []
+
+    def test_a_declared_provider_is_still_deduplicated_when_unique(self):
+        values = generate_column_values(
+            ColumnDef(name="first_name", data_type="email", settings={"not null", "unique"}),
+            row_count=50,
+            ensure_unique=True,
+        )
+        assert len(values) == len(set(values)) == 50
+
+    def test_structured_types_are_untouched_by_this(self):
+        # `date` and `boolean` are providers too, but they are decided long
+        # before either inference runs, and must keep their real Python types.
+        dates = generate_column_values(
+            ColumnDef(name="signup_date", data_type="date", settings={"not null"}), row_count=5
+        )
+        assert all(hasattr(value, "year") for value in dates)
+        flags = generate_column_values(
+            ColumnDef(name="is_active", data_type="boolean", settings={"not null"}), row_count=5
+        )
+        assert set(flags) <= {True, False}
+
+
 class TestEnumGeneration:
     def test_enum_values_only_ever_come_from_the_enum_set(self):
         allowed = {"active", "inactive", "pending"}

@@ -55,6 +55,19 @@ patterns like `email`, `first_name`, `last_name`, `phone`, `city`, `country`, `c
 not lorem-ipsum text. Prefer descriptive column names over generic ones (`customer_email`, not
 `field3`) whenever the underlying domain has an obvious name.
 
+**Type a column with a Faker provider to choose its generator outright**, when the name is
+wrong for the data or nothing recognises it:
+```dbml
+Table stores {
+  billing_country state    // US states, not countries — the type wins over the name
+  sku             ean13    // real barcodes
+  category        word
+}
+```
+Any Faker provider that takes no arguments works as a type name. Ordinary SQL types that happen
+to share a name with one (`text`, `json`, `binary`, `year`) are read as the SQL type, so
+`email text` still generates emails.
+
 **Use `Enum` for any categorical/status column**, instead of a loose `varchar`:
 ```dbml
 Enum order_status {
