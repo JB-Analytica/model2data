@@ -150,6 +150,33 @@ def _infer_by_name(column_name: str) -> Optional[Callable[[], object]]:
     return None
 
 
+# Type names that are ordinary SQL types first and Faker providers only by
+# coincidence. Someone typing `email text` means the SQL type, so these must
+# not count as a deliberate choice of provider -- otherwise the commonest
+# declaration in any schema would stop generating emails.
+_SQL_TYPES_SHADOWING_A_PROVIDER = frozenset({"text", "json", "jsonb", "xml", "binary", "year"})
+
+
+def _infer_by_type(base_type: str) -> Optional[Callable[[], object]]:
+    """The provider a column's declared type names, if it names one deliberately.
+
+    `sku ean13` and `home_state state` are the user saying which generator they
+    want, in the only place DBML gives them to say it. That has to outrank the
+    guess made from the column's name: a name pattern is inferred, a type is
+    declared, and `first_name email` silently generating first names -- the
+    type having no effect whatsoever -- is the single most confusing thing this
+    module did.
+    """
+    if base_type in _SQL_TYPES_SHADOWING_A_PROVIDER:
+        return None
+    try:
+        fake.format(base_type)
+    except (AttributeError, TypeError):
+        # Not a provider, or one that needs arguments: nothing was declared.
+        return None
+    return lambda: fake.format(base_type)
+
+
 # ---------------------------------------------------------
 # Public API
 # ---------------------------------------------------------
@@ -278,16 +305,16 @@ def generate_column_values(
         values = [_random_datetime().isoformat(sep=" ") for _ in range(row_count)]
 
     # -----------------------------------------------------
-    # Untyped / generic string columns: infer intent from the
-    # column name first (email, city, phone...), then fall back
-    # to a literal Faker provider name, then to a generic value.
+    # Untyped / generic string columns: honour a type that names
+    # a Faker provider (`sku ean13`), then infer intent from the
+    # column name (email, city, phone...), then a generic value.
     # -----------------------------------------------------
     else:
-        name_generator = _infer_by_name(column.name)
-        if name_generator is not None:
-            values = [name_generator() for _ in range(row_count)]
+        generator = _infer_by_type(base_type) or _infer_by_name(column.name)
+        if generator is not None:
+            values = [generator() for _ in range(row_count)]
             values = (
-                _deduplicate(values, name_generator, column_name=unique_label)
+                _deduplicate(values, generator, column_name=unique_label)
                 if ensure_unique
                 else values
             )
