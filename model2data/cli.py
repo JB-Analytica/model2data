@@ -1,5 +1,6 @@
 import random
 import shutil
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -107,8 +108,11 @@ def main(
         min=10,
         help="Number of rows to generate per table.",
     ),
-    # noqa: B008 is only needed here (not on the other options) because a
-    # repeatable option must be annotated with a mutable `list` type.
+    # noqa: B008 is needed on some options and not others because ruff waves a
+    # call through in a default only when the annotation is one of the types it
+    # knows to be immutable. `str`, `int`, `bool` and `Path` are on that list;
+    # the `list` a repeatable option must be annotated with, and `datetime`,
+    # are not -- neither is actually mutated here.
     rows_for: Optional[list[str]] = typer.Option(  # noqa: B008
         None,
         "--rows-for",
@@ -124,6 +128,16 @@ def main(
         help=(
             "Optional random seed for deterministic generation.\n"
             "Using the same seed will always produce identical datasets."
+        ),
+    ),
+    as_of: Optional[datetime] = typer.Option(  # noqa: B008
+        None,
+        "--as-of",
+        formats=["%Y-%m-%d"],
+        metavar="YYYY-MM-DD",
+        help=(
+            "Date to anchor generated dates and timestamps on (default: today).\n"
+            "Pin it and a --seed run reproduces on any later day, not just the day it first ran."
         ),
     ),
     locale: Optional[str] = typer.Option(
@@ -183,6 +197,14 @@ def main(
         Faker.seed(seed)
         typer.echo(f"🔁 Using deterministic seed: {seed}")
 
+    # Same reason as `_parse_row_overrides`'s isinstance guard: `main` is also
+    # called directly as a plain function, which leaves this holding its
+    # `OptionInfo` default rather than None. Anything that isn't a real
+    # datetime means "not supplied", i.e. anchor on today.
+    as_of = as_of if isinstance(as_of, datetime) else None
+    if as_of is not None:
+        typer.echo(f"📅 Anchoring generated dates on: {as_of.date()}")
+
     # -------------------------
     # Parse DBML (names untouched)
     # -------------------------
@@ -196,7 +218,6 @@ def main(
     # should not leave a half-scaffolded project behind for the next run to trip
     # over with a confusing "destination already exists".
     row_overrides = _parse_row_overrides(rows_for, tables)
-
     project_name = normalize_identifier(name or file.stem)
     dest = Path.cwd() / f"dbt_{project_name}"
     profile_name = f"{project_name}_profile"
@@ -225,6 +246,7 @@ def main(
         seed=seed,
         row_overrides=row_overrides,
         locale=locale,
+        as_of=as_of,
     )
 
     # -------------------------

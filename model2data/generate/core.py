@@ -9,6 +9,7 @@ import pandas as pd
 from faker import Faker
 
 from model2data.generate.faker import (
+    AsOf,
     generate_column_values,
     release_row_pools,
     reset_duplicate_unique_columns,
@@ -68,6 +69,7 @@ def generate_data_from_dbml(
     seed: Optional[int] = None,
     row_overrides: Optional[Mapping[str, int]] = None,
     locale: Optional[str] = None,
+    as_of: AsOf = None,
 ) -> dict[str, pd.DataFrame]:
     """
     Generate synthetic datasets from parsed DBML definitions.
@@ -86,8 +88,16 @@ def generate_data_from_dbml(
     holding one Belgian and one American address is the incoherence the row
     pools exist to remove.
 
-    This function is deterministic if a seed is provided.
-    It performs no filesystem I/O and returns pandas DataFrames.
+    `as_of` is the date every generated date and timestamp is placed relative
+    to -- dates land in the two years up to it, timestamps in the year up to
+    midnight on it -- and defaults to today. Without it a seed reproduces only
+    for as long as the day lasts: the numbers come back identical and the dates
+    move, so a committed fixture churns and a saved project renders different
+    rows next month. Pass the day the run should look like it happened on and
+    the whole frame reproduces, on any later day.
+
+    This function is deterministic if a seed is provided (and, with `as_of`,
+    on any day). It performs no filesystem I/O and returns pandas DataFrames.
     """
     # Locale first, then the seed: switching locale builds a new Faker, and the
     # seed has to be the last word on the generator that actually runs.
@@ -166,11 +176,16 @@ def generate_data_from_dbml(
                 ensure_unique=ensure_unique,
                 force_not_null=column.name in composite_pk_columns,
                 table_name=table_name,
+                as_of=as_of,
             )
 
         df = pd.DataFrame(data)
-        df = _resolve_self_referencing_fks(df, table_def, table_name, fk_lookup, row_count)
-        df = _deduplicate_composite_keys(df, table_def, table_name, fk_lookup, generated)
+        df = _resolve_self_referencing_fks(
+            df, table_def, table_name, fk_lookup, row_count, as_of=as_of
+        )
+        df = _deduplicate_composite_keys(
+            df, table_def, table_name, fk_lookup, generated, as_of=as_of
+        )
 
         # -----------------------------------------------------
         # Second pass: attribute mirroring (non-FK refs)
@@ -250,6 +265,7 @@ def _deduplicate_composite_keys(
     fk_lookup: dict[tuple[str, str], tuple[str, str]],
     generated: dict[str, pd.DataFrame],
     max_attempts: int = 20,
+    as_of: AsOf = None,
 ) -> pd.DataFrame:
     """
     Regenerate colliding rows for any pk/unique composite key declared via an
@@ -300,7 +316,9 @@ def _deduplicate_composite_keys(
                     if col_name in fk_pools:
                         df.at[idx, col_name] = random.choice(fk_pools[col_name])
                     else:
-                        df.at[idx, col_name] = generate_column_values(col_def, row_count=1)[0]
+                        df.at[idx, col_name] = generate_column_values(
+                            col_def, row_count=1, as_of=as_of
+                        )[0]
                 combo = tuple(df.at[idx, c] for c in key_columns)
                 attempts += 1
             # Retry budget spent and still colliding: this row keeps a
@@ -325,6 +343,7 @@ def _resolve_self_referencing_fks(
     table_name: str,
     fk_lookup: dict[tuple[str, str], tuple[str, str]],
     row_count: int,
+    as_of: AsOf = None,
 ) -> pd.DataFrame:
     """
     Re-generate any FK column that references its own table (e.g. a
@@ -362,6 +381,7 @@ def _resolve_self_referencing_fks(
             ensure_unique=ensure_unique,
             force_not_null=column.name in composite_pk_columns,
             table_name=table_name,
+            as_of=as_of,
         )
 
     return df

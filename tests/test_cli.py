@@ -832,3 +832,52 @@ def test_cli_rows_for_rejects_malformed_values(tmp_path):
     assert "Expected TABLE=N" in _run_rows_for(tmp_path, "--rows-for", "users").output
     assert "whole number" in _run_rows_for(tmp_path, "--rows-for", "users=lots").output
     assert "at least 1" in _run_rows_for(tmp_path, "--rows-for", "users=0").output
+
+
+# Same two tables as ROWS_FOR_SCHEMA, plus the date and timestamp columns
+# --as-of has anything to say about.
+DATED_SCHEMA = """
+Table users {
+    id int [pk]
+    email email [unique]
+    signed_up date [not null]
+}
+Table orders {
+    id int [pk]
+    user_id int [not null]
+    placed_at timestamp [not null]
+}
+Ref: orders.user_id > users.id
+"""
+
+
+def _run_shop(tmp_path, name, *extra_args):
+    """Generate the dated users/orders schema under a chosen project name."""
+    dbml_file = tmp_path / "shop.dbml"
+    dbml_file.write_text(DATED_SCHEMA)
+    cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        return runner.invoke(
+            app,
+            ["--file", str(dbml_file), "--rows", "30", "--name", name, *extra_args],
+        )
+    finally:
+        os.chdir(cwd)
+
+
+def test_cli_as_of_anchors_generated_dates(tmp_path):
+    result = _run_shop(tmp_path, "anchored", "--seed", "42", "--as-of", "2024-03-15")
+    assert result.exit_code == 0, result.output
+    assert "Anchoring generated dates on: 2024-03-15" in result.output
+
+    orders = pd.read_csv(tmp_path / "dbt_anchored" / "seeds" / "raw" / "orders.csv")
+    placed = pd.to_datetime(orders["placed_at"].dropna())
+    assert placed.max() <= pd.Timestamp("2024-03-15")
+    assert placed.min() >= pd.Timestamp("2024-03-15") - pd.Timedelta(days=365)
+
+
+def test_cli_as_of_rejects_a_date_it_cannot_read(tmp_path):
+    result = _run_shop(tmp_path, "bad_date", "--as-of", "the 15th")
+    assert result.exit_code != 0
+    assert "--as-of" in result.output
