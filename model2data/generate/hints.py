@@ -196,4 +196,6 @@ def _check_after(
             f'{label}: "after" names {after!r}, which is not a column of {table_name}.'
         )
     if not _is_temporal_type(_base_type(other.data_type)):
-        raise ValueError(f'{label}: "after" names {after!r}, which is not a date/timestamp column.')
+        raise ValueError(
+            f'{label}: "after" names {after!r}, which is not a date or timestamp column.'
+        )
