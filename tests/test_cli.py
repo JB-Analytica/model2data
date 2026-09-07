@@ -881,3 +881,40 @@ def test_cli_as_of_rejects_a_date_it_cannot_read(tmp_path):
     result = _run_shop(tmp_path, "bad_date", "--as-of", "the 15th")
     assert result.exit_code != 0
     assert "--as-of" in result.output
+
+
+def test_cli_table_seed_re_rolls_only_that_table(tmp_path):
+    common = ("--seed", "42", "--as-of", "2024-03-15")
+    assert _run_shop(tmp_path, "before", *common).exit_code == 0
+    result = _run_shop(tmp_path, "after", *common, "--table-seed", "orders=7")
+    assert result.exit_code == 0, result.output
+    assert "Re-rolling with a table seed of its own: orders=7" in result.output
+
+    def seed_csv(project, table):
+        return (tmp_path / f"dbt_{project}" / "seeds" / "raw" / f"{table}.csv").read_text()
+
+    assert seed_csv("before", "users") == seed_csv("after", "users")
+    assert seed_csv("before", "orders") != seed_csv("after", "orders")
+
+
+def test_cli_table_seed_needs_a_seed_to_re_roll_out_of(tmp_path):
+    result = _run_shop(tmp_path, "no_seed", "--table-seed", "orders=7")
+    assert result.exit_code != 0
+    assert "Add --seed" in result.output
+
+
+def test_cli_table_seed_rejects_an_unknown_table(tmp_path):
+    result = _run_shop(tmp_path, "typo", "--seed", "1", "--table-seed", "ordres=7")
+    assert result.exit_code != 0
+    assert "No table named 'ordres'" in result.output
+
+
+def test_cli_table_seed_rejects_malformed_values(tmp_path):
+    assert (
+        "Expected TABLE=N"
+        in _run_shop(tmp_path, "m1", "--seed", "1", "--table-seed", "orders").output
+    )
+    assert (
+        "whole number"
+        in _run_shop(tmp_path, "m2", "--seed", "1", "--table-seed", "orders=x").output
+    )
