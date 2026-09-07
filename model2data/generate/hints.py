@@ -26,10 +26,6 @@ from collections.abc import Mapping
 from model2data.generate.relationships import build_fk_lookup, classify_refs
 from model2data.parse.dbml import ColumnDef, TableDef
 
-_HINT_KEYS = frozenset(
-    {"min", "max", "null_rate", "weights", "true_rate", "distinct", "skew", "after"}
-)
-
 
 def validate_hints(tables: Mapping[str, TableDef], refs: list[dict]) -> None:
     """Reject a note hint that contradicts the column it sits on.
