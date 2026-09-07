@@ -356,18 +356,26 @@ def main(
     # -------------------------
     typer.echo("🧮 Generating synthetic datasets from DBML definitions...")
     reset_stats()
-    generated_tables = generate_data_from_dbml(
-        tables=tables,
-        refs=refs,
-        base_rows=rows,
-        seed=seed,
-        row_overrides=row_overrides,
-        locale=locale,
-        as_of=as_of,
-        table_seeds=table_seeds,
-        time_profile=time_profile,
-        skew=skew,
-    )
+    try:
+        generated_tables = generate_data_from_dbml(
+            tables=tables,
+            refs=refs,
+            base_rows=rows,
+            seed=seed,
+            row_overrides=row_overrides,
+            locale=locale,
+            as_of=as_of,
+            table_seeds=table_seeds,
+            time_profile=time_profile,
+            skew=skew,
+        )
+    except ValueError as exc:
+        # A bad column-note hint (an unknown enum value in `weights`, `distinct`
+        # on a foreign key...) is a mistake in the schema, not a bug -- it
+        # deserves the same one-line, non-traceback treatment as every other
+        # validation error this command already reports.
+        typer.echo(f"❌ {exc}")
+        raise typer.Exit(1) from None
 
     # -------------------------
     # Write dbt seeds (normalized names)
