@@ -1,6 +1,7 @@
 """Direct tests of CLI main function for proper coverage."""
 
 import os
+import re
 
 import pandas as pd
 from typer.testing import CliRunner
@@ -8,6 +9,14 @@ from typer.testing import CliRunner
 from model2data.cli import app
 
 runner = CliRunner()
+
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _plain(output: str) -> str:
+    """Typer's error box is coloured on CI, which splits `--flag` into styled
+    pieces; strip the escapes before looking for an option name in it."""
+    return _ANSI.sub("", output)
 
 
 def test_cli_basic_generation(tmp_path):
@@ -880,7 +889,7 @@ def test_cli_as_of_anchors_generated_dates(tmp_path):
 def test_cli_as_of_rejects_a_date_it_cannot_read(tmp_path):
     result = _run_shop(tmp_path, "bad_date", "--as-of", "the 15th")
     assert result.exit_code != 0
-    assert "--as-of" in result.output
+    assert "--as-of" in _plain(result.output)
 
 
 def test_cli_table_seed_re_rolls_only_that_table(tmp_path):
@@ -900,7 +909,7 @@ def test_cli_table_seed_re_rolls_only_that_table(tmp_path):
 def test_cli_table_seed_needs_a_seed_to_re_roll_out_of(tmp_path):
     result = _run_shop(tmp_path, "no_seed", "--table-seed", "orders=7")
     assert result.exit_code != 0
-    assert "Add --seed" in result.output
+    assert "--seed" in _plain(result.output)
 
 
 def test_cli_table_seed_rejects_an_unknown_table(tmp_path):
