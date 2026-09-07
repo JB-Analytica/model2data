@@ -5,6 +5,21 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.3.1] - 2026-09-07
+
+### Fixed
+- **Accented names no longer lose their accents from generated emails and usernames.** The slug
+  behind `first.last@…` stripped anything outside `a-z0-9`, so `Aimée Guillon` became
+  `aime.guillon@…` and `Müller` became `mller` — not that person's name, and conspicuously broken in
+  exactly the European locales 1.3.0's `locale` option exists to serve. Accents are now folded
+  (`aimee`, `muller`, `bjorn`), and the letters Unicode does not decompose because they are their
+  own letters rather than a base plus an accent — `ø`, `æ`, `œ`, `ß`, `ł`, `đ`, `ð`, `þ` — are
+  mapped explicitly, so `Søren` gives `soren` and `Weiß` gives `weiss` instead of losing the letter
+  entirely.
+
+  A name with no Latin letters at all still falls back to `user`. Deriving an address from a CJK
+  name needs romanization, and Faker exposes no romanized first/last pair to build one from.
+
 ## [1.3.0] - 2026-09-07
 
 ### Fixed

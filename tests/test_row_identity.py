@@ -370,3 +370,45 @@ class TestThinLocales:
         # picked once beats a different random country on every row.
         assert len(countries) == 1
         assert countries != {""}
+
+
+class TestNameFolding:
+    def test_accents_are_folded_not_dropped(self):
+        # Dropping them turned Aimée into "aime" and Müller into "mller" -- not
+        # that person's name, and most visible in exactly the European locales
+        # the locale option exists to serve.
+        assert faker_module._slug("Aimée") == "aimee"
+        assert faker_module._slug("Müller") == "muller"
+        assert faker_module._slug("Björn") == "bjorn"
+
+    def test_letters_that_do_not_decompose_are_mapped(self):
+        # NFKD leaves these intact because they are their own letters, not a
+        # base plus an accent, so they would vanish with the combining marks.
+        assert faker_module._slug("Søren") == "soren"
+        assert faker_module._slug("Weiß") == "weiss"
+        assert faker_module._slug("Łukasz") == "lukasz"
+        assert faker_module._slug("Æther") == "aether"
+
+    def test_punctuation_and_spacing_still_go(self):
+        assert faker_module._slug("O'Brien") == "obrien"
+        assert faker_module._slug("Van Der Berg") == "vanderberg"
+
+    def test_a_name_with_no_latin_letters_falls_back(self):
+        # Documented limitation rather than a target: deriving an address from a
+        # CJK name needs romanization, and Faker exposes no romanized first/last
+        # pair to build one from. Such a locale gets "user", disambiguated by the
+        # unique suffixing, which is meaningless but at least stable and unique.
+        assert faker_module._slug("日本") == "user"
+
+    def test_generated_emails_are_ascii_in_an_accented_locale(self):
+        df = generate_data_from_dbml(
+            tables={"customers": _person_table()},
+            refs=[],
+            base_rows=40,
+            seed=31,
+            locale="fr_FR",
+        )["customers"]
+        for _, row in df.iterrows():
+            _assert_row_is_one_person(row)
+            # An address has to be usable as an address, whatever the name says.
+            row["email"].encode("ascii")

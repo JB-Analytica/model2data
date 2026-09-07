@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import random
 import re
+import unicodedata
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -147,9 +148,27 @@ _person_state: dict[str, list[_Person]] = {}
 _address_state: dict[str, list[_Address]] = {}
 
 
+# Letters that NFKD does not take apart, because they are their own letters
+# rather than a base plus an accent. Without these, "ø" and "ß" would simply
+# vanish along with the accents.
+_UNDECOMPOSED_LETTERS = str.maketrans(
+    {"ø": "o", "æ": "ae", "œ": "oe", "ß": "ss", "ł": "l", "đ": "d", "ð": "d", "þ": "th", "ı": "i"}
+)
+
+
 def _slug(value: str) -> str:
-    """Reduce a name to something that can sit inside an email or a username."""
-    return re.sub(r"[^a-z0-9]+", "", value.lower()) or "user"
+    """Reduce a name to something that can sit inside an email or a username.
+
+    Accents are folded, not dropped. Stripping them outright turned `Aimée` into
+    `aime` and `Müller` into `mller` -- not that person's name, and conspicuously
+    broken in exactly the European locales the locale option exists to serve.
+    NFKD splits most accented letters into a base letter plus a combining mark,
+    which encoding to ASCII then discards; the letters that do not decompose are
+    mapped first.
+    """
+    folded = value.lower().translate(_UNDECOMPOSED_LETTERS)
+    ascii_only = unicodedata.normalize("NFKD", folded).encode("ascii", "ignore").decode("ascii")
+    return re.sub(r"[^a-z0-9]+", "", ascii_only) or "user"
 
 
 # Resolved once per locale, not once per row. Both of these are constant for a
