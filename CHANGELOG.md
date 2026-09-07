@@ -5,6 +5,49 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.3.0] - 2026-09-07
+
+### Fixed
+- **Person columns in one row now describe one person.** Columns are generated independently, so a
+  single row's `first_name`, `last_name`, `full_name`, `user_name` and `email` each came from an
+  unrelated Faker draw — one row described three different people, and the generated email had
+  nothing to do with the name beside it. Each table now draws from a pool of identities, one per
+  row, and every person-shaped column reads the identity for its row: `Nadia Fournier` gets
+  `nadia.fournier@…` and the username `nfournier`.
+
+  A declared type reaches the same identity, so `contact email` agrees with the row it sits in just
+  as a column named `email` does. Columns marked `unique` stay unique by suffixing the address
+  (`nadia.fournier2@…`) rather than by handing the row a different person, which also means such a
+  column can no longer end up in the duplicate-value report.
+
+- **Addresses in one row now describe one place.** `street`, `address`, `city`, `state`, `country`
+  and `postcode` came from independent draws, so a row could read "Brussels, Texas, 3000, Japan" —
+  `country` in particular was a random country off the globe, which is most of what made the output
+  look obviously fake. Each table now draws addresses from a pool alongside its people, and an
+  `address` column is composed from that row's own street, city and postcode rather than from a
+  separate `fake.address()` call.
+
+  What this does and does not promise: every component comes from one locale, so a row reads as one
+  country with one set of conventions. It is not real geography — Faker does not pair a city with
+  its state or its postcode even inside a locale, so the postcode is a plausible postcode for that
+  country rather than that city's. Closing that gap needs a reference table of real combinations.
+
+  Both pools are also **faster** than the per-column draws they replace, because a derived field is
+  string formatting rather than another Faker call: a five-column person table generates ~3.4x
+  quicker (a million rows in ~72s rather than ~242s), a six-column address table ~1.6x (~100s
+  rather than ~157s). Pool rows use slots and store only what is drawn — 56 bytes against 344 for
+  the obvious implementation — and each table's pool is released as soon as its frame is finished,
+  so peak cost is the largest single table rather than the sum of them all.
+
+### Added
+- **`locale`, on the library and the CLI.** `generate_data_from_dbml(..., locale="nl_BE")` and
+  `model2data ... --locale nl_BE` pick the locale every generated person and address is drawn from,
+  defaulting to `en_US`. Belgian addresses get Belgian street names, provinces and postcodes;
+  `en_GB` gets a real UK postcode format. It is a per-run setting rather than a per-column one on
+  purpose — a table holding one Belgian and one American address is the incoherence the row pools
+  exist to remove. An unknown locale fails with a message naming the flag rather than Faker's
+  internal attribute error.
+
 ## [1.2.0] - 2026-09-04
 
 ### Changed

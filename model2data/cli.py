@@ -18,6 +18,7 @@ from model2data.generate.core import (
     get_unresolved_composite_keys,
 )
 from model2data.generate.faker import (
+    DEFAULT_LOCALE,
     get_duplicate_unique_columns,
     get_unmapped_columns,
     reset_stats,
@@ -125,6 +126,15 @@ def main(
             "Using the same seed will always produce identical datasets."
         ),
     ),
+    locale: Optional[str] = typer.Option(
+        None,
+        "--locale",
+        help=(
+            f"Faker locale for generated people and addresses "
+            f"(default: {DEFAULT_LOCALE}).\n"
+            "Examples: en_GB, nl_BE, fr_FR, de_DE."
+        ),
+    ),
     name: Optional[str] = typer.Option(
         None,
         "--name",
@@ -214,6 +224,7 @@ def main(
         base_rows=rows,
         seed=seed,
         row_overrides=row_overrides,
+        locale=locale,
     )
 
     # -------------------------

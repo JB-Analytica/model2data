@@ -10,15 +10,16 @@ from faker import Faker
 
 from model2data.generate.faker import (
     generate_column_values,
+    release_row_pools,
     reset_duplicate_unique_columns,
+    reset_row_pools,
+    set_locale,
 )
 from model2data.generate.relationships import (
     build_fk_lookup,
     classify_refs,
 )
 from model2data.parse.dbml import TableDef
-
-fake = Faker()
 
 # Tables the most recent generate_data_from_dbml() call found stuck in an
 # unresolved FK cycle (never reached indegree 0 during the topological
@@ -66,6 +67,7 @@ def generate_data_from_dbml(
     base_rows: int = 100,
     seed: Optional[int] = None,
     row_overrides: Optional[Mapping[str, int]] = None,
+    locale: Optional[str] = None,
 ) -> dict[str, pd.DataFrame]:
     """
     Generate synthetic datasets from parsed DBML definitions.
@@ -78,9 +80,19 @@ def generate_data_from_dbml(
     present in `row_overrides` fall back to `base_rows`; unknown names are
     ignored.
 
+    `locale` picks the Faker locale every generated person and address is drawn
+    from -- `"nl_BE"`, `"fr_FR"`, `"en_GB"` -- defaulting to `DEFAULT_LOCALE`.
+    It is a per-run setting rather than a per-column one on purpose: a table
+    holding one Belgian and one American address is the incoherence the row
+    pools exist to remove.
+
     This function is deterministic if a seed is provided.
     It performs no filesystem I/O and returns pandas DataFrames.
     """
+    # Locale first, then the seed: switching locale builds a new Faker, and the
+    # seed has to be the last word on the generator that actually runs.
+    set_locale(locale)
+
     if seed is not None:
         random.seed(seed)
         Faker.seed(seed)
@@ -88,6 +100,7 @@ def generate_data_from_dbml(
     reset_cycle_state()
     reset_dedup_state()
     reset_duplicate_unique_columns()
+    reset_row_pools()
 
     # ---------------------------------------------------------
     # Classify references
@@ -193,6 +206,9 @@ def generate_data_from_dbml(
 
         df = _coerce_integer_dtypes(df, table_def)
         generated[table_name] = df
+        # This table is finished: nothing will read its people or addresses
+        # again, and on a million-row table they are worth tens of megabytes.
+        release_row_pools(table_name)
 
     return generated
 

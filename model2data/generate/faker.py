@@ -3,15 +3,258 @@ from __future__ import annotations
 import random
 import re
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Callable, Optional
+from typing import Callable, Optional, Union
 
 import pandas as pd
 from faker import Faker
 
 from model2data.parse.dbml import ColumnDef
 
-fake = Faker()
+# ---------------------------------------------------------
+# Locale
+# ---------------------------------------------------------
+# The locale every generated person and address comes from until a caller says
+# otherwise. Named rather than left implicit because locale is on its way to
+# being a first-class option in the CLI and the studio, and this is the seam it
+# plugs into: one instance, swapped in one place.
+DEFAULT_LOCALE = "en_US"
+
+_locale = DEFAULT_LOCALE
+fake = Faker(DEFAULT_LOCALE)
+
+
+def current_locale() -> str:
+    """The locale generation is currently drawing from."""
+    return _locale
+
+
+def set_locale(locale: Optional[str]) -> None:
+    """Point generation at a locale, or back at the default when given None.
+
+    Rebinding the module-level `fake` reaches every provider here, because each
+    one looks the name up when it runs rather than capturing it. The row pools
+    are dropped on the way through: a Belgian address sitting next to an
+    American one in the same table is precisely the incoherence they exist to
+    prevent.
+    """
+    global fake, _locale
+    target = locale or DEFAULT_LOCALE
+    if target == _locale:
+        return
+    try:
+        fake = Faker(target)
+    except (AttributeError, ValueError) as exc:
+        # Faker's own message for a bad locale names the attribute it failed to
+        # find, which reads like an internal error rather than a typo in a flag.
+        raise ValueError(
+            f"Unknown locale {target!r}. Use a Faker locale name such as "
+            f"'en_US', 'en_GB', 'nl_BE' or 'fr_FR'."
+        ) from exc
+    _locale = target
+    _resolve_locale()
+    _person_state.clear()
+    _address_state.clear()
+
+
+# ---------------------------------------------------------
+# Per-row identities
+# ---------------------------------------------------------
+# Columns are generated one at a time, so nothing connected the `first_name`,
+# `last_name` and `email` of a single row: each drew from Faker independently
+# and one row described three different people. Anyone who points a BI tool at
+# the output sees it immediately, which makes it a credibility problem rather
+# than a cosmetic one.
+#
+# The fix is a per-table pool of identities, one per row index. A column whose
+# name (or declared type) means "a person's email" reads row i's identity
+# instead of rolling its own, so every person-shaped column in a row agrees.
+#
+# Addresses get the same treatment, one pool along. What that can and cannot
+# promise is worth being precise about: every component now comes from the same
+# locale, so a row reads as one country with one set of conventions instead of
+# "Brussels, Texas, 3000, Japan". It is not real geography -- Faker does not
+# pair a city with its state or its postcode even inside a locale, so the
+# postcode is a plausible postcode for that country rather than that city's.
+# Closing that last gap needs a reference table of real combinations, not a
+# cleverer arrangement of Faker calls.
+#
+# Both classes carry only what is drawn and compute the rest, and both use
+# slots. A million-row `person` table is a normal request: storing five strings
+# per row in a dict-backed object costs hundreds of megabytes, storing three
+# slotted references costs tens, and the derived strings then exist only for
+# the columns a schema actually declares.
+@dataclass(frozen=True, slots=True)
+class _Person:
+    first_name: str
+    last_name: str
+    email_domain: str
+
+    @property
+    def full_name(self) -> str:
+        return f"{self.first_name} {self.last_name}"
+
+    @property
+    def user_name(self) -> str:
+        return f"{_slug(self.first_name)[:1]}{_slug(self.last_name)}"
+
+    @property
+    def email(self) -> str:
+        return f"{_slug(self.first_name)}.{_slug(self.last_name)}@{self.email_domain}"
+
+
+@dataclass(frozen=True, slots=True)
+class _Address:
+    street: str
+    city: str
+    state: str
+    country: str
+    postcode: str
+
+    @property
+    def full(self) -> str:
+        """The row's own components, not a separate `fake.address()` draw.
+
+        Composing it here rather than calling Faker again is the whole point:
+        an `address` column has to agree with the `city` column beside it.
+        """
+        lines = [self.street, f"{self.postcode} {self.city}".strip(), self.country]
+        return ", ".join(line for line in lines if line)
+
+
+class _FromRow:
+    """Marker for a provider that reads row i's person or address.
+
+    A sentinel rather than a callable so `_NAME_PATTERNS` can stay a single
+    ordered list: splitting these patterns into lists of their own would quietly
+    reorder them against the rest, and that order is load-bearing (see the
+    comment on `_NAME_PATTERNS`).
+    """
+
+    __slots__ = ("pool", "field")
+
+    def __init__(self, pool: str, field: str) -> None:
+        self.pool = pool
+        self.field = field
+
+
+_Provider = Union[Callable[[], object], _FromRow]
+
+# One pool per table, keyed by table name, grown on demand and released as soon
+# as that table's frame is finished.
+_person_state: dict[str, list[_Person]] = {}
+_address_state: dict[str, list[_Address]] = {}
+
+
+def _slug(value: str) -> str:
+    """Reduce a name to something that can sit inside an email or a username."""
+    return re.sub(r"[^a-z0-9]+", "", value.lower()) or "user"
+
+
+# Resolved once per locale, not once per row. Both of these are constant for a
+# locale, and a million-row table makes the difference stark: `current_country`
+# would be recomputed a million times for an answer that never changes, and
+# probing for an administrative-unit provider means catching AttributeError --
+# on a locale that has none, four raised exceptions per row.
+_country_name: str = ""
+_state_provider: Optional[str] = None
+
+
+def _first_provider(*names: str) -> Optional[str]:
+    """The first of these provider names this locale actually has, else None.
+
+    Locales disagree about what exists: `state` is American, `province` is
+    Belgian, and plenty of countries have no administrative unit worth naming.
+    None is the honest answer there -- better than inventing a region the
+    country does not have, purely so a column looks full.
+    """
+    for name in names:
+        try:
+            fake.format(name)
+        except (AttributeError, TypeError, ValueError):
+            continue
+        return name
+    return None
+
+
+def _resolve_locale() -> None:
+    """Cache the per-locale constants the address pool reads on every row."""
+    global _country_name, _state_provider
+    # `current_country` is the locale's own country, and it is what stops a US
+    # street from landing in Japan. Locales too generic to have one (plain "en")
+    # fall back to a single country picked once, so at least every row agrees.
+    if _first_provider("current_country"):
+        _country_name = str(fake.current_country())
+    else:
+        _country_name = fake.country()
+    _state_provider = _first_provider("state", "province", "administrative_unit", "region")
+
+
+def _new_person() -> _Person:
+    return _Person(
+        first_name=fake.first_name(),
+        last_name=fake.last_name(),
+        email_domain=fake.free_email_domain(),
+    )
+
+
+def _new_address() -> _Address:
+    return _Address(
+        street=fake.street_address(),
+        city=fake.city(),
+        state=str(fake.format(_state_provider)) if _state_provider else "",
+        country=_country_name,
+        postcode=fake.postcode(),
+    )
+
+
+def reset_row_pools() -> None:
+    """Drop every table's person and address pool.
+
+    Called per run by generate_data_from_dbml alongside the other per-run state.
+    Without it a second run in the same process reuses the first run's people,
+    which looks harmless right up until a seeded run stops reproducing.
+    """
+    _person_state.clear()
+    _address_state.clear()
+
+
+def release_row_pools(table_name: str) -> None:
+    """Drop one table's pools once its frame is finished.
+
+    A pool only has to outlive the columns of its own table. Holding every
+    table's pool until the end of the run means a schema of twenty million-row
+    tables carries twenty million identities nothing will read again; releasing
+    per table bounds the cost to the largest single table instead of the sum.
+    """
+    _person_state.pop(table_name, None)
+    _address_state.pop(table_name, None)
+
+
+def _row_pool(pool: str, table_name: Optional[str], row_count: int) -> list:
+    """Row i's person or address for this table, created and cached as needed.
+
+    Keyed by table so two tables of people hold two different populations, and
+    grown rather than rebuilt so every column of the same table sees the same
+    row i. Callers with no table name (core's composite-key repair, which
+    regenerates a single cell) share one bucket; that path only ever touches key
+    columns, never person or address ones.
+    """
+    key = table_name or ""
+    # Written out per pool rather than shared behind a generic helper: the two
+    # loops are three lines each, and pairing the right factory with the right
+    # pool is exactly the thing a reader (and a type checker) wants to see.
+    if pool == "person":
+        people = _person_state.setdefault(key, [])
+        while len(people) < row_count:
+            people.append(_new_person())
+        return people
+
+    addresses = _address_state.setdefault(key, [])
+    while len(addresses) < row_count:
+        addresses.append(_new_address())
+    return addresses
 
 
 # ---------------------------------------------------------
@@ -21,25 +264,25 @@ fake = Faker()
 # "first_name" before any looser pattern gets a chance. There is
 # deliberately no generic "name" pattern, since "product_name" or
 # "company_name" would otherwise be filled with a person's name.
-_NAME_PATTERNS: list[tuple[str, Callable[[], object]]] = [
-    ("first_name", lambda: fake.first_name()),
-    ("last_name", lambda: fake.last_name()),
-    ("full_name", lambda: fake.name()),
-    ("user_name", lambda: fake.user_name()),
-    ("username", lambda: fake.user_name()),
+_NAME_PATTERNS: list[tuple[str, _Provider]] = [
+    ("first_name", _FromRow("person", "first_name")),
+    ("last_name", _FromRow("person", "last_name")),
+    ("full_name", _FromRow("person", "full_name")),
+    ("user_name", _FromRow("person", "user_name")),
+    ("username", _FromRow("person", "user_name")),
     ("password", lambda: fake.password()),
-    ("email", lambda: fake.email()),
+    ("email", _FromRow("person", "email")),
     ("phone", lambda: fake.phone_number()),
     ("mobile", lambda: fake.phone_number()),
     ("fax", lambda: fake.phone_number()),
-    ("street", lambda: fake.street_address()),
-    ("address", lambda: fake.address().replace("\n", ", ")),
-    ("city", lambda: fake.city()),
-    ("province", lambda: fake.state()),
-    ("state", lambda: fake.state()),
-    ("country", lambda: fake.country()),
-    ("zip", lambda: fake.postcode()),
-    ("postal", lambda: fake.postcode()),
+    ("street", _FromRow("address", "street")),
+    ("address", _FromRow("address", "full")),
+    ("city", _FromRow("address", "city")),
+    ("province", _FromRow("address", "state")),
+    ("state", _FromRow("address", "state")),
+    ("country", _FromRow("address", "country")),
+    ("zip", _FromRow("address", "postcode")),
+    ("postal", _FromRow("address", "postcode")),
     ("homepage", lambda: fake.url()),
     ("website", lambda: fake.url()),
     ("url", lambda: fake.url()),
@@ -141,7 +384,7 @@ def get_duplicate_unique_columns() -> list[str]:
     return list(_duplicate_unique_columns)
 
 
-def _infer_by_name(column_name: str) -> Optional[Callable[[], object]]:
+def _infer_by_name(column_name: str) -> Optional[_Provider]:
     normalized = re.sub(r"[^a-z0-9]+", "_", column_name.lower())
     padded = f"_{normalized}_"
     for pattern, generator in _NAME_PATTERNS:
@@ -156,8 +399,27 @@ def _infer_by_name(column_name: str) -> Optional[Callable[[], object]]:
 # declaration in any schema would stop generating emails.
 _SQL_TYPES_SHADOWING_A_PROVIDER = frozenset({"text", "json", "jsonb", "xml", "binary", "year"})
 
+# Declared types that name a person or address field. `contact email` says
+# exactly what a column called `email` says, so it has to reach the same row --
+# otherwise row-level coherence has a second door it does not cover.
+_ROW_TYPE_FIELDS = {
+    "first_name": ("person", "first_name"),
+    "last_name": ("person", "last_name"),
+    "name": ("person", "full_name"),
+    "user_name": ("person", "user_name"),
+    "username": ("person", "user_name"),
+    "email": ("person", "email"),
+    "address": ("address", "full"),
+    "street_address": ("address", "street"),
+    "city": ("address", "city"),
+    "state": ("address", "state"),
+    "province": ("address", "state"),
+    "country": ("address", "country"),
+    "postcode": ("address", "postcode"),
+}
 
-def _infer_by_type(base_type: str) -> Optional[Callable[[], object]]:
+
+def _infer_by_type(base_type: str) -> Optional[_Provider]:
     """The provider a column's declared type names, if it names one deliberately.
 
     `sku ean13` and `home_state state` are the user saying which generator they
@@ -169,6 +431,9 @@ def _infer_by_type(base_type: str) -> Optional[Callable[[], object]]:
     """
     if base_type in _SQL_TYPES_SHADOWING_A_PROVIDER:
         return None
+    row_field = _ROW_TYPE_FIELDS.get(base_type)
+    if row_field is not None:
+        return _FromRow(*row_field)
     try:
         fake.format(base_type)
     except (AttributeError, TypeError):
@@ -311,7 +576,12 @@ def generate_column_values(
     # -----------------------------------------------------
     else:
         generator = _infer_by_type(base_type) or _infer_by_name(column.name)
-        if generator is not None:
+        if isinstance(generator, _FromRow):
+            rows = _row_pool(generator.pool, table_name, row_count)
+            values = [getattr(rows[index], generator.field) for index in range(row_count)]
+            if ensure_unique:
+                values = _deduplicate_identity(values)
+        elif generator is not None:
             values = [generator() for _ in range(row_count)]
             values = (
                 _deduplicate(values, generator, column_name=unique_label)
@@ -375,6 +645,35 @@ def _deduplicate(
     return result
 
 
+def _deduplicate_identity(values: list) -> list:
+    """Make identity-derived values unique without swapping the person.
+
+    `_deduplicate` resolves a collision by calling the generator again, which
+    for an identity column would hand row i a different person's email and undo
+    the coherence this module just established. Suffixing keeps the row's
+    identity and disambiguates only the value, the way a real system issues
+    `jane.doe2@...` once `jane.doe@...` is taken. It also always succeeds, so
+    an identity column never lands in `_duplicate_unique_columns`.
+    """
+    seen: set = set()
+    result = []
+    for value in values:
+        candidate = value
+        counter = 1
+        while candidate in seen:
+            counter += 1
+            candidate = _suffixed(str(value), counter)
+        seen.add(candidate)
+        result.append(candidate)
+    return result
+
+
+def _suffixed(value: str, counter: int) -> str:
+    """Append a disambiguating number, before the @ when the value is an email."""
+    local, at, domain = value.partition("@")
+    return f"{local}{counter}{at}{domain}"
+
+
 def _random_datetime(start_days: int = -365, end_days: int = 0) -> datetime:
     """Pick a random timestamp in a window around today, to whole seconds.
 
@@ -390,3 +689,8 @@ def _random_datetime(start_days: int = -365, end_days: int = 0) -> datetime:
     end = midnight + timedelta(days=end_days)
     random_second = random.randint(0, int((end - start).total_seconds()))
     return start + timedelta(seconds=random_second)
+
+
+# The default locale's constants, resolved at import so the first generation
+# does not pay for them and `set_locale`'s early return stays correct.
+_resolve_locale()
