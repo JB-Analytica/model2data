@@ -10,6 +10,7 @@ for.
 import re
 
 import pytest
+from faker import Faker
 
 import model2data.generate.faker as faker_module
 from model2data.generate.core import generate_data_from_dbml
@@ -65,11 +66,17 @@ class TestRowIdentityCoherence:
             base_rows=30,
             seed=2,
         )
-        customers = set(frames["customers"]["email"])
-        employees = set(frames["employees"]["email"])
-        # Two tables of people are two different groups of people, not the same
-        # pool handed out twice.
-        assert not customers & employees
+        # Asserted on the keying rather than on the values. "These two sets of
+        # emails do not overlap" is true here, but only by a probability -- the
+        # same shape of luck-based assertion that made the password test fail
+        # the first time the RNG moved.
+        customers_pool = faker_module._row_pool("person", "customers", 30)
+        employees_pool = faker_module._row_pool("person", "employees", 30)
+        assert customers_pool is not employees_pool
+
+        # And the values follow from that: two tables of people are two groups
+        # of people, not one pool handed out twice.
+        assert list(frames["customers"]["email"]) != list(frames["employees"]["email"])
 
     def test_same_seed_reproduces_the_same_people(self):
         def run():
@@ -141,16 +148,32 @@ class TestRowIdentityCoherence:
             assert row["email"].startswith(f"{_slug(row['first_name'])}.{_slug(row['last_name'])}@")
 
     def test_password_column_is_not_identity_derived(self):
-        # `password` sits between `username` and `email` in the pattern list;
-        # the identity work must not have reordered it into a name field.
-        reset_row_pools()
-        values = generate_column_values(
-            ColumnDef(name="password", data_type="varchar", settings={"not null"}),
-            row_count=10,
-            table_name="users",
+        # `password` sits between `username` and `email` in the pattern list, so
+        # it is the entry most at risk of having been swept into the identity
+        # work. Asserted against the pattern table rather than the output: an
+        # earlier version of this test looked for "@" in the generated password,
+        # which passed only by luck -- Faker's passwords include punctuation, "@"
+        # among it, so the test failed the first time the RNG moved.
+        assert isinstance(faker_module._infer_by_name("email"), faker_module._FromRow)
+        assert not isinstance(faker_module._infer_by_name("password"), faker_module._FromRow)
+
+        table = TableDef(
+            name="users",
+            columns=[
+                ColumnDef(name="first_name", data_type="varchar", settings={"not null"}),
+                ColumnDef(name="last_name", data_type="varchar", settings={"not null"}),
+                ColumnDef(name="email", data_type="varchar", settings={"not null"}),
+                ColumnDef(name="password", data_type="varchar", settings={"not null"}),
+            ],
         )
-        assert len(set(values)) == 10
-        assert not any("@" in value for value in values)
+        df = generate_data_from_dbml(tables={"users": table}, refs=[], base_rows=20, seed=21)[
+            "users"
+        ]
+        assert df["password"].nunique() == 20
+        for _, row in df.iterrows():
+            # Exact comparison, not a substring heuristic: the password must not
+            # be one of the identity's own values.
+            assert row["password"] not in {row["first_name"], row["last_name"], row["email"]}
 
     def test_non_person_columns_are_untouched(self):
         reset_row_pools()
@@ -168,6 +191,10 @@ def _restore_locale():
     """Locale is process-wide state, so a test that changes it must not leak."""
     yield
     set_locale(None)
+    # set_locale returns early when the locale is already the default, which
+    # would leave the cached per-locale constants behind for any test that
+    # stubbed `fake` rather than switching locale. Re-resolve unconditionally.
+    faker_module._resolve_locale()
 
 
 def _address_table(name: str = "sites") -> TableDef:
@@ -292,3 +319,54 @@ class TestPoolLifetime:
         # would cost hundreds of megabytes on one.
         assert not hasattr(faker_module._new_person(), "__dict__")
         assert not hasattr(faker_module._new_address(), "__dict__")
+
+
+class _LocaleMissing:
+    """A Faker with named providers removed, standing in for a thinner locale.
+
+    Every locale Faker actually ships has `current_country` and at least one
+    administrative unit, so the fallbacks for a locale without them cannot be
+    reached by naming a real one -- but they still decide what lands in a
+    column, and the docstrings make a claim about what they do. This stands in
+    for the locale that would reach them.
+    """
+
+    def __init__(self, inner, missing):
+        self._inner = inner
+        self._missing = set(missing)
+
+    def format(self, name, *args, **kwargs):
+        if name in self._missing:
+            raise AttributeError(name)
+        return self._inner.format(name, *args, **kwargs)
+
+    def __getattr__(self, name):
+        if name in self._missing:
+            raise AttributeError(name)
+        return getattr(self._inner, name)
+
+
+class TestThinLocales:
+    def test_no_administrative_unit_leaves_state_empty(self, monkeypatch):
+        stub = _LocaleMissing(
+            Faker("en_US"), {"state", "province", "administrative_unit", "region"}
+        )
+        monkeypatch.setattr(faker_module, "fake", stub)
+        faker_module._resolve_locale()
+
+        address = faker_module._new_address()
+        # Empty is the honest answer for a country with no region worth naming.
+        # Inventing one just to fill the column would be worse data, not better.
+        assert address.state == ""
+        assert address.city and address.street and address.country
+
+    def test_no_current_country_still_puts_every_row_in_one_country(self, monkeypatch):
+        stub = _LocaleMissing(Faker("en_US"), {"current_country"})
+        monkeypatch.setattr(faker_module, "fake", stub)
+        faker_module._resolve_locale()
+
+        countries = {faker_module._new_address().country for _ in range(10)}
+        # The point of the fallback is agreement, not accuracy: one country
+        # picked once beats a different random country on every row.
+        assert len(countries) == 1
+        assert countries != {""}
