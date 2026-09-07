@@ -5,7 +5,7 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.5.0] - 2026-09-08
 
 Both changes here are about the shape of the data rather than its values: when things happen,
 and how unevenly they are spread. A run that passes nothing draws every value exactly as
