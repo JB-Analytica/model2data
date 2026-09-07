@@ -24,6 +24,7 @@ from model2data.generate.faker import (
     get_unmapped_columns,
     reset_stats,
 )
+from model2data.generate.options import TimeProfile
 from model2data.parse.dbml import get_parse_warnings, parse_dbml
 from model2data.utils import normalize_identifier
 
@@ -186,6 +187,43 @@ def main(
             "Pin it and a --seed run reproduces on any later day, not just the day it first ran."
         ),
     ),
+    business_hours: bool = typer.Option(
+        False,
+        "--business-hours",
+        help=(
+            "Weight generated timestamps toward weekdays and working hours,\n"
+            "instead of spreading them evenly over every hour of every day."
+        ),
+    ),
+    growth: float = typer.Option(
+        0.0,
+        "--growth",
+        min=-1.0,
+        help=(
+            "Relative change in activity across the generated window: 0.5 means the end\n"
+            "is half again as busy as the start, -0.3 means it tailed off. Default: flat."
+        ),
+    ),
+    seasonality: float = typer.Option(
+        0.0,
+        "--seasonality",
+        min=0.0,
+        max=1.0,
+        help=(
+            "Strength of an annual cycle in generated timestamps, 0 (none) to 1,\n"
+            "peaking in the fourth quarter."
+        ),
+    ),
+    skew: float = typer.Option(
+        0.0,
+        "--skew",
+        min=0.0,
+        max=1.0,
+        help=(
+            "How unevenly child rows are spread over their parents: 0 (every parent equally\n"
+            "likely, the default) to 1 (a few parents hold most of the children)."
+        ),
+    ),
     locale: Optional[str] = typer.Option(
         None,
         "--locale",
@@ -251,6 +289,28 @@ def main(
     if as_of is not None:
         typer.echo(f"📅 Anchoring generated dates on: {as_of.date()}")
 
+    # Same guard again for the shaping options: a direct call leaves them as
+    # `OptionInfo` objects, which means "not supplied", i.e. the uniform draw.
+    time_profile = TimeProfile(
+        business_hours=business_hours if isinstance(business_hours, bool) else False,
+        growth=growth if isinstance(growth, (int, float)) else 0.0,
+        seasonality=seasonality if isinstance(seasonality, (int, float)) else 0.0,
+    )
+    skew = skew if isinstance(skew, (int, float)) else 0.0
+    if not time_profile.is_uniform:
+        shaped = [
+            label
+            for label, active in (
+                ("business hours", time_profile.business_hours),
+                (f"growth {time_profile.growth:+.0%}", time_profile.growth != 0.0),
+                (f"seasonality {time_profile.seasonality:.0%}", time_profile.seasonality != 0.0),
+            )
+            if active
+        ]
+        typer.echo(f"🕒 Shaping timestamps: {', '.join(shaped)}")
+    if skew:
+        typer.echo(f"📈 Skewing child rows over their parents: {skew:.0%}")
+
     # -------------------------
     # Parse DBML (names untouched)
     # -------------------------
@@ -305,6 +365,8 @@ def main(
         locale=locale,
         as_of=as_of,
         table_seeds=table_seeds,
+        time_profile=time_profile,
+        skew=skew,
     )
 
     # -------------------------

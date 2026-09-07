@@ -11,6 +11,7 @@ from typing import Callable, Optional, Union
 import pandas as pd
 from faker import Faker
 
+from model2data.generate.options import TimeProfile
 from model2data.parse.dbml import ColumnDef
 
 # ---------------------------------------------------------
@@ -513,10 +514,18 @@ def generate_column_values(
     force_not_null: bool = False,
     table_name: Optional[str] = None,
     as_of: AsOf = None,
+    time_profile: Optional[TimeProfile] = None,
+    skew: float = 0.0,
 ) -> list:
     """
     Generate synthetic values for a single column.
     Respects FKs, uniqueness, and optional min/max hints in column notes.
+
+    `time_profile` is read by the date and timestamp branches, `skew` by the
+    foreign-key branch; both default to the uniform behaviour of earlier
+    releases. They are accepted here rather than in a separate pass so that
+    every path that draws a value -- the main pass, the self-referencing FK
+    repair, the composite-key retry -- draws it the same way.
 
     `as_of` is the date every generated date and timestamp is placed relative
     to, defaulting to today. Pass it to make a seeded run reproduce on any

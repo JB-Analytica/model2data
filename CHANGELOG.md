@@ -5,6 +5,16 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+Both changes here are about the shape of the data rather than its values: when things happen,
+and how unevenly they are spread. A run that passes nothing generates exactly what 1.4.0
+generated with the same seed.
+
+### Added
+- **Time-aware generation.** _(filled in by the time-profile change)_
+- **Volume and distribution shaping.** _(filled in by the shaping change)_
+
 ## [1.4.0] - 2026-09-07
 
 Both changes here are about what a seed is actually worth. One makes it survive the day ending;
