@@ -1,6 +1,7 @@
 """Direct tests of CLI main function for proper coverage."""
 
 import os
+import re
 
 import pandas as pd
 from typer.testing import CliRunner
@@ -8,6 +9,14 @@ from typer.testing import CliRunner
 from model2data.cli import app
 
 runner = CliRunner()
+
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _plain(output: str) -> str:
+    """Typer's error box is coloured on CI, which splits `--flag` into styled
+    pieces; strip the escapes before looking for an option name in it."""
+    return _ANSI.sub("", output)
 
 
 def test_cli_basic_generation(tmp_path):
@@ -832,3 +841,89 @@ def test_cli_rows_for_rejects_malformed_values(tmp_path):
     assert "Expected TABLE=N" in _run_rows_for(tmp_path, "--rows-for", "users").output
     assert "whole number" in _run_rows_for(tmp_path, "--rows-for", "users=lots").output
     assert "at least 1" in _run_rows_for(tmp_path, "--rows-for", "users=0").output
+
+
+# Same two tables as ROWS_FOR_SCHEMA, plus the date and timestamp columns
+# --as-of has anything to say about.
+DATED_SCHEMA = """
+Table users {
+    id int [pk]
+    email email [unique]
+    signed_up date [not null]
+}
+Table orders {
+    id int [pk]
+    user_id int [not null]
+    placed_at timestamp [not null]
+}
+Ref: orders.user_id > users.id
+"""
+
+
+def _run_shop(tmp_path, name, *extra_args):
+    """Generate the dated users/orders schema under a chosen project name."""
+    dbml_file = tmp_path / "shop.dbml"
+    dbml_file.write_text(DATED_SCHEMA)
+    cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        return runner.invoke(
+            app,
+            ["--file", str(dbml_file), "--rows", "30", "--name", name, *extra_args],
+        )
+    finally:
+        os.chdir(cwd)
+
+
+def test_cli_as_of_anchors_generated_dates(tmp_path):
+    result = _run_shop(tmp_path, "anchored", "--seed", "42", "--as-of", "2024-03-15")
+    assert result.exit_code == 0, result.output
+    assert "Anchoring generated dates on: 2024-03-15" in result.output
+
+    orders = pd.read_csv(tmp_path / "dbt_anchored" / "seeds" / "raw" / "orders.csv")
+    placed = pd.to_datetime(orders["placed_at"].dropna())
+    assert placed.max() <= pd.Timestamp("2024-03-15")
+    assert placed.min() >= pd.Timestamp("2024-03-15") - pd.Timedelta(days=365)
+
+
+def test_cli_as_of_rejects_a_date_it_cannot_read(tmp_path):
+    result = _run_shop(tmp_path, "bad_date", "--as-of", "the 15th")
+    assert result.exit_code != 0
+    assert "--as-of" in _plain(result.output)
+
+
+def test_cli_table_seed_re_rolls_only_that_table(tmp_path):
+    common = ("--seed", "42", "--as-of", "2024-03-15")
+    assert _run_shop(tmp_path, "before", *common).exit_code == 0
+    result = _run_shop(tmp_path, "after", *common, "--table-seed", "orders=7")
+    assert result.exit_code == 0, result.output
+    assert "Re-rolling with a table seed of its own: orders=7" in result.output
+
+    def seed_csv(project, table):
+        return (tmp_path / f"dbt_{project}" / "seeds" / "raw" / f"{table}.csv").read_text()
+
+    assert seed_csv("before", "users") == seed_csv("after", "users")
+    assert seed_csv("before", "orders") != seed_csv("after", "orders")
+
+
+def test_cli_table_seed_needs_a_seed_to_re_roll_out_of(tmp_path):
+    result = _run_shop(tmp_path, "no_seed", "--table-seed", "orders=7")
+    assert result.exit_code != 0
+    assert "--seed" in _plain(result.output)
+
+
+def test_cli_table_seed_rejects_an_unknown_table(tmp_path):
+    result = _run_shop(tmp_path, "typo", "--seed", "1", "--table-seed", "ordres=7")
+    assert result.exit_code != 0
+    assert "No table named 'ordres'" in result.output
+
+
+def test_cli_table_seed_rejects_malformed_values(tmp_path):
+    assert (
+        "Expected TABLE=N"
+        in _run_shop(tmp_path, "m1", "--seed", "1", "--table-seed", "orders").output
+    )
+    assert (
+        "whole number"
+        in _run_shop(tmp_path, "m2", "--seed", "1", "--table-seed", "orders=x").output
+    )

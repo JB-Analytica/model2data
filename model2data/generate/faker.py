@@ -5,7 +5,7 @@ import re
 import unicodedata
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Callable, Optional, Union
 
 import pandas as pd
@@ -57,6 +57,47 @@ def set_locale(locale: Optional[str]) -> None:
     _resolve_locale()
     _person_state.clear()
     _address_state.clear()
+
+
+# ---------------------------------------------------------
+# Date anchor
+# ---------------------------------------------------------
+# Every generated date and timestamp is placed relative to a single anchor
+# date, which defaults to today. That default is what made a seeded run
+# reproduce only for as long as the day lasted: re-run tomorrow, the same seed
+# gave the same numbers and different dates, so a committed fixture churned and
+# a shared demo drifted. Callers that need a run to reproduce across days pass
+# `as_of` and pin the window instead.
+AsOf = Union[date, datetime, None]
+
+# How far back a `date` column's window reaches from the anchor.
+_DATE_WINDOW_YEARS = 2
+
+
+def _anchor_date(as_of: AsOf) -> date:
+    """The date a run generates relative to: `as_of`, or today when it is None.
+
+    A `datetime` is narrowed to its day, so a caller who has a timestamp to
+    hand does not have to remember that only the date part is used.
+    """
+    if as_of is None:
+        return date.today()
+    if isinstance(as_of, datetime):
+        return as_of.date()
+    return as_of
+
+
+def _years_before(anchor: date, years: int) -> date:
+    """`years` calendar years before `anchor`, moving 29 Feb back to 28 Feb.
+
+    Only 29 February has no counterpart in a non-leap year, and a whole run
+    failing on one day in four years is not a tradeoff worth taking for the
+    sake of an exact anniversary.
+    """
+    try:
+        return anchor.replace(year=anchor.year - years)
+    except ValueError:
+        return anchor.replace(year=anchor.year - years, month=2, day=28)
 
 
 # ---------------------------------------------------------
@@ -471,10 +512,15 @@ def generate_column_values(
     ensure_unique: bool = False,
     force_not_null: bool = False,
     table_name: Optional[str] = None,
+    as_of: AsOf = None,
 ) -> list:
     """
     Generate synthetic values for a single column.
     Respects FKs, uniqueness, and optional min/max hints in column notes.
+
+    `as_of` is the date every generated date and timestamp is placed relative
+    to, defaulting to today. Pass it to make a seeded run reproduce on any
+    later day rather than only on the day it first ran.
 
     `force_not_null` lets a caller override the nullability pass below for a
     column whose *individual* settings don't carry `not null`/`pk` but is
@@ -580,13 +626,20 @@ def generate_column_values(
     # Dates
     # -----------------------------------------------------
     elif "date" in base_type and "time" not in base_type:
-        values = [fake.date_between(start_date="-2y", end_date="today") for _ in range(row_count)]
+        # Explicit endpoints rather than Faker's "-2y"/"today" shorthand: those
+        # strings are resolved against `date.today()` inside Faker, which is
+        # precisely the hidden dependency on the wall clock `as_of` removes.
+        anchor = _anchor_date(as_of)
+        values = [
+            fake.date_between(start_date=_years_before(anchor, _DATE_WINDOW_YEARS), end_date=anchor)
+            for _ in range(row_count)
+        ]
 
     elif "time" in base_type and "stamp" not in base_type:
         values = [fake.time() for _ in range(row_count)]
 
     elif any(key in base_type for key in ["timestamp", "datetime"]):
-        values = [_random_datetime().isoformat(sep=" ") for _ in range(row_count)]
+        values = [_random_datetime(as_of=as_of).isoformat(sep=" ") for _ in range(row_count)]
 
     # -----------------------------------------------------
     # Untyped / generic string columns: honour a type that names
@@ -693,17 +746,19 @@ def _suffixed(value: str, counter: int) -> str:
     return f"{local}{counter}{at}{domain}"
 
 
-def _random_datetime(start_days: int = -365, end_days: int = 0) -> datetime:
-    """Pick a random timestamp in a window around today, to whole seconds.
+def _random_datetime(start_days: int = -365, end_days: int = 0, as_of: AsOf = None) -> datetime:
+    """Pick a random timestamp in a window around the anchor, to whole seconds.
 
-    The window is anchored to midnight rather than `datetime.now()`. The
-    random offset is a whole number of seconds, so anchoring on `now()` let
-    its sub-second component leak straight through into every generated
-    timestamp -- two runs with the same `--seed` produced values differing
-    only in their microseconds, which quietly broke the reproducibility
-    `--seed` exists to provide.
+    The window is anchored to midnight of `as_of` (today when it is None)
+    rather than to a `datetime.now()`. The random offset is a whole number of
+    seconds, so anchoring on `now()` let its sub-second component leak straight
+    through into every generated timestamp -- two runs with the same `--seed`
+    produced values differing only in their microseconds, which quietly broke
+    the reproducibility `--seed` exists to provide. Midnight of an explicit
+    `as_of` extends that reproducibility past the end of the day.
     """
-    midnight = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    anchor = _anchor_date(as_of)
+    midnight = datetime(anchor.year, anchor.month, anchor.day)
     start = midnight + timedelta(days=start_days)
     end = midnight + timedelta(days=end_days)
     random_second = random.randint(0, int((end - start).total_seconds()))

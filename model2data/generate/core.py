@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import random
 from collections import defaultdict, deque
 from collections.abc import Mapping
@@ -9,6 +10,7 @@ import pandas as pd
 from faker import Faker
 
 from model2data.generate.faker import (
+    AsOf,
     generate_column_values,
     release_row_pools,
     reset_duplicate_unique_columns,
@@ -68,6 +70,8 @@ def generate_data_from_dbml(
     seed: Optional[int] = None,
     row_overrides: Optional[Mapping[str, int]] = None,
     locale: Optional[str] = None,
+    as_of: AsOf = None,
+    table_seeds: Optional[Mapping[str, int]] = None,
 ) -> dict[str, pd.DataFrame]:
     """
     Generate synthetic datasets from parsed DBML definitions.
@@ -86,9 +90,28 @@ def generate_data_from_dbml(
     holding one Belgian and one American address is the incoherence the row
     pools exist to remove.
 
-    This function is deterministic if a seed is provided.
-    It performs no filesystem I/O and returns pandas DataFrames.
+    `as_of` is the date every generated date and timestamp is placed relative
+    to -- dates land in the two years up to it, timestamps in the year up to
+    midnight on it -- and defaults to today. Without it a seed reproduces only
+    for as long as the day lasts: the numbers come back identical and the dates
+    move, so a committed fixture churns and a saved project renders different
+    rows next month. Pass the day the run should look like it happened on and
+    the whole frame reproduces, on any later day.
+
+    `table_seeds` re-rolls individual tables without disturbing the rest. Each
+    table draws from its own RNG stream, derived from `(seed, table_name,
+    table_seeds[table_name])`, so bumping one table's entry changes that
+    table's rows and leaves every other table byte-identical. Children of a
+    re-rolled table keep pointing at rows that exist, because their foreign
+    keys are drawn from whatever their parent ended up holding. It needs a
+    `seed` to work off -- with none, every table is already different on every
+    run -- and unknown table names are an error rather than a silent no-op.
+
+    This function is deterministic if a seed is provided (and, with `as_of`,
+    on any day). It performs no filesystem I/O and returns pandas DataFrames.
     """
+    _validate_table_seeds(tables, table_seeds, seed)
+
     # Locale first, then the seed: switching locale builds a new Faker, and the
     # seed has to be the last word on the generator that actually runs.
     set_locale(locale)
@@ -117,6 +140,26 @@ def generate_data_from_dbml(
     for table_name in ordered_tables:
         table_def = tables[table_name]
         row_count = _determine_row_count(table_def.name, base_rows, row_overrides)
+
+        # Give this table its own RNG stream before a single value of it is
+        # drawn. One stream for the whole run meant re-rolling a table
+        # re-rolled everything generated after it too -- fine for a one-shot
+        # CLI run, useless for a "regenerate just this table" button, which is
+        # exactly the thing users ask for once they like four tables out of
+        # five. Same locale-then-seed order as the run-level seeding above.
+        if seed is not None:
+            stream_seed = _table_stream_seed(
+                seed, table_name, table_seeds.get(table_name) if table_seeds else None
+            )
+            random.seed(stream_seed)
+            Faker.seed(stream_seed)
+
+        # A table's identities are its own. `release_row_pools` below already
+        # drops the pool keyed by this table's name; this also drops the
+        # un-named bucket the composite-key repair shares, so nothing a
+        # previous table left behind can reach this one's rows and make its
+        # stream depend on what came before it.
+        reset_row_pools()
 
         data: dict[str, list] = {}
 
@@ -166,11 +209,16 @@ def generate_data_from_dbml(
                 ensure_unique=ensure_unique,
                 force_not_null=column.name in composite_pk_columns,
                 table_name=table_name,
+                as_of=as_of,
             )
 
         df = pd.DataFrame(data)
-        df = _resolve_self_referencing_fks(df, table_def, table_name, fk_lookup, row_count)
-        df = _deduplicate_composite_keys(df, table_def, table_name, fk_lookup, generated)
+        df = _resolve_self_referencing_fks(
+            df, table_def, table_name, fk_lookup, row_count, as_of=as_of
+        )
+        df = _deduplicate_composite_keys(
+            df, table_def, table_name, fk_lookup, generated, as_of=as_of
+        )
 
         # -----------------------------------------------------
         # Second pass: attribute mirroring (non-FK refs)
@@ -250,6 +298,7 @@ def _deduplicate_composite_keys(
     fk_lookup: dict[tuple[str, str], tuple[str, str]],
     generated: dict[str, pd.DataFrame],
     max_attempts: int = 20,
+    as_of: AsOf = None,
 ) -> pd.DataFrame:
     """
     Regenerate colliding rows for any pk/unique composite key declared via an
@@ -300,7 +349,9 @@ def _deduplicate_composite_keys(
                     if col_name in fk_pools:
                         df.at[idx, col_name] = random.choice(fk_pools[col_name])
                     else:
-                        df.at[idx, col_name] = generate_column_values(col_def, row_count=1)[0]
+                        df.at[idx, col_name] = generate_column_values(
+                            col_def, row_count=1, as_of=as_of
+                        )[0]
                 combo = tuple(df.at[idx, c] for c in key_columns)
                 attempts += 1
             # Retry budget spent and still colliding: this row keeps a
@@ -325,6 +376,7 @@ def _resolve_self_referencing_fks(
     table_name: str,
     fk_lookup: dict[tuple[str, str], tuple[str, str]],
     row_count: int,
+    as_of: AsOf = None,
 ) -> pd.DataFrame:
     """
     Re-generate any FK column that references its own table (e.g. a
@@ -362,9 +414,54 @@ def _resolve_self_referencing_fks(
             ensure_unique=ensure_unique,
             force_not_null=column.name in composite_pk_columns,
             table_name=table_name,
+            as_of=as_of,
         )
 
     return df
+
+
+def _validate_table_seeds(
+    tables: dict[str, TableDef],
+    table_seeds: Optional[Mapping[str, int]],
+    seed: Optional[int],
+) -> None:
+    """Reject a `table_seeds` mapping that cannot do what it was asked to do.
+
+    Unlike `row_overrides`, which quietly ignores a name it does not know, an
+    unknown name here is always a mistake worth stopping for: the caller asked
+    for one table to be re-rolled and would otherwise get a run in which
+    nothing changed, with nothing said about why. The same goes for passing
+    `table_seeds` with no `seed` -- there is no stream to re-roll out of, and
+    every table is already different on every run.
+    """
+    if not table_seeds:
+        return
+
+    unknown = sorted(name for name in table_seeds if name not in tables)
+    if unknown:
+        known = ", ".join(sorted(tables)) or "none"
+        label = "No table named" if len(unknown) == 1 else "No tables named"
+        named = ", ".join(repr(name) for name in unknown)
+        raise ValueError(f"{label} {named} in this schema. Tables: {known}.")
+
+    if seed is None:
+        raise ValueError(
+            "table_seeds needs a seed to re-roll a table out of: without one every "
+            "table is already generated afresh on every run."
+        )
+
+
+def _table_stream_seed(seed: int, table_name: str, table_seed: Optional[int]) -> int:
+    """The RNG seed one table draws from, derived from the run seed and its name.
+
+    Hashed with blake2b rather than Python's built-in `hash()`, which is salted
+    per interpreter process for strings: a "deterministic" seed built on it
+    would reproduce only within a single run of the program, which is the one
+    place determinism was never in doubt.
+    """
+    payload = f"{seed}|{table_name}|{'' if table_seed is None else table_seed}"
+    digest = hashlib.blake2b(payload.encode("utf-8"), digest_size=8).digest()
+    return int.from_bytes(digest, "big")
 
 
 def _determine_row_count(

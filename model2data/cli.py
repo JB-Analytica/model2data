@@ -1,5 +1,6 @@
 import random
 import shutil
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -75,6 +76,43 @@ def _parse_row_overrides(
     return overrides
 
 
+def _parse_table_seeds(
+    raw: Optional[list[str]],
+    tables: dict,
+) -> dict[str, int]:
+    """Turn repeated `--table-seed TABLE=N` values into a {table: seed} mapping.
+
+    Same shape and the same loud failure on an unknown name as `--rows-for`:
+    the whole point of naming a table here is to change that table, so a typo
+    would otherwise produce a run in which nothing moved and nothing was said.
+    """
+    if not isinstance(raw, (list, tuple)):
+        return {}
+
+    table_seeds: dict[str, int] = {}
+    for item in raw:
+        table_name, separator, value = item.partition("=")
+        table_name = table_name.strip()
+        if not separator or not table_name:
+            raise typer.BadParameter(f"Expected TABLE=N, got {item!r}.", param_hint="--table-seed")
+
+        try:
+            table_seed = int(value)
+        except ValueError:
+            raise typer.BadParameter(
+                f"Seed for {table_name!r} must be a whole number, got {value!r}.",
+                param_hint="--table-seed",
+            ) from None
+        if table_name not in tables:
+            known = ", ".join(sorted(tables)) or "none"
+            raise typer.BadParameter(
+                f"No table named {table_name!r} in this schema. Tables: {known}.",
+                param_hint="--table-seed",
+            )
+        table_seeds[table_name] = table_seed
+    return table_seeds
+
+
 app = typer.Typer(
     help=(
         "model2data: Generate analytics-ready datasets from DBML models.\n\n"
@@ -107,8 +145,11 @@ def main(
         min=10,
         help="Number of rows to generate per table.",
     ),
-    # noqa: B008 is only needed here (not on the other options) because a
-    # repeatable option must be annotated with a mutable `list` type.
+    # noqa: B008 is needed on some options and not others because ruff waves a
+    # call through in a default only when the annotation is one of the types it
+    # knows to be immutable. `str`, `int`, `bool` and `Path` are on that list;
+    # the `list` a repeatable option must be annotated with, and `datetime`,
+    # are not -- neither is actually mutated here.
     rows_for: Optional[list[str]] = typer.Option(  # noqa: B008
         None,
         "--rows-for",
@@ -124,6 +165,25 @@ def main(
         help=(
             "Optional random seed for deterministic generation.\n"
             "Using the same seed will always produce identical datasets."
+        ),
+    ),
+    table_seed: Optional[list[str]] = typer.Option(  # noqa: B008
+        None,
+        "--table-seed",
+        metavar="TABLE=N",
+        help=(
+            "Re-roll one table without disturbing the others, keeping --seed for the rest.\n"
+            "Repeatable, e.g. --table-seed orders=7. Requires --seed."
+        ),
+    ),
+    as_of: Optional[datetime] = typer.Option(  # noqa: B008
+        None,
+        "--as-of",
+        formats=["%Y-%m-%d"],
+        metavar="YYYY-MM-DD",
+        help=(
+            "Date to anchor generated dates and timestamps on (default: today).\n"
+            "Pin it and a --seed run reproduces on any later day, not just the day it first ran."
         ),
     ),
     locale: Optional[str] = typer.Option(
@@ -183,6 +243,14 @@ def main(
         Faker.seed(seed)
         typer.echo(f"🔁 Using deterministic seed: {seed}")
 
+    # Same reason as `_parse_row_overrides`'s isinstance guard: `main` is also
+    # called directly as a plain function, which leaves this holding its
+    # `OptionInfo` default rather than None. Anything that isn't a real
+    # datetime means "not supplied", i.e. anchor on today.
+    as_of = as_of if isinstance(as_of, datetime) else None
+    if as_of is not None:
+        typer.echo(f"📅 Anchoring generated dates on: {as_of.date()}")
+
     # -------------------------
     # Parse DBML (names untouched)
     # -------------------------
@@ -196,6 +264,16 @@ def main(
     # should not leave a half-scaffolded project behind for the next run to trip
     # over with a confusing "destination already exists".
     row_overrides = _parse_row_overrides(rows_for, tables)
+    table_seeds = _parse_table_seeds(table_seed, tables)
+    if table_seeds and seed is None:
+        raise typer.BadParameter(
+            "--table-seed re-rolls one table out of the run's seed, so there has to "
+            "be one. Add --seed.",
+            param_hint="--table-seed",
+        )
+    if table_seeds:
+        rolled = ", ".join(f"{name}={value}" for name, value in sorted(table_seeds.items()))
+        typer.echo(f"🎲 Re-rolling with a table seed of its own: {rolled}")
 
     project_name = normalize_identifier(name or file.stem)
     dest = Path.cwd() / f"dbt_{project_name}"
@@ -225,6 +303,8 @@ def main(
         seed=seed,
         row_overrides=row_overrides,
         locale=locale,
+        as_of=as_of,
+        table_seeds=table_seeds,
     )
 
     # -------------------------
