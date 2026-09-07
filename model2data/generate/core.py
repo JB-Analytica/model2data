@@ -17,6 +17,7 @@ from model2data.generate.faker import (
     reset_row_pools,
     set_locale,
 )
+from model2data.generate.hints import validate_hints
 from model2data.generate.options import UNIFORM, TimeProfile, validate_skew
 from model2data.generate.relationships import (
     build_fk_lookup,
@@ -124,6 +125,7 @@ def generate_data_from_dbml(
     on any day). It performs no filesystem I/O and returns pandas DataFrames.
     """
     _validate_table_seeds(tables, table_seeds, seed)
+    validate_hints(tables, refs)
     profile = time_profile or UNIFORM
     skew = validate_skew(skew)
 

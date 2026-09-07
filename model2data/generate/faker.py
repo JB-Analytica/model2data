@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import math
 import random
 import re
 import unicodedata
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
 from typing import Callable, Optional, Union
 
@@ -543,12 +544,57 @@ def generate_column_values(
     # (an `id` on each of two tables) stay distinguishable in the report.
     unique_label = f"{table_name}.{column.name}" if table_name else column.name
 
+    # A `distinct` hint means "draw from a small pool", which is orthogonal to
+    # every type-specific branch below: generate the pool through this same
+    # function (so a pooled `city` still reads the row-identity pool, a pooled
+    # `int` still respects its own min/max), then repeat pool entries to fill
+    # row_count. validate_hints has already refused this on an FK/pk/unique/
+    # enum column, so there is no interaction with those branches to worry
+    # about. Handled before anything else so every other branch stays exactly
+    # what it was for a column with no `distinct` hint.
+    column_note = column.note or {}
+    distinct = column_note.get("distinct")
+    if distinct is not None:
+        pool_note = {key: value for key, value in column_note.items() if key != "distinct"}
+        pool = generate_column_values(
+            column=replace(column, note=pool_note or None),
+            row_count=distinct,
+            fk_series=None,
+            ensure_unique=False,
+            force_not_null=True,
+            table_name=table_name,
+            as_of=as_of,
+            time_profile=time_profile,
+            skew=skew,
+        )
+        values = random.choices(pool, k=row_count)
+        if not force_not_null and "not null" not in column.settings and "pk" not in column.settings:
+            _null_out(values, _null_fraction_for(column, row_count), column.default, row_count)
+        return values
+
     if column.enum_values:
-        return [random.choice(column.enum_values) for _ in range(row_count)]
+        note = column.note or {}
+        weights = note.get("weights")
+        null_rate_hint = "null_rate" in note
+        if weights is None and not null_rate_hint:
+            return [random.choice(column.enum_values) for _ in range(row_count)]
+
+        if weights is not None:
+            # Values the hint doesn't mention default to weight 1, so naming
+            # only the ones that matter (`{"delivered": 20}`) doesn't silently
+            # drop the rest of the enum.
+            enum_weights = [float(weights.get(value, 1)) for value in column.enum_values]
+            values = random.choices(column.enum_values, weights=enum_weights, k=row_count)
+        else:
+            values = [random.choice(column.enum_values) for _ in range(row_count)]
+
+        if null_rate_hint and not force_not_null:
+            _null_out(values, note["null_rate"], column.default, row_count)
+        return values
 
     dtype = column.data_type.lower()
     base_type = dtype.split("(")[0].strip()
-    values: list = []
+    values = []
 
     # Extract min/max from note if present
     min_val = None
@@ -565,7 +611,34 @@ def generate_column_values(
         # other branch here already respects `not null`/`pk` via the
         # nullability pass below.
         fk_values = fk_series.tolist()
-        values = [random.choice(fk_values) for _ in range(row_count)]
+        effective_skew = column.note.get("skew") if column.note else None
+        if effective_skew is None:
+            effective_skew = skew
+
+        if effective_skew == 0.0:
+            # Unchanged from every release before skew existed.
+            values = [random.choice(fk_values) for _ in range(row_count)]
+        else:
+            # Distinct parents, in their original order, shuffled so *which*
+            # ones end up popular is randomized under the seed rather than
+            # always being the first ones inserted.
+            seen: set = set()
+            parents = []
+            for value in fk_values:
+                if value not in seen:
+                    seen.add(value)
+                    parents.append(value)
+            random.shuffle(parents)
+
+            # Geometric decay by rank: w_i = exp(-lam * i / n), lam = 8 *
+            # skew**2. At skew 0.8 (lam=5.12) the top 20% of parents hold
+            # roughly 65-75% of the children; at skew 1.0 (lam=8) they hold
+            # roughly 80%; at skew 0 every parent is equally likely, handled
+            # above. Both ranges are pinned in tests/test_shaping.py.
+            n = len(parents)
+            lam = 8 * effective_skew**2
+            weights = [math.exp(-lam * i / n) for i in range(n)]
+            values = random.choices(parents, weights=weights, k=row_count)
 
     # -----------------------------------------------------
     # UUIDs / hashes
@@ -629,7 +702,11 @@ def generate_column_values(
     # Booleans
     # -----------------------------------------------------
     elif "boolean" in base_type or "bool" in base_type:
-        values = [random.choice([True, False]) for _ in range(row_count)]
+        true_rate = column.note.get("true_rate") if column.note else None
+        if true_rate is None:
+            values = [random.choice([True, False]) for _ in range(row_count)]
+        else:
+            values = [random.random() < true_rate for _ in range(row_count)]
 
     # -----------------------------------------------------
     # Dates
@@ -683,11 +760,7 @@ def generate_column_values(
     # Nullability
     # -----------------------------------------------------
     if not force_not_null and "not null" not in column.settings and "pk" not in column.settings:
-        null_fraction = max(0, min(0.2, 1 - (row_count / (row_count + 50))))
-        sample_size = int(row_count * null_fraction)
-        if sample_size:
-            for idx in random.sample(range(row_count), k=sample_size):
-                values[idx] = column.default
+        _null_out(values, _null_fraction_for(column, row_count), column.default, row_count)
 
     return values
 
@@ -695,6 +768,33 @@ def generate_column_values(
 # ---------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------
+def _null_fraction_for(column: ColumnDef, row_count: int) -> float:
+    """The fraction of `row_count` rows this column should turn null.
+
+    A `null_rate` hint replaces the default outright; with none, the same
+    formula that has applied since before hints existed -- up to a fifth of
+    the rows, tapering off for very small tables so a 3-row lookup table
+    doesn't lose a third of itself to nulls.
+    """
+    note_null_rate = column.note.get("null_rate") if column.note else None
+    if note_null_rate is not None:
+        return note_null_rate
+    return max(0, min(0.2, 1 - (row_count / (row_count + 50))))
+
+
+def _null_out(values: list, fraction: float, default: object, row_count: int) -> None:
+    """Overwrite `fraction` of `values`, in place, with `default`.
+
+    A fixed count drawn once via `random.sample` rather than a per-row coin
+    flip, so the null count is exactly `round(row_count * fraction)` instead
+    of only approximately so.
+    """
+    sample_size = int(row_count * fraction)
+    if sample_size:
+        for idx in random.sample(range(row_count), k=sample_size):
+            values[idx] = default
+
+
 def _deduplicate(
     values: list,
     generator: Callable[[], object],
