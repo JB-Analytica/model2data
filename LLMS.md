@@ -28,6 +28,12 @@ rough ERD, a client's requirements):
    when re-running for a client demo. `--rows` controls rows generated per table, and `--rows-for TABLE=N` overrides it for individual tables — use it when the schema has small dimensions and large facts, so joins behave like the real warehouse (raise `--rows` for a
    more convincing demo dataset, e.g. `500`-`2000`; keep it low, e.g. `20`-`50`, while iterating
    quickly on the schema itself).
+
+   Add `--as-of YYYY-MM-DD` when the output has to keep reproducing after today: without it,
+   dates and timestamps are generated relative to the current date, so the same `--seed` gives
+   the same numbers and different dates tomorrow. If a table comes out wrong but the rest looks
+   right, `--table-seed TABLE=N` re-rolls that one table and leaves every other table
+   byte-identical, so there is no need to regenerate — and re-review — the whole schema.
 3. **Verify it actually works before showing anyone**:
    ```bash
    cd dbt_<name>
@@ -175,6 +181,10 @@ model2data --file SCHEMA.dbml [OPTIONS]
 --rows, -r       INT       Rows to generate per table (default: 100)
 --rows-for       TABLE=N   Row count for one table, overriding --rows. Repeatable.
 --seed           INT       Deterministic seed — same seed + schema always produces the same data
+--table-seed     TABLE=N   Re-roll one table, leaving every other table byte-identical.
+                           Repeatable; requires --seed
+--as-of          DATE      YYYY-MM-DD to anchor generated dates and timestamps on (default: today)
+--locale         TEXT      Faker locale for generated people and addresses (default: en_US)
 --name, -n       TEXT      Override the generated dbt project's name (default: derived from filename)
 --force                    Overwrite the destination directory if it already exists
 --adapter, -a    TEXT      duckdb (default) or postgres

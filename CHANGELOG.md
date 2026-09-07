@@ -5,6 +5,58 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.4.0] - 2026-09-07
+
+Both changes here are about what a seed is actually worth. One makes it survive the day ending;
+the other makes it something you can spend on a single table instead of the whole schema.
+
+### Added
+- **`as_of`, on the library and the CLI.** `generate_data_from_dbml(..., as_of=date(2024, 3, 15))`
+  and `model2data ... --as-of 2024-03-15` pin the date every generated date and timestamp is
+  placed relative to: dates land in the two years up to it, timestamps in the year up to midnight
+  on it. The anchor was previously always today, which is why a `--seed` run reproduced only until
+  midnight — every number came back identical and every date had moved, so committed fixtures
+  churned on regeneration and a saved project rendered a different window next month. Anchoring on
+  a day the caller chooses is what makes "the same seed always produces the same data" true of
+  next week too. It defaults to `None`, so a run that passes nothing is unchanged, and a
+  `datetime` is accepted as well as a `date` — only its day is read.
+
+  This also removes the reason a caller would monkeypatch `datetime` inside the library to get the
+  same effect, which was the state of the art before this release.
+
+- **`table_seeds`, on the library and the CLI.** `generate_data_from_dbml(...,
+  table_seeds={"orders": 7})` and `model2data ... --seed 42 --table-seed orders=7` re-roll one
+  table and leave the rest alone: change the entry and that table's rows change, while every other
+  table's frame stays byte-identical. This is the thing people actually do with generated data —
+  keep the four tables that look right and ask for a different fifth — and one shared RNG stream
+  could not offer it, because re-rolling a table re-rolled everything generated after it too.
+
+  Children of a re-rolled table keep pointing at rows that exist: their foreign keys are drawn from
+  whatever their parent ended up holding, so the FK column follows the parent and the rest of the
+  child is untouched. Unknown table names raise rather than being ignored the way `row_overrides`
+  ignores them — naming a table here is a request to change that table, and a typo would otherwise
+  produce a run in which nothing moved and nothing was said. It needs a `seed` to re-roll out of;
+  with none, every table is already generated afresh on every run.
+
+### Changed
+- **A given seed no longer produces what it produced in 1.3.1.** Each table now draws from its own
+  RNG stream, derived from `(seed, table_name, table_seeds[table_name])` with a stable blake2b
+  digest — not Python's `hash()`, which is salted per process and would make a "deterministic"
+  seed reproduce only inside a single run of the program. That per-table derivation is what makes
+  a single-table re-roll possible at all, and it necessarily renumbers everything. A seed is still
+  exactly as reproducible as it was; it simply reproduces different rows, so seed fixtures
+  committed under 1.3.x will show a full diff when regenerated. Regenerate them in one deliberate
+  commit.
+
+- **A `date` column's window is now two calendar years back from the anchor**, rather than Faker's
+  `"-2y"` shorthand, which Faker resolves to 731 days against its own reading of the current date.
+  Near-identical span, and no longer routed through a clock this library does not control.
+
+### Fixed
+- Both READMEs still listed locale-aware generation among the ideas deliberately left out of
+  scope, which 1.3.0 shipped as `--locale`. `LLMS.md`'s CLI reference had never listed `--locale`
+  at all.
+
 ## [1.3.1] - 2026-09-07
 
 ### Fixed

@@ -44,7 +44,10 @@ access required.
 - **Relationship-preserving.** Foreign keys resolve to real parent rows; tables are generated in
   dependency order.
 - **Deterministic.** Pass `--seed` and the same schema always produces the same data — safe to
-  commit fixtures, safe to diff across CI runs.
+  commit fixtures, safe to diff across CI runs. Add `--as-of` to pin the date the data is anchored
+  on, and the run reproduces on any later day rather than only on the day it first ran.
+- **Re-rollable one table at a time.** `--table-seed orders=7` regenerates a single table and
+  leaves every other table byte-identical, so you can keep the four tables that look right.
 - **A real dbt project, not just CSVs.** Seeds, staging models that `ref()` them, schema tests,
   and a ready-to-use profile — the thing you'd otherwise spend an afternoon scaffolding by hand.
   A single `dbt build` loads, transforms, and tests the whole thing.
@@ -136,6 +139,30 @@ can sit behind a large orders table the way they would in the warehouse you're m
 ```bash
 model2data --file examples/ecommerce.dbml --rows 200 --seed 42 \
   --rows-for customers=50 --rows-for order_items=5000
+```
+
+`--seed` reproduces a run's numbers, but dates and timestamps are generated relative to the
+current date, so the same seed drifts once the day turns over. `--as-of` pins the date they're
+anchored on, and the whole dataset reproduces on any later day — which is what makes a generated
+fixture safe to commit:
+
+```bash
+model2data --file examples/ecommerce.dbml --rows 200 --seed 42 --as-of 2026-01-31
+```
+
+If one table comes out wrong and the rest looks right, `--table-seed` re-rolls just that table.
+Every other table's seed CSV stays byte-identical, and children of the re-rolled table still
+reference rows that exist, so there's nothing to re-check but the table you asked to change:
+
+```bash
+model2data --file examples/ecommerce.dbml --rows 200 --seed 42 --table-seed orders=7
+```
+
+`--locale` picks the country every generated person and address comes from (`en_US` by default);
+it's a per-run setting, so a table can't end up holding one Belgian and one American address:
+
+```bash
+model2data --file examples/ecommerce.dbml --rows 200 --seed 42 --locale nl_BE
 ```
 
 Run dbt to load, transform, and test the data:
@@ -277,7 +304,6 @@ wants to pick them up as a contribution:
   parsed schema shape.
 - Example mart-layer models on top of staging (the generated `dbt_project.yml` carries a
   ready-to-uncomment `marts` schema/materialization config for this).
-- Locale-aware generation (`--locale`) for non-English/US synthetic data.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) if you'd like to work on any of these.
 
