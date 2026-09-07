@@ -111,6 +111,17 @@ age int [note: '{"min": 18, "max": 90}']
 (These two forms are mutually exclusive per column — a note is read as JSON first, falling back
 to plain text.)
 
+**Created/updated/closed-style columns are ordered automatically, in every row, under every time
+profile.** A column named `created_at`, `updated_at`, `deleted_at`, `order_start`/`order_end`, and
+about 30 other stems are recognized and placed in the right relative order — no row has an
+`updated_at` before its own `created_at`. A note with an `after` key names the dependency
+explicitly, for a column whose name doesn't say it on its own:
+```dbml
+shipped_at timestamp [note: '{"after": "ordered_at"}']
+```
+A birth-date-style column (`birth_date`, `date_of_birth`, `dob`) is never folded into this chain —
+it describes the person, not the record.
+
 **Declare relationships** — either syntax is fully supported and produces identical behavior:
 ```dbml
 ' inline, on the column itself
@@ -184,6 +195,9 @@ model2data --file SCHEMA.dbml [OPTIONS]
 --table-seed     TABLE=N   Re-roll one table, leaving every other table byte-identical.
                            Repeatable; requires --seed
 --as-of          DATE      YYYY-MM-DD to anchor generated dates and timestamps on (default: today)
+--business-hours           Weight generated timestamps toward weekdays and working hours
+--growth         FLOAT     Relative change in activity across the window: -1.0 or above (default: 0, flat)
+--seasonality    FLOAT     Strength of an annual cycle in timestamps, 0-1, peaking in Q4 (default: 0)
 --locale         TEXT      Faker locale for generated people and addresses (default: en_US)
 --name, -n       TEXT      Override the generated dbt project's name (default: derived from filename)
 --force                    Overwrite the destination directory if it already exists

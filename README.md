@@ -165,6 +165,25 @@ it's a per-run setting, so a table can't end up holding one Belgian and one Amer
 model2data --file examples/ecommerce.dbml --rows 200 --seed 42 --locale nl_BE
 ```
 
+### Shape when things happen
+
+By default, every date and timestamp is drawn uniformly across its window. `--business-hours`,
+`--growth`, and `--seasonality` shape that instead — weekdays and working hours, a trend across
+the window, and an annual cycle peaking in Q4:
+
+```bash
+model2data --file examples/ecommerce.dbml --rows 200 --seed 42 \
+  --business-hours --growth 0.5 --seasonality 0.3
+```
+
+Within a row, created/updated/deleted-style columns are ordered automatically — `updated_at` never
+lands before its own `created_at` — under any profile, uniform included. A column whose name
+doesn't say what it depends on can say so explicitly with an `after` note:
+
+```dbml
+shipped_at timestamp [note: '{"after": "ordered_at"}']
+```
+
 Run dbt to load, transform, and test the data:
 
 ```bash
