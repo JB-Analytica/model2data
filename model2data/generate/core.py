@@ -22,6 +22,7 @@ from model2data.generate.relationships import (
     build_fk_lookup,
     classify_refs,
 )
+from model2data.generate.timeline import order_row_times
 from model2data.parse.dbml import TableDef
 
 # Tables the most recent generate_data_from_dbml() call found stuck in an
@@ -230,6 +231,11 @@ def generate_data_from_dbml(
             )
 
         df = pd.DataFrame(data)
+        # Ordering runs before FK resolution/dedup so a self-ref repair or a
+        # composite-key retry regenerates a temporal column's value into a
+        # frame that already respects created/updated/closed ordering, rather
+        # than one where only the untouched columns do.
+        df = order_row_times(df, table_def, as_of=as_of)
         df = _resolve_self_referencing_fks(
             df,
             table_def,

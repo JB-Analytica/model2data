@@ -12,6 +12,7 @@ import pandas as pd
 from faker import Faker
 
 from model2data.generate.options import TimeProfile
+from model2data.generate.timeline import weighted_dates, weighted_timestamps
 from model2data.parse.dbml import ColumnDef
 
 # ---------------------------------------------------------
@@ -503,6 +504,43 @@ def _infer_by_type(base_type: str) -> Optional[_Provider]:
     return lambda: fake.format(base_type)
 
 
+def _generate_dates(row_count: int, as_of: AsOf, time_profile: Optional[TimeProfile]) -> list:
+    """The date branch's values: shaped by `time_profile` when it isn't uniform.
+
+    A bare `-> list` return, matching `generate_column_values` itself: `values`
+    there is reassigned by every branch of one big if/elif chain (int, float,
+    uuid, this one...) and then written into by the nullability pass below with
+    an arbitrary `column.default`, so none of those branches can commit to a
+    concrete element type without the type checker flagging the later write as
+    unsound. Keeping `weighted_dates`'s real `list[date]` return type contained
+    to this one call, instead of leaking it into `values`, is what lets
+    `weighted_dates` itself stay properly typed for its own callers and tests.
+    """
+    anchor = _anchor_date(as_of)
+    if time_profile is not None and not time_profile.is_uniform:
+        return weighted_dates(
+            row_count, time_profile, start=_years_before(anchor, _DATE_WINDOW_YEARS), end=anchor
+        )
+    # Explicit endpoints rather than Faker's "-2y"/"today" shorthand: those
+    # strings are resolved against `date.today()` inside Faker, which is
+    # precisely the hidden dependency on the wall clock `as_of` removes.
+    return [
+        fake.date_between(start_date=_years_before(anchor, _DATE_WINDOW_YEARS), end_date=anchor)
+        for _ in range(row_count)
+    ]
+
+
+def _generate_timestamps(row_count: int, as_of: AsOf, time_profile: Optional[TimeProfile]) -> list:
+    """The timestamp branch's values: shaped by `time_profile` when it isn't uniform.
+
+    See `_generate_dates` for why this returns a bare `list` rather than
+    `weighted_timestamps`'s own `list[str]`.
+    """
+    if time_profile is not None and not time_profile.is_uniform:
+        return weighted_timestamps(row_count, time_profile, anchor=_anchor_date(as_of))
+    return [_random_datetime(as_of=as_of).isoformat(sep=" ") for _ in range(row_count)]
+
+
 # ---------------------------------------------------------
 # Public API
 # ---------------------------------------------------------
@@ -635,20 +673,13 @@ def generate_column_values(
     # Dates
     # -----------------------------------------------------
     elif "date" in base_type and "time" not in base_type:
-        # Explicit endpoints rather than Faker's "-2y"/"today" shorthand: those
-        # strings are resolved against `date.today()` inside Faker, which is
-        # precisely the hidden dependency on the wall clock `as_of` removes.
-        anchor = _anchor_date(as_of)
-        values = [
-            fake.date_between(start_date=_years_before(anchor, _DATE_WINDOW_YEARS), end_date=anchor)
-            for _ in range(row_count)
-        ]
+        values = _generate_dates(row_count, as_of, time_profile)
 
     elif "time" in base_type and "stamp" not in base_type:
         values = [fake.time() for _ in range(row_count)]
 
     elif any(key in base_type for key in ["timestamp", "datetime"]):
-        values = [_random_datetime(as_of=as_of).isoformat(sep=" ") for _ in range(row_count)]
+        values = _generate_timestamps(row_count, as_of, time_profile)
 
     # -----------------------------------------------------
     # Untyped / generic string columns: honour a type that names
