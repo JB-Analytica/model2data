@@ -13,7 +13,25 @@ generated with the same seed.
 
 ### Added
 - **Time-aware generation.** _(filled in by the time-profile change)_
-- **Volume and distribution shaping.** _(filled in by the shaping change)_
+- **Volume and distribution shaping.** `--skew`, on the library and the CLI, controls how unevenly
+  a child table's rows are spread over its parents: `0.0` is today's behaviour, every parent
+  equally likely; `1.0` is a few parents holding most of the children, the "a fifth of the
+  customers place most of the orders" shape. A column can override the run-level value with a
+  `{"skew": ...}` note hint of its own. Parents are shuffled before weighting, so *which* ones end
+  up popular is randomized under the seed rather than always being the first ones the schema
+  declared.
+
+  Five more note hints join `min`/`max` on a column: `null_rate` replaces a column's default null
+  fraction outright, `weights` biases an enum column toward the values it names (values it doesn't
+  mention still appear, at weight 1), `true_rate` sets the fraction of non-null rows a boolean
+  column comes back `true`, and `distinct` draws a column's values from a fixed-size pool instead
+  of a fresh value per row — the handful of cities a regional warehouse actually ships to, instead
+  of a different one on every row. `after` is read by the time-aware generator above; validated
+  here because it lives in the same note. Every hint is validated once, before a single row is
+  generated: a `weights` object naming an enum value that doesn't exist, or a `distinct` hint on a
+  primary key, fails with a message naming the table and column rather than surfacing as a
+  wrong-looking dataset or a failing generated dbt test. The CLI turns that failure into a `❌`
+  message and a non-zero exit instead of a traceback.
 
 ## [1.4.0] - 2026-09-07
 

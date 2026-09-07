@@ -165,6 +165,36 @@ it's a per-run setting, so a table can't end up holding one Belgian and one Amer
 model2data --file examples/ecommerce.dbml --rows 200 --seed 42 --locale nl_BE
 ```
 
+### Shape how the data is spread
+
+By default every parent row is equally likely to be picked for a child row, and every column
+gets the same generic null rate, value spread, and true/false split. `--skew` changes the first
+part: `0.0` is that uniform default, `1.0` means a handful of parents hold most of the children —
+"a fifth of the customers place most of the orders":
+
+```bash
+model2data --file examples/ecommerce.dbml --rows 200 --seed 42 --skew 0.8
+```
+
+Column note hints shape the rest, per column:
+
+```dbml
+Table orders {
+  id int [pk]
+  customer_id int [ref: > customers.id, note: '{"skew": 0.9}']
+  status order_status [note: '{"weights": {"delivered": 20, "cancelled": 2}}']
+  is_paid boolean [note: '{"true_rate": 0.9}']
+  discount_code varchar [note: '{"null_rate": 0.8}']
+  shipping_city varchar [note: '{"distinct": 12}']
+}
+```
+
+`skew` on a foreign key overrides `--skew` for just that column. `weights` biases an enum column
+toward the values named (unnamed values still appear, at weight 1). `true_rate` is the fraction of
+non-null rows a boolean column comes back `true`. `null_rate` replaces the column's default null
+fraction outright. `distinct` draws the column's values from a fixed-size pool instead of a fresh
+value per row — a `shipping_city` most warehouses only ever see a handful of.
+
 Run dbt to load, transform, and test the data:
 
 ```bash
