@@ -159,7 +159,10 @@ model2data --file examples/ecommerce.dbml --rows 200 --seed 42 --table-seed orde
 ```
 
 `--locale` picks the country every generated person and address comes from (`en_US` by default);
-it's a per-run setting, so a table can't end up holding one Belgian and one American address:
+it's a per-run setting, so a table can't end up holding one Belgian and one American address. A
+`country` column that sits beside a `city`/`street`/`state`/`postcode` column always agrees with
+that place; a `country` column with none of those beside it isn't describing anyone's address, so
+it reads as an international mix instead, with the locale's own country the most common:
 
 ```bash
 model2data --file examples/ecommerce.dbml --rows 200 --seed 42 --locale nl_BE

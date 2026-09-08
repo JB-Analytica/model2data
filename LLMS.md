@@ -221,7 +221,7 @@ model2data --file SCHEMA.dbml [OPTIONS]
                            Overridable per date/timestamp column with a `seasonality` note hint
 --skew           FLOAT     0 (default, every parent equally likely) to 1 (a few parents hold
                            most of the children). Overridable per FK column with a `skew` note hint
---locale         TEXT      Faker locale for generated people and addresses (default: en_US)
+--locale         TEXT      Faker locale for generated people and addresses (default: en_US); a lone `country` column (no city/street/state/postcode beside it) reads as an international mix, not always this locale's country
 --name, -n       TEXT      Override the generated dbt project's name (default: derived from filename)
 --force                    Overwrite the destination directory if it already exists
 --adapter, -a    TEXT      duckdb (default) or postgres

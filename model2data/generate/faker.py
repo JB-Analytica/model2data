@@ -505,6 +505,42 @@ def _infer_by_type(base_type: str) -> Optional[_Provider]:
     return lambda: fake.format(base_type)
 
 
+def resolve_address_pool_field(column: ColumnDef) -> Optional[str]:
+    """The address-pool field (`street`, `full`, `city`, `state`, `postcode`,
+    `country`) this column would draw from, if any -- else None.
+
+    Same declared-type-then-name precedence `generate_column_values`'s own
+    untyped-column branch uses (`_infer_by_type` before `_infer_by_name`),
+    narrowed to the address pool. Exposed for `generate.core` to tell a
+    *lone* country column -- the only address-pool-shaped column in its
+    table -- from one that sits beside a `city`/`street`/`state`/`postcode`
+    column, before a single value of the table has been generated.
+
+    Restricted to columns that would actually reach that branch: an enum
+    column, or one whose type is a structured (int/date/uuid/...) type, never
+    gets there in `generate_column_values` -- and `_infer_by_type` probes an
+    unrecognized type by actually calling it (`fake.format(base_type)`), so
+    running it over a `date` or `int` column here would consume real draws
+    from the shared RNG and shift every value generated after it, breaking
+    reproducibility for reasons invisible to whoever hits it.
+    """
+    if column.enum_values or not is_free_text_type(column.data_type):
+        return None
+    base_type = column.data_type.lower().split("(")[0].strip()
+    generator = _infer_by_type(base_type) or _infer_by_name(column.name)
+    if isinstance(generator, _FromRow) and generator.pool == "address":
+        return generator.field
+    return None
+
+
+# A lone country column (see resolve_address_pool_field's caller) mixes the
+# locale's own country in with the rest of the world rather than repeating it
+# on every row. 0.6 is a default, not a claim about any real market -- a
+# business selling internationally still has a home market, and most of its
+# rows are plausibly it, but "most" is not "all".
+_HOME_COUNTRY_SHARE = 0.6
+
+
 def _column_time_profile(
     column: ColumnDef, time_profile: Optional[TimeProfile]
 ) -> Optional[TimeProfile]:
@@ -580,6 +616,7 @@ def generate_column_values(
     as_of: AsOf = None,
     time_profile: Optional[TimeProfile] = None,
     skew: float = 0.0,
+    lone_country: bool = False,
 ) -> list:
     """
     Generate synthetic values for a single column.
@@ -590,6 +627,16 @@ def generate_column_values(
     releases. They are accepted here rather than in a separate pass so that
     every path that draws a value -- the main pass, the self-referencing FK
     repair, the composite-key retry -- draws it the same way.
+
+    `lone_country` tells the address-pool branch this column is the *only*
+    address-shaped column in its table (see
+    `generate.core._lone_country_columns`). A `country` column that sits
+    beside a `city`/`street`/`state`/`postcode` column still reads that
+    place's own country, byte-identical to earlier releases; a lone one
+    instead draws a home-heavy mix of the locale's country and the wider
+    world, since "Belgium" on every row of a customers table with no other
+    address column reads as a single-country customer base rather than an
+    international one.
 
     `as_of` is the date every generated date and timestamp is placed relative
     to, defaulting to today. Pass it to make a seeded run reproduce on any
@@ -629,6 +676,7 @@ def generate_column_values(
             as_of=as_of,
             time_profile=time_profile,
             skew=skew,
+            lone_country=lone_country,
         )
         values = random.choices(pool, k=row_count)
         if not force_not_null and "not null" not in column.settings and "pk" not in column.settings:
@@ -827,8 +875,18 @@ def generate_column_values(
     else:
         generator = _infer_by_type(base_type) or _infer_by_name(column.name)
         if isinstance(generator, _FromRow):
-            rows = _row_pool(generator.pool, table_name, row_count)
-            values = [getattr(rows[index], generator.field) for index in range(row_count)]
+            if lone_country and generator.pool == "address" and generator.field == "country":
+                # No sibling city/street/state/postcode column to keep this
+                # one coherent with, so it isn't "this row's place" at all --
+                # draw a home-heavy mix instead of repeating the locale's own
+                # country on every row.
+                values = [
+                    _country_name if random.random() < _HOME_COUNTRY_SHARE else fake.country()
+                    for _ in range(row_count)
+                ]
+            else:
+                rows = _row_pool(generator.pool, table_name, row_count)
+                values = [getattr(rows[index], generator.field) for index in range(row_count)]
             if ensure_unique:
                 values = _deduplicate_identity(values)
         elif generator is not None:

@@ -15,6 +15,7 @@ from model2data.generate.faker import (
     release_row_pools,
     reset_duplicate_unique_columns,
     reset_row_pools,
+    resolve_address_pool_field,
     set_locale,
 )
 from model2data.generate.hints import validate_hints
@@ -201,6 +202,12 @@ def generate_data_from_dbml(
             for column_name in key.get("columns") or []
         }
 
+        # A table's own shape, worked out before a single value is drawn: does
+        # this table have a `country` column with no `city`/`street`/`state`/
+        # `postcode` beside it to keep coherent with. See
+        # _lone_country_columns.
+        lone_country_columns = _lone_country_columns(table_def)
+
         # -----------------------
         # First pass: columns + FKs
         # -----------------------
@@ -230,6 +237,7 @@ def generate_data_from_dbml(
                 as_of=as_of,
                 time_profile=profile,
                 skew=skew,
+                lone_country=column.name in lone_country_columns,
             )
 
         df = pd.DataFrame(data)
@@ -303,6 +311,31 @@ def generate_data_from_dbml(
 # ---------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------
+def _lone_country_columns(table_def: TableDef) -> set[str]:
+    """Names of this table's *lone* country columns.
+
+    A `country` column reads as the locale's own country on every row when it
+    sits beside a `city`/`street`/`state`/`postcode` column -- together they
+    describe one place, and the country has to agree with the rest of it.
+    Alone, repeating that same country on every row reads as a single-country
+    customer base rather than an international one, so
+    `generate_column_values` draws it from a home-heavy mix instead (see
+    `faker._HOME_COUNTRY_SHARE`). `country` columns don't count as company
+    for each other -- only a *different* address-pool field does.
+    """
+    address_fields = {
+        column.name: field
+        for column in table_def.columns
+        for field in [resolve_address_pool_field(column)]
+        if field is not None
+    }
+    country_columns = {name for name, field in address_fields.items() if field == "country"}
+    if not country_columns:
+        return set()
+    has_place_column = any(field != "country" for field in address_fields.values())
+    return set() if has_place_column else country_columns
+
+
 def _coerce_integer_dtypes(df: pd.DataFrame, table_def: TableDef) -> pd.DataFrame:
     """
     Cast int/bigint/smallint-typed columns to pandas' nullable "Int64" dtype.

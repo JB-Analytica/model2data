@@ -5,6 +5,26 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+- **A lone `country` column no longer repeats the locale's country on every row.** Since 1.3.0,
+  every row draws one address from a per-table pool so `street`/`city`/`state`/`country` in the
+  same row agree, and the pool's country is always the locale's own (`--locale nl_BE` means
+  every address is Belgian). Right when a `city` or `street` column sits beside it -- a Belgian
+  street in Japan is exactly the incoherence the pool exists to prevent -- that was wrong when
+  `country` was the *only* address-shaped column in the table: a `customers` table with just a
+  `country` column came back "Belgium" 10,000 times, which reads as a single-country customer
+  base rather than an international one.
+
+  A `country` column now reads that way only when it sits beside a `city`, `street`, `state`, or
+  `postcode` column in the same table; alone, it draws a home-heavy mix instead -- 60% the
+  locale's own country, the rest `country()`'s locale-aware world list (Dutch names under
+  `nl_BE`, for example). 60% is a default, not a claim about any real market: a business has a
+  home market and customers elsewhere. `distinct` and `null_rate` on such a column keep working
+  exactly as before, and a `country` column with a sibling address column is byte-identical to
+  1.7.0 under the same seed.
+
 ## [1.7.0] - 2026-09-08
 
 ### Added
