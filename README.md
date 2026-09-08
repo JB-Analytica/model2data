@@ -184,6 +184,24 @@ doesn't say what it depends on can say so explicitly with an `after` note:
 shipped_at timestamp [note: '{"after": "ordered_at"}']
 ```
 
+The flags above shape every date and timestamp column the same way, run-wide. `business_hours`,
+`growth`, and `seasonality` column note hints override that for one column at a time — the whole
+point being a run can be uniform everywhere except the one column that needs shaping, or shaped
+everywhere except the one column that shouldn't be:
+
+```dbml
+Table orders {
+  id int [pk]
+  created_at timestamp [note: '{"business_hours": true, "growth": 0.4}']
+  refunded_at timestamp [note: '{"growth": 0}']
+}
+```
+
+Here `created_at` gets business hours and growth even on an otherwise-uniform run, while
+`refunded_at` stays flat even under `--growth 0.5` — each hint only replaces the fields it names,
+so a partial hint like `{"growth": 0}` leaves that column's `business_hours`/`seasonality` at
+whatever the run-level flags set.
+
 ### Shape how the data is spread
 
 By default every parent row is equally likely to be picked for a child row, and every column
