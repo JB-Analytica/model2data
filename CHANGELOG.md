@@ -5,7 +5,7 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.7.1] - 2026-09-08
 
 ### Fixed
 - **A lone `country` column no longer repeats the locale's country on every row.** Since 1.3.0,
