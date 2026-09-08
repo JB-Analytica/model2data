@@ -3,10 +3,10 @@
 A note has always been either plain text (a comment, ignored by generation)
 or a JSON object read for `min`/`max`. This module documents the rest of that
 object's vocabulary -- `null_rate`, `weights`, `true_rate`, `distinct`, `skew`,
-`after` -- and checks it once, before a single row is generated, so a typo'd
-enum value or a hint on the wrong kind of column fails with a message naming
-the table and column rather than surfacing as a wrong-looking dataset or a
-downstream dbt test failure.
+`after`, `business_hours`, `growth`, `seasonality` -- and checks it once,
+before a single row is generated, so a typo'd enum value or a hint on the
+wrong kind of column fails with a message naming the table and column rather
+than surfacing as a wrong-looking dataset or a downstream dbt test failure.
 
 | key         | applies to                                   | meaning                                   |
 |-------------|-----------------------------------------------|--------------------------------------------|
@@ -17,6 +17,9 @@ downstream dbt test failure.
 | `distinct`  | columns that aren't an FK, `pk`, `unique`, enum | positive integer: draw from a pool that size |
 | `skew`      | foreign-key columns                            | overrides the run-level `skew` for this column |
 | `after`     | date/timestamp columns                         | name of another date/timestamp column, read by the time-aware generator |
+| `business_hours` | date/timestamp columns                    | overrides the run-level `TimeProfile.business_hours` for this column |
+| `growth`    | date/timestamp columns                         | overrides the run-level `TimeProfile.growth` for this column |
+| `seasonality` | date/timestamp columns                       | overrides the run-level `TimeProfile.seasonality` for this column |
 """
 
 from __future__ import annotations
@@ -152,6 +155,21 @@ def _validate_column_hints(
             raise ValueError(f'{label}: "after" only applies to date/timestamp columns.')
         _check_after(label, table_name, note["after"], columns_by_name)
 
+    if "business_hours" in note:
+        if not is_temporal:
+            raise ValueError(f'{label}: "business_hours" only applies to date/timestamp columns.')
+        _check_bool(label, "business_hours", note["business_hours"])
+
+    if "growth" in note:
+        if not is_temporal:
+            raise ValueError(f'{label}: "growth" only applies to date/timestamp columns.')
+        _check_growth(label, note["growth"])
+
+    if "seasonality" in note:
+        if not is_temporal:
+            raise ValueError(f'{label}: "seasonality" only applies to date/timestamp columns.')
+        _check_fraction(label, "seasonality", note["seasonality"])
+
 
 def _check_fraction(label: str, key: str, value: object) -> None:
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0.0 <= value <= 1.0:
@@ -161,6 +179,16 @@ def _check_fraction(label: str, key: str, value: object) -> None:
 def _check_positive_int(label: str, key: str, value: object) -> None:
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         raise ValueError(f'{label}: "{key}" must be a positive whole number (got {value!r}).')
+
+
+def _check_bool(label: str, key: str, value: object) -> None:
+    if not isinstance(value, bool):
+        raise ValueError(f'{label}: "{key}" must be true or false (got {value!r}).')
+
+
+def _check_growth(label: str, value: object) -> None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value < -1.0:
+        raise ValueError(f'{label}: "growth" must be -1.0 or more (got {value!r}).')
 
 
 def _check_enum_weights(label: str, enum_values: list[str], weights: object) -> None:

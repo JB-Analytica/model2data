@@ -5,6 +5,21 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.6.0] - 2026-09-08
+
+### Added
+- **Per-column time-profile overrides.** 1.5.0's `TimeProfile` shaped *when* dates and timestamps
+  fall for a whole run — every column got the same `business_hours`/`growth`/`seasonality`, no way
+  to single one out. `business_hours`, `growth`, and `seasonality` are now also column note hints:
+  `orders.created_at [note: '{"business_hours": true}']` gives that one column business hours even
+  on an otherwise-uniform run, and `{"growth": 0}` flattens one column of a run generated with
+  `--growth 0.5`. Any subset of the three keys may appear on a hint; the fields it doesn't name
+  keep whatever the run-level profile set, the same partial-override pattern the `skew` note hint
+  already established for foreign keys. Each key is only valid on a date/timestamp/datetime
+  column, checked up front alongside every other hint. A column with none of the three keys is
+  untouched — a run that uses no column time hints generates exactly what 1.5.0 generated with the
+  same seed.
+
 ## [1.5.0] - 2026-09-08
 
 Both changes here are about the shape of the data rather than its values: when things happen,

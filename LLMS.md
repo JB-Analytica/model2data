@@ -114,6 +114,9 @@ is_paid boolean [note: '{"true_rate": 0.9}']               ' fraction of non-nul
 shipping_city varchar [note: '{"distinct": 12}']           ' draw from a pool this size (not fk/pk/unique/enum)
 customer_id int [note: '{"skew": 0.9}']                    ' per-column override of --skew (fk columns only)
 updated_at timestamp [note: '{"after": "created_at"}']     ' must fall after another date/timestamp column
+created_at timestamp [note: '{"business_hours": true}']    ' per-column override of --business-hours
+created_at timestamp [note: '{"growth": 0.4}']             ' per-column override of --growth (date/timestamp only)
+created_at timestamp [note: '{"seasonality": 0.6}']        ' per-column override of --seasonality (date/timestamp only)
 ```
 A hint on the wrong kind of column (`weights` on a non-enum, `distinct` on a primary key, ...) is
 a schema error, reported before generation starts. (JSON and plain text are mutually exclusive per
@@ -203,9 +206,12 @@ model2data --file SCHEMA.dbml [OPTIONS]
 --table-seed     TABLE=N   Re-roll one table, leaving every other table byte-identical.
                            Repeatable; requires --seed
 --as-of          DATE      YYYY-MM-DD to anchor generated dates and timestamps on (default: today)
---business-hours           Weight generated timestamps toward weekdays and working hours
---growth         FLOAT     Relative change in activity across the window: -1.0 or above (default: 0, flat)
---seasonality    FLOAT     Strength of an annual cycle in timestamps, 0-1, peaking in Q4 (default: 0)
+--business-hours           Weight generated timestamps toward weekdays and working hours.
+                           Overridable per date/timestamp column with a `business_hours` note hint
+--growth         FLOAT     Relative change in activity across the window: -1.0 or above (default: 0, flat).
+                           Overridable per date/timestamp column with a `growth` note hint
+--seasonality    FLOAT     Strength of an annual cycle in timestamps, 0-1, peaking in Q4 (default: 0).
+                           Overridable per date/timestamp column with a `seasonality` note hint
 --skew           FLOAT     0 (default, every parent equally likely) to 1 (a few parents hold
                            most of the children). Overridable per FK column with a `skew` note hint
 --locale         TEXT      Faker locale for generated people and addresses (default: en_US)
