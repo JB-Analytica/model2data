@@ -117,7 +117,14 @@ updated_at timestamp [note: '{"after": "created_at"}']     ' must fall after ano
 created_at timestamp [note: '{"business_hours": true}']    ' per-column override of --business-hours
 created_at timestamp [note: '{"growth": 0.4}']             ' per-column override of --growth (date/timestamp only)
 created_at timestamp [note: '{"seasonality": 0.6}']        ' per-column override of --seasonality (date/timestamp only)
+total_amount numeric [note: '{"distribution": "normal", "mean": 100, "stddev": 20}']  ' shape a numeric column's spread
+total_amount numeric [note: '{"distribution": "lognormal", "median": 80, "spread": 0.6}']  ' long right tail (spread: 0.3 mild, 1.0 heavy)
+total_amount numeric [note: '{"distribution": "exponential", "mean": 30}']  ' most values small, a long tail of large ones
 ```
+`distribution` (numeric columns only) is `"uniform"` (default, unchanged), `"normal"`, `"lognormal"`,
+or `"exponential"`. `mean`/`stddev` go with `normal`, `median`/`spread` with `lognormal`, `mean` with
+`exponential` again; any left unset default to the midpoint of the column's `min`/`max` (or the
+range's own defaults, 0-100 for integers and 0-10,000 for decimals). `min`/`max` still clip the result.
 A hint on the wrong kind of column (`weights` on a non-enum, `distinct` on a primary key, ...) is
 a schema error, reported before generation starts. (JSON and plain text are mutually exclusive per
 column — a note is read as JSON first, falling back to plain text.)

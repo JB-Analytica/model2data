@@ -5,6 +5,19 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.7.0] - 2026-09-08
+
+### Added
+- **Numeric distribution hints.** `min`/`max` on an integer or decimal column always drew
+  uniformly between them; a `distribution` note hint now shapes that spread instead. `"normal"`
+  takes `mean`/`stddev`, `"lognormal"` takes `median`/`spread` (0.3 mild tail, 1.0 heavy),
+  `"exponential"` takes `mean` as its average. Any parameter left unset defaults to the midpoint
+  of the column's effective `min`/`max` (or a derived `stddev`/`spread`), and `min`/`max` still
+  clip the result -- a normal centred near an edge redraws a bounded number of times before
+  clamping, so it never loops forever and never crosses the bound. Leaving `distribution` out, or
+  setting it to `"uniform"`, is exactly the behaviour every earlier release already had, including
+  under `ensure_unique`.
+
 ## [1.6.0] - 2026-09-08
 
 ### Added
