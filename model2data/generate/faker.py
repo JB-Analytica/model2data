@@ -12,7 +12,7 @@ from typing import Callable, Optional, Union
 import pandas as pd
 from faker import Faker
 
-from model2data.generate.options import TimeProfile
+from model2data.generate.options import UNIFORM, TimeProfile
 from model2data.generate.timeline import weighted_dates, weighted_timestamps
 from model2data.parse.dbml import ColumnDef
 
@@ -505,6 +505,31 @@ def _infer_by_type(base_type: str) -> Optional[_Provider]:
     return lambda: fake.format(base_type)
 
 
+def _column_time_profile(
+    column: ColumnDef, time_profile: Optional[TimeProfile]
+) -> Optional[TimeProfile]:
+    """The run-level `time_profile` with this column's note hints applied on top.
+
+    Mirrors the `skew` override on the FK branch, one level up: a note doesn't
+    replace the run's profile, it patches only the fields it names (via
+    `dataclasses.replace`), so `{"growth": 0}` flattens one column of a
+    growing run while `business_hours`/`seasonality` stay exactly what the
+    run set. `validate_hints` has already confirmed the column is a date or
+    timestamp column and that each hint present is well-typed, so this does
+    no validation of its own -- a column with no hint gets `time_profile`
+    back unchanged, including a bare `None`, so the uniform path stays
+    untouched.
+    """
+    note = column.note or {}
+    overrides = {
+        key: note[key] for key in ("business_hours", "growth", "seasonality") if key in note
+    }
+    if not overrides:
+        return time_profile
+    base = time_profile if time_profile is not None else UNIFORM
+    return replace(base, **overrides)
+
+
 def _generate_dates(row_count: int, as_of: AsOf, time_profile: Optional[TimeProfile]) -> list:
     """The date branch's values: shaped by `time_profile` when it isn't uniform.
 
@@ -750,13 +775,13 @@ def generate_column_values(
     # Dates
     # -----------------------------------------------------
     elif "date" in base_type and "time" not in base_type:
-        values = _generate_dates(row_count, as_of, time_profile)
+        values = _generate_dates(row_count, as_of, _column_time_profile(column, time_profile))
 
     elif "time" in base_type and "stamp" not in base_type:
         values = [fake.time() for _ in range(row_count)]
 
     elif any(key in base_type for key in ["timestamp", "datetime"]):
-        values = _generate_timestamps(row_count, as_of, time_profile)
+        values = _generate_timestamps(row_count, as_of, _column_time_profile(column, time_profile))
 
     # -----------------------------------------------------
     # Untyped / generic string columns: honour a type that names
