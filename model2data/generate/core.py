@@ -17,10 +17,13 @@ from model2data.generate.faker import (
     reset_row_pools,
     set_locale,
 )
+from model2data.generate.hints import validate_hints
+from model2data.generate.options import UNIFORM, TimeProfile, validate_skew
 from model2data.generate.relationships import (
     build_fk_lookup,
     classify_refs,
 )
+from model2data.generate.timeline import order_row_times
 from model2data.parse.dbml import TableDef
 
 # Tables the most recent generate_data_from_dbml() call found stuck in an
@@ -72,6 +75,8 @@ def generate_data_from_dbml(
     locale: Optional[str] = None,
     as_of: AsOf = None,
     table_seeds: Optional[Mapping[str, int]] = None,
+    time_profile: Optional[TimeProfile] = None,
+    skew: float = 0.0,
 ) -> dict[str, pd.DataFrame]:
     """
     Generate synthetic datasets from parsed DBML definitions.
@@ -107,10 +112,23 @@ def generate_data_from_dbml(
     `seed` to work off -- with none, every table is already different on every
     run -- and unknown table names are an error rather than a silent no-op.
 
+    `time_profile` shapes *when* generated timestamps and dates fall: toward
+    business hours and weekdays, along a growth trend, with a seasonal peak.
+    See `TimeProfile`. None is the uniform profile, which draws every second of
+    the window with equal probability the way earlier releases did.
+
+    `skew` is how unevenly a child table's rows are spread over its parents,
+    from `0.0` (every parent equally likely, the earlier behaviour) to `1.0` (a
+    few parents hold most of the children). A column can override it with a
+    `{"skew": ...}` hint in its note.
+
     This function is deterministic if a seed is provided (and, with `as_of`,
     on any day). It performs no filesystem I/O and returns pandas DataFrames.
     """
     _validate_table_seeds(tables, table_seeds, seed)
+    validate_hints(tables, refs)
+    profile = time_profile or UNIFORM
+    skew = validate_skew(skew)
 
     # Locale first, then the seed: switching locale builds a new Faker, and the
     # seed has to be the last word on the generator that actually runs.
@@ -210,14 +228,35 @@ def generate_data_from_dbml(
                 force_not_null=column.name in composite_pk_columns,
                 table_name=table_name,
                 as_of=as_of,
+                time_profile=profile,
+                skew=skew,
             )
 
         df = pd.DataFrame(data)
+        # Ordering runs before FK resolution/dedup so a self-ref repair or a
+        # composite-key retry regenerates a temporal column's value into a
+        # frame that already respects created/updated/closed ordering, rather
+        # than one where only the untouched columns do.
+        df = order_row_times(df, table_def, as_of=as_of)
         df = _resolve_self_referencing_fks(
-            df, table_def, table_name, fk_lookup, row_count, as_of=as_of
+            df,
+            table_def,
+            table_name,
+            fk_lookup,
+            row_count,
+            as_of=as_of,
+            time_profile=profile,
+            skew=skew,
         )
         df = _deduplicate_composite_keys(
-            df, table_def, table_name, fk_lookup, generated, as_of=as_of
+            df,
+            table_def,
+            table_name,
+            fk_lookup,
+            generated,
+            as_of=as_of,
+            time_profile=profile,
+            skew=skew,
         )
 
         # -----------------------------------------------------
@@ -299,6 +338,8 @@ def _deduplicate_composite_keys(
     generated: dict[str, pd.DataFrame],
     max_attempts: int = 20,
     as_of: AsOf = None,
+    time_profile: Optional[TimeProfile] = None,
+    skew: float = 0.0,
 ) -> pd.DataFrame:
     """
     Regenerate colliding rows for any pk/unique composite key declared via an
@@ -350,7 +391,11 @@ def _deduplicate_composite_keys(
                         df.at[idx, col_name] = random.choice(fk_pools[col_name])
                     else:
                         df.at[idx, col_name] = generate_column_values(
-                            col_def, row_count=1, as_of=as_of
+                            col_def,
+                            row_count=1,
+                            as_of=as_of,
+                            time_profile=time_profile,
+                            skew=skew,
                         )[0]
                 combo = tuple(df.at[idx, c] for c in key_columns)
                 attempts += 1
@@ -377,6 +422,8 @@ def _resolve_self_referencing_fks(
     fk_lookup: dict[tuple[str, str], tuple[str, str]],
     row_count: int,
     as_of: AsOf = None,
+    time_profile: Optional[TimeProfile] = None,
+    skew: float = 0.0,
 ) -> pd.DataFrame:
     """
     Re-generate any FK column that references its own table (e.g. a
@@ -415,6 +462,8 @@ def _resolve_self_referencing_fks(
             force_not_null=column.name in composite_pk_columns,
             table_name=table_name,
             as_of=as_of,
+            time_profile=time_profile,
+            skew=skew,
         )
 
     return df

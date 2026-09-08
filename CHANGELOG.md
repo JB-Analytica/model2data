@@ -5,6 +5,60 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.5.0] - 2026-09-08
+
+Both changes here are about the shape of the data rather than its values: when things happen,
+and how unevenly they are spread. A run that passes nothing draws every value exactly as
+uniformly as 1.4.0 did — with one exception, see Changed below: a table holding a
+created/updated-style column pair now generates different values under the same seed, because
+those columns are ordered relative to each other regardless of profile.
+
+### Added
+- **Time-aware generation.** `TimeProfile(business_hours=True, growth=0.5, seasonality=0.3)` and
+  `model2data ... --business-hours --growth 0.5 --seasonality 0.3` shape *when* generated dates and
+  timestamps fall, instead of spreading them uniformly across the window the way every earlier
+  release did. `business_hours` weights timestamps toward weekdays and working hours; `growth` is
+  a relative trend across the window (`0.5` means the end is half again as busy as the start);
+  `seasonality` is the strength of an annual cycle peaking in Q4, the shape retail, SaaS renewals
+  and most other business calendars share. All three default to off, so a run that passes nothing
+  draws exactly as uniformly as before.
+
+  Within a row, this release also orders created/updated/closed-style columns automatically —
+  `updated_at` never lands before its own row's `created_at` — under *every* profile, uniform
+  included, because a row updated before it was created is wrong regardless of how the timestamps
+  were drawn. About 30 common name stems (`created`, `updated`, `shipped`, `cancelled`, `_start`/
+  `_end`, and so on) are recognized; a column whose name doesn't say what it depends on can say so
+  explicitly with a `{"after": "other_column"}` note. A birth-date-style column is never folded
+  into this chain.
+- **Volume and distribution shaping.** `--skew`, on the library and the CLI, controls how unevenly
+  a child table's rows are spread over its parents: `0.0` is today's behaviour, every parent
+  equally likely; `1.0` is a few parents holding most of the children, the "a fifth of the
+  customers place most of the orders" shape. A column can override the run-level value with a
+  `{"skew": ...}` note hint of its own. Parents are shuffled before weighting, so *which* ones end
+  up popular is randomized under the seed rather than always being the first ones the schema
+  declared.
+
+  Five more note hints join `min`/`max` on a column: `null_rate` replaces a column's default null
+  fraction outright, `weights` biases an enum column toward the values it names (values it doesn't
+  mention still appear, at weight 1), `true_rate` sets the fraction of non-null rows a boolean
+  column comes back `true`, and `distinct` draws a column's values from a fixed-size pool instead
+  of a fresh value per row — the handful of cities a regional warehouse actually ships to, instead
+  of a different one on every row. `after` is read by the time-aware generator above; validated
+  here because it lives in the same note. Every hint is validated once, before a single row is
+  generated: a `weights` object naming an enum value that doesn't exist, or a `distinct` hint on a
+  primary key, fails with a message naming the table and column rather than surfacing as a
+  wrong-looking dataset or a failing generated dbt test. The CLI turns that failure into a `❌`
+  message and a non-zero exit instead of a traceback.
+
+### Changed
+- **A table holding an ordered pair of temporal columns (`created_at`/`updated_at`,
+  `order_start`/`order_end`, an explicit `after` hint, ...) now generates different values under
+  the same seed.** The later column is placed after the earlier one on every row, which is new
+  behaviour this release adds unconditionally — under the uniform profile too, since a row updated
+  before it was created is wrong no matter how the timestamps were drawn. A table with no such
+  pair is unaffected: its frame is still byte-identical to what 1.4.0 generated. Regenerate any
+  committed seed fixture that holds an ordered pair in one deliberate commit.
+
 ## [1.4.0] - 2026-09-07
 
 Both changes here are about what a seed is actually worth. One makes it survive the day ending;

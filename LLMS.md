@@ -104,12 +104,31 @@ price_cents int [default: 1999]
 ```dbml
 age int [note: 'Customer age at signup, self-reported']
 ```
-A note containing a JSON object with `min`/`max` constrains generated numeric values instead:
+A note containing a JSON object constrains generation instead of documenting it. The full hint
+vocabulary, one key per line:
 ```dbml
-age int [note: '{"min": 18, "max": 90}']
+age int [note: '{"min": 18, "max": 90}']                  ' numeric bounds
+discount_code varchar [note: '{"null_rate": 0.8}']         ' fraction of rows null (nullable columns only)
+status order_status [note: '{"weights": {"delivered": 20}}']  ' relative weight per enum value
+is_paid boolean [note: '{"true_rate": 0.9}']               ' fraction of non-null rows that are true
+shipping_city varchar [note: '{"distinct": 12}']           ' draw from a pool this size (not fk/pk/unique/enum)
+customer_id int [note: '{"skew": 0.9}']                    ' per-column override of --skew (fk columns only)
+updated_at timestamp [note: '{"after": "created_at"}']     ' must fall after another date/timestamp column
 ```
-(These two forms are mutually exclusive per column — a note is read as JSON first, falling back
-to plain text.)
+A hint on the wrong kind of column (`weights` on a non-enum, `distinct` on a primary key, ...) is
+a schema error, reported before generation starts. (JSON and plain text are mutually exclusive per
+column — a note is read as JSON first, falling back to plain text.)
+
+**Created/updated/closed-style columns are ordered automatically, in every row, under every time
+profile.** A column named `created_at`, `updated_at`, `deleted_at`, `order_start`/`order_end`, and
+about 30 other stems are recognized and placed in the right relative order — no row has an
+`updated_at` before its own `created_at`. A note with an `after` key names the dependency
+explicitly, for a column whose name doesn't say it on its own:
+```dbml
+shipped_at timestamp [note: '{"after": "ordered_at"}']
+```
+A birth-date-style column (`birth_date`, `date_of_birth`, `dob`) is never folded into this chain —
+it describes the person, not the record.
 
 **Declare relationships** — either syntax is fully supported and produces identical behavior:
 ```dbml
@@ -184,6 +203,11 @@ model2data --file SCHEMA.dbml [OPTIONS]
 --table-seed     TABLE=N   Re-roll one table, leaving every other table byte-identical.
                            Repeatable; requires --seed
 --as-of          DATE      YYYY-MM-DD to anchor generated dates and timestamps on (default: today)
+--business-hours           Weight generated timestamps toward weekdays and working hours
+--growth         FLOAT     Relative change in activity across the window: -1.0 or above (default: 0, flat)
+--seasonality    FLOAT     Strength of an annual cycle in timestamps, 0-1, peaking in Q4 (default: 0)
+--skew           FLOAT     0 (default, every parent equally likely) to 1 (a few parents hold
+                           most of the children). Overridable per FK column with a `skew` note hint
 --locale         TEXT      Faker locale for generated people and addresses (default: en_US)
 --name, -n       TEXT      Override the generated dbt project's name (default: derived from filename)
 --force                    Overwrite the destination directory if it already exists

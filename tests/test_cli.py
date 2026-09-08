@@ -927,3 +927,25 @@ def test_cli_table_seed_rejects_malformed_values(tmp_path):
         "whole number"
         in _run_shop(tmp_path, "m2", "--seed", "1", "--table-seed", "orders=x").output
     )
+
+
+def test_cli_time_shaping_flags_run_and_echo_summary(tmp_path):
+    result = _run_shop(
+        tmp_path,
+        "shaped",
+        "--seed",
+        "1",
+        "--business-hours",
+        "--growth",
+        "0.5",
+        "--seasonality",
+        "0.3",
+    )
+    assert result.exit_code == 0, result.output
+    assert "🕒 Shaping timestamps: business hours, growth +50%, seasonality 30%" in result.output
+
+
+def test_cli_rejects_growth_below_minus_one(tmp_path):
+    result = _run_shop(tmp_path, "bad_growth", "--growth", "-2")
+    assert result.exit_code != 0
+    assert "--growth" in _plain(result.output)
