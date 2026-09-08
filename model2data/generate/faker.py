@@ -665,6 +665,13 @@ def generate_column_values(
     if column.note:
         min_val = column.note.get("min")
         max_val = column.note.get("max")
+    # The note's own min/max, before either numeric branch fills in its
+    # branch-specific default -- these are the only bounds a distribution
+    # hint clips against (see `_clipped_distribution_draw`). A column with no
+    # explicit min/max draws from an unclipped distribution even though the
+    # branch below still has an implicit default range for the *parameters*.
+    explicit_min, explicit_max = min_val, max_val
+    distribution = column_note.get("distribution", "uniform")
 
     if fk_series is not None and not fk_series.empty:
         # A plain branch of the same if/elif chain (rather than an early
@@ -722,7 +729,22 @@ def generate_column_values(
         if max_val is None:
             max_val = 100
 
-        if ensure_unique:
+        if distribution != "uniform":
+            # A shaped column never needs the row_count-sized value space
+            # random.sample relies on below, so it always draws one value at
+            # a time -- unique or not -- and leans on _deduplicate the same
+            # way every other non-uniform-fast-path branch does.
+            params = _distribution_params(distribution, min_val, max_val, column_note)
+
+            def generator() -> int:
+                return round(
+                    _clipped_distribution_draw(distribution, params, explicit_min, explicit_max)
+                )
+
+            values = [generator() for _ in range(row_count)]
+            if ensure_unique:
+                values = _deduplicate(values, generator, column_name=unique_label)
+        elif ensure_unique:
             if not had_explicit_range:
                 # No user-specified range: widen the default so there's
                 # always enough headroom for `row_count` unique PK values.
@@ -753,13 +775,27 @@ def generate_column_values(
             min_val = 0
         if max_val is None:
             max_val = 10_000
-        values = [round(random.uniform(min_val, max_val), 2) for _ in range(row_count)]
-        if ensure_unique:
-            values = _deduplicate(
-                values,
-                lambda: round(random.uniform(min_val, max_val), 2),
-                column_name=unique_label,
-            )
+
+        if distribution != "uniform":
+            params = _distribution_params(distribution, min_val, max_val, column_note)
+
+            def generator() -> float:
+                return round(
+                    _clipped_distribution_draw(distribution, params, explicit_min, explicit_max),
+                    2,
+                )
+
+            values = [generator() for _ in range(row_count)]
+            if ensure_unique:
+                values = _deduplicate(values, generator, column_name=unique_label)
+        else:
+            values = [round(random.uniform(min_val, max_val), 2) for _ in range(row_count)]
+            if ensure_unique:
+                values = _deduplicate(
+                    values,
+                    lambda: round(random.uniform(min_val, max_val), 2),
+                    column_name=unique_label,
+                )
 
     # -----------------------------------------------------
     # Booleans
@@ -824,6 +860,78 @@ def generate_column_values(
 # ---------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------
+# How many times a clipped draw redraws before giving up and clamping. Kept
+# small and fixed rather than exposed as a hint: a normal whose mean sits
+# well inside its min/max rarely needs a redraw at all, and a distribution
+# whose parameters put most of its mass outside the bounds is a schema
+# mistake no retry count fixes -- clamping is the honest fallback either way.
+_MAX_DISTRIBUTION_REDRAWS = 20
+
+
+def _distribution_params(
+    distribution: str, effective_min: float, effective_max: float, note: dict
+) -> dict:
+    """Fill in whichever of mean/stddev/median/spread `note` leaves unset.
+
+    `effective_min`/`effective_max` are the note's own `min`/`max` when given,
+    else the calling branch's default range (0-100 for integers, 0-10,000 for
+    decimals) -- ordinary enough a midpoint to centre an unparameterized
+    distribution on.
+    """
+    midpoint = (effective_min + effective_max) / 2
+    if distribution == "normal":
+        return {
+            "mean": note.get("mean", midpoint),
+            "stddev": note.get("stddev", (effective_max - effective_min) / 6),
+        }
+    if distribution == "lognormal":
+        return {
+            "median": note.get("median", midpoint),
+            "spread": note.get("spread", 0.5),
+        }
+    # exponential: hints.py has already rejected anything else reaching here.
+    return {"mean": note.get("mean", midpoint)}
+
+
+def _draw_distribution_value(distribution: str, params: dict) -> float:
+    """One raw draw from `distribution`, unclipped and unrounded."""
+    if distribution == "normal":
+        return random.gauss(params["mean"], params["stddev"])
+    if distribution == "lognormal":
+        return random.lognormvariate(math.log(params["median"]), params["spread"])
+    return random.expovariate(1 / params["mean"])  # exponential
+
+
+def _clipped_distribution_draw(
+    distribution: str,
+    params: dict,
+    clip_min: Optional[float],
+    clip_max: Optional[float],
+) -> float:
+    """Draw from `distribution`, redrawing out-of-bounds values before clamping.
+
+    A normal centred well inside [min, max] almost never needs the clamp; one
+    centred near an edge (mean 120, min 0) would otherwise pile values up at
+    the boundary, so a bounded number of redraws is tried first and only a
+    value still out of bounds after all of them gets clamped -- which also
+    keeps this from looping forever when min and max leave no room at all.
+    `clip_min`/`clip_max` are the note's own bounds (`None` when the column
+    didn't set one), never the branch's implicit default range.
+    """
+    value = _draw_distribution_value(distribution, params)
+    attempts = 0
+    while attempts < _MAX_DISTRIBUTION_REDRAWS and (
+        (clip_min is not None and value < clip_min) or (clip_max is not None and value > clip_max)
+    ):
+        value = _draw_distribution_value(distribution, params)
+        attempts += 1
+    if clip_min is not None and value < clip_min:
+        value = clip_min
+    if clip_max is not None and value > clip_max:
+        value = clip_max
+    return value
+
+
 def _null_fraction_for(column: ColumnDef, row_count: int) -> float:
     """The fraction of `row_count` rows this column should turn null.
 

@@ -3,10 +3,11 @@
 A note has always been either plain text (a comment, ignored by generation)
 or a JSON object read for `min`/`max`. This module documents the rest of that
 object's vocabulary -- `null_rate`, `weights`, `true_rate`, `distinct`, `skew`,
-`after`, `business_hours`, `growth`, `seasonality` -- and checks it once,
-before a single row is generated, so a typo'd enum value or a hint on the
-wrong kind of column fails with a message naming the table and column rather
-than surfacing as a wrong-looking dataset or a downstream dbt test failure.
+`after`, `business_hours`, `growth`, `seasonality`, `distribution` and its
+parameters -- and checks it once, before a single row is generated, so a
+typo'd enum value or a hint on the wrong kind of column fails with a message
+naming the table and column rather than surfacing as a wrong-looking dataset
+or a downstream dbt test failure.
 
 | key         | applies to                                   | meaning                                   |
 |-------------|-----------------------------------------------|--------------------------------------------|
@@ -20,6 +21,11 @@ than surfacing as a wrong-looking dataset or a downstream dbt test failure.
 | `business_hours` | date/timestamp columns                    | overrides the run-level `TimeProfile.business_hours` for this column |
 | `growth`    | date/timestamp columns                         | overrides the run-level `TimeProfile.growth` for this column |
 | `seasonality` | date/timestamp columns                       | overrides the run-level `TimeProfile.seasonality` for this column |
+| `distribution` | numeric columns                             | draw shape: `uniform` (default), `normal`, `lognormal`, `exponential` |
+| `mean`      | numeric columns, with `distribution: normal` or `exponential` | normal: the centre; exponential: the average (scale) |
+| `stddev`    | numeric columns, with `distribution: normal`   | normal: the spread |
+| `median`    | numeric columns, with `distribution: lognormal`| lognormal: the typical value, `exp(mu)`   |
+| `spread`    | numeric columns, with `distribution: lognormal`| lognormal: sigma of the underlying normal (0.3 mild, 1.0 heavy tail) |
 """
 
 from __future__ import annotations
@@ -95,6 +101,33 @@ def _is_temporal_type(base_type: str) -> bool:
     return any(key in base_type for key in ("timestamp", "datetime"))
 
 
+def _is_numeric_type(base_type: str) -> bool:
+    """True for the integer and float/decimal types `min`/`max`/`distribution` apply to.
+
+    Mirrors generate.faker's own two numeric branches exactly, so a hint this
+    module accepts is guaranteed to land on a branch that reads it.
+    """
+    return any(
+        key in base_type
+        for key in ("int", "integer", "bigint", "smallint", "decimal", "numeric", "float", "double")
+    )
+
+
+# Distributions a numeric column's `distribution` hint may name.
+_DISTRIBUTIONS = ("uniform", "normal", "lognormal", "exponential")
+
+# Which distribution(s) each shape parameter is meaningful under -- checked
+# against the note's own `distribution` (default "uniform" when absent), so
+# a `stddev` with no `distribution` key is rejected the same as one paired
+# with the wrong distribution.
+_PARAM_DISTRIBUTIONS: dict[str, tuple[str, ...]] = {
+    "mean": ("normal", "exponential"),
+    "stddev": ("normal",),
+    "median": ("lognormal",),
+    "spread": ("lognormal",),
+}
+
+
 def _validate_column_hints(
     table_name: str,
     column: ColumnDef,
@@ -110,6 +143,7 @@ def _validate_column_hints(
     is_enum = bool(column.enum_values)
     is_boolean = "boolean" in base_type or "bool" in base_type
     is_temporal = _is_temporal_type(base_type)
+    is_numeric = _is_numeric_type(base_type)
     is_nullable = not is_pk and "not null" not in column.settings
 
     if "null_rate" in note:
@@ -170,6 +204,31 @@ def _validate_column_hints(
             raise ValueError(f'{label}: "seasonality" only applies to date/timestamp columns.')
         _check_fraction(label, "seasonality", note["seasonality"])
 
+    if "distribution" in note:
+        if not is_numeric:
+            raise ValueError(f'{label}: "distribution" only applies to numeric columns.')
+        if note["distribution"] not in _DISTRIBUTIONS:
+            allowed = ", ".join(f'"{d}"' for d in _DISTRIBUTIONS)
+            raise ValueError(
+                f'{label}: "distribution" must be one of {allowed} (got {note["distribution"]!r}).'
+            )
+
+    # mean/stddev/median/spread only make sense alongside the distribution
+    # they shape, so each is checked against the note's own `distribution`
+    # (absent means "uniform", which none of them apply to either).
+    for param_key, required_distributions in _PARAM_DISTRIBUTIONS.items():
+        if param_key not in note:
+            continue
+        if not is_numeric:
+            raise ValueError(f'{label}: "{param_key}" only applies to numeric columns.')
+        if note.get("distribution") not in required_distributions:
+            options = " or ".join(f'"{d}"' for d in required_distributions)
+            raise ValueError(f'{label}: "{param_key}" only applies with "distribution": {options}.')
+        if param_key == "mean":
+            _check_number(label, param_key, note[param_key])
+        else:
+            _check_positive_number(label, param_key, note[param_key])
+
 
 def _check_fraction(label: str, key: str, value: object) -> None:
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0.0 <= value <= 1.0:
@@ -179,6 +238,16 @@ def _check_fraction(label: str, key: str, value: object) -> None:
 def _check_positive_int(label: str, key: str, value: object) -> None:
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         raise ValueError(f'{label}: "{key}" must be a positive whole number (got {value!r}).')
+
+
+def _check_number(label: str, key: str, value: object) -> None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f'{label}: "{key}" must be a number (got {value!r}).')
+
+
+def _check_positive_number(label: str, key: str, value: object) -> None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+        raise ValueError(f'{label}: "{key}" must be a number greater than 0 (got {value!r}).')
 
 
 def _check_bool(label: str, key: str, value: object) -> None:
