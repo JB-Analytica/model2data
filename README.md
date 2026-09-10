@@ -26,6 +26,11 @@ model2data --file examples/ecommerce.dbml --rows 200 --seed 42
 cd dbt_ecommerce && dbt build
 ```
 
+> **Prefer a browser?** [model2data studio](https://studio.jbanalytica.com) is the same
+> engine as a web app: write DBML, watch the entity diagram redraw as you type, see what every
+> column will generate before you generate it, then export CSVs or a runnable dbt project.
+> Nothing to install, free to start.
+
 ---
 
 ## Why this exists
@@ -109,6 +114,29 @@ flowchart LR
    DBML `Enum`-typed columns, singular SQL tests for composite primary/unique keys, table and
    column `description:` fields pulled from DBML notes, and a profile for DuckDB (zero-config,
    file-based) or Postgres.
+
+---
+
+## model2data studio — the same engine, in the browser
+
+[**model2data studio**](https://studio.jbanalytica.com) puts everything on this page behind a
+web UI. It is built by JB Analytica on top of this library, it's the fastest way to try
+model2data, and it's the better fit while a schema is still being designed:
+
+- **Type DBML, see the diagram.** Syntax highlighting, autocomplete and live error checking; the
+  entity diagram redraws as you type. Click a column to trace what actually joins to it.
+- **See what you'll get before you generate.** Every column shows an example of the value it will
+  produce, and columns nothing recognises are marked — so placeholder data is visible rather than
+  silent.
+- **Generate and export.** Per-table row counts, then CSVs or a complete dbt project: the same
+  seeds, staging models, tests and DuckDB profile this CLI produces, reproducing the exact rows
+  you previewed.
+- **Share the model.** A share link that also embeds as a chrome-free diagram in a Notion,
+  Confluence or wiki page.
+
+Free to start, nothing to install: [studio.jbanalytica.com](https://studio.jbanalytica.com).
+The CLI stays the right tool for scripting, CI and fixtures you commit; the studio is where a
+model gets designed and shown.
 
 ---
 
@@ -428,4 +456,6 @@ MIT License. See LICENSE for details.
   <br>
   Built and maintained by <a href="https://www.jbanalytica.com"><strong>JB Analytica</strong></a> —
   Data & Analytics Engineering · Data Platform Architecture · Modern BI.
+  <br>
+  Try <a href="https://studio.jbanalytica.com"><strong>model2data studio</strong></a> — model2data in the browser, nothing to install.
 </p>

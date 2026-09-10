@@ -60,6 +60,7 @@ dev = [
 
 [project.urls]
 Homepage = "https://github.com/JB-Analytica/model2data"
+Studio = "https://studio.jbanalytica.com"
 Repository = "https://github.com/JB-Analytica/model2data"
 Issues = "https://github.com/JB-Analytica/model2data/issues"
 Changelog = "https://github.com/JB-Analytica/model2data/blob/main/CHANGELOG.md"
