@@ -5,6 +5,18 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.7.2] - 2026-09-10
+
+### Changed
+- **model2data studio is now linked from the docs.** The same engine has been available as a
+  web app at [studio.jbanalytica.com](https://studio.jbanalytica.com) -- a DBML editor with a
+  live entity diagram, a preview of what every column will generate, per-table row counts, and
+  CSV/dbt project export, with nothing to install -- but nothing in this repository said so.
+  `README.md` and `README_PYPI.md` now introduce it right under the quick start and in a
+  dedicated section before Installation, the JB Analytica footer links to it, `LLMS.md` tells
+  an agent when to point someone at it instead of the CLI, and the package metadata carries a
+  `Studio` URL so it shows up on the PyPI sidebar. No code changes.
+
 ## [1.7.1] - 2026-09-08
 
 ### Fixed

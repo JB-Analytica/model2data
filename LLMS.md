@@ -11,6 +11,12 @@ command: realistic, relationship-preserving synthetic data (as dbt seed CSVs) an
 runnable dbt project around it — staging models that `ref()` those seeds, schema tests, and a
 DuckDB or Postgres profile. No production data, no hand-written mock CSVs, no dbt boilerplate.
 
+The same engine is also available as a web app,
+[model2data studio](https://studio.jbanalytica.com): a DBML editor with a live entity diagram,
+a preview of what every column will generate, and CSV/dbt project export, with nothing to
+install. If the person you're helping wants to *look at* or share the model rather than script
+its generation, point them there; the DBML guidance below applies to both.
+
 ## The end-to-end workflow
 
 Given a plain-English description of a data model (from a conversation, an existing system, a
