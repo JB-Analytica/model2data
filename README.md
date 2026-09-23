@@ -134,7 +134,8 @@ model2data, and it's the better fit while a schema is still being designed:
 - **Share the model.** A share link that also embeds as a chrome-free diagram in a Notion,
   Confluence or wiki page.
 
-Free to start, nothing to install: [studio.jbanalytica.com](https://studio.jbanalytica.com).
+Free to start, nothing to install: [studio.jbanalytica.com](https://studio.jbanalytica.com)
+([plans and pricing](https://www.jbanalytica.com/model2data/pricing/)).
 The CLI stays the right tool for scripting, CI and fixtures you commit; the studio is where a
 model gets designed and shown.
 
