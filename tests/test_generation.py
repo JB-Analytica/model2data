@@ -958,3 +958,168 @@ def test_row_overrides_are_deterministic_with_a_seed():
 
     assert first["users"].equals(second["users"])
     assert first["orders"].equals(second["orders"])
+
+
+def _customers_and_orders_on_a_unique_key() -> tuple[dict, list[dict]]:
+    # The shape a dbt import produces when the key is declared with
+    # `unique` + `not_null` tests rather than a primary key constraint.
+    tables = {
+        "customers": TableDef(
+            name="customers",
+            columns=[
+                ColumnDef("customer_id", "int", {"not null", "unique"}),
+                ColumnDef("name", "varchar"),
+            ],
+        ),
+        "orders": TableDef(
+            name="orders",
+            columns=[
+                ColumnDef("order_id", "int", {"not null", "unique"}),
+                ColumnDef("customer_id", "int", {"not null"}),
+            ],
+        ),
+    }
+    refs = [
+        {
+            "source_table": "orders",
+            "source_column": "customer_id",
+            "target_table": "customers",
+            "target_column": "customer_id",
+        }
+    ]
+    return tables, refs
+
+
+def test_ref_onto_a_unique_non_pk_column_is_a_foreign_key():
+    # At the default 100 rows the column's own integer range is wider than the
+    # parent's keys, so a ref treated as unrelated data fails the dbt
+    # relationships test on about half of all seeds.
+    tables, refs = _customers_and_orders_on_a_unique_key()
+    for seed in range(42, 62):
+        data = generate_data_from_dbml(tables, refs, base_rows=100, seed=seed)
+        parent_keys = set(data["customers"]["customer_id"])
+        assert set(data["orders"]["customer_id"]) <= parent_keys, seed
+
+
+def test_ref_onto_a_unique_index_column_is_a_foreign_key():
+    tables, refs = _customers_and_orders_on_a_unique_key()
+    tables["customers"].columns[0].settings = {"not null"}
+    tables["customers"].composite_keys = [{"columns": ["customer_id"], "type": "unique"}]
+    for seed in range(42, 47):
+        data = generate_data_from_dbml(tables, refs, base_rows=100, seed=seed)
+        parent_keys = set(data["customers"]["customer_id"])
+        assert set(data["orders"]["customer_id"]) <= parent_keys, seed
+
+
+def test_ref_onto_a_unique_column_beside_a_pk_fk_is_still_mirrored():
+    tables = {
+        "customers": TableDef(
+            name="customers",
+            columns=[
+                ColumnDef("id", "int", {"pk"}),
+                ColumnDef("email", "varchar", {"unique"}),
+            ],
+        ),
+        "orders": TableDef(
+            name="orders",
+            columns=[
+                ColumnDef("id", "int", {"pk"}),
+                ColumnDef("customer_id", "int"),
+                ColumnDef("customer_email", "varchar"),
+            ],
+        ),
+    }
+    refs = [
+        {
+            "source_table": "orders",
+            "source_column": "customer_id",
+            "target_table": "customers",
+            "target_column": "id",
+        },
+        {
+            "source_table": "orders",
+            "source_column": "customer_email",
+            "target_table": "customers",
+            "target_column": "email",
+        },
+    ]
+    data = generate_data_from_dbml(tables, refs, base_rows=50, seed=7)
+    email_of = data["customers"].set_index("id")["email"]
+    orders = data["orders"]
+    assert orders["customer_email"].equals(orders["customer_id"].map(email_of))
+
+
+def test_mirroring_goes_through_a_foreign_key_onto_a_non_id_key():
+    tables, refs = _customers_and_orders_on_a_unique_key()
+    tables["orders"].columns.append(ColumnDef("customer_name", "varchar"))
+    refs.append(
+        {
+            "source_table": "orders",
+            "source_column": "customer_name",
+            "target_table": "customers",
+            "target_column": "name",
+        }
+    )
+    data = generate_data_from_dbml(tables, refs, base_rows=50, seed=7)
+    name_of = data["customers"].set_index("customer_id")["name"]
+    orders = data["orders"]
+    assert orders["customer_name"].equals(orders["customer_id"].map(name_of))
+
+
+def test_mirroring_is_skipped_when_the_fk_column_is_not_in_the_child_table():
+    # A Ref naming a child column the table doesn't declare still classifies
+    # as a foreign key; the mirror that would ride on it has nothing to read.
+    tables = {
+        "customers": TableDef(
+            name="customers",
+            columns=[ColumnDef("id", "int", {"pk"}), ColumnDef("name", "varchar")],
+        ),
+        "orders": TableDef(
+            name="orders",
+            columns=[ColumnDef("id", "int", {"pk"}), ColumnDef("customer_name", "varchar")],
+        ),
+    }
+    refs = [
+        {
+            "source_table": "orders",
+            "source_column": "customer_id",
+            "target_table": "customers",
+            "target_column": "id",
+        },
+        {
+            "source_table": "orders",
+            "source_column": "customer_name",
+            "target_table": "customers",
+            "target_column": "name",
+        },
+    ]
+    data = generate_data_from_dbml(tables, refs, base_rows=20, seed=3)
+    orders = data["orders"]
+    assert "customer_id" not in orders.columns
+    assert not orders["customer_name"].isin(data["customers"]["name"]).all()
+
+
+def test_attribute_ref_without_fk_is_skipped_when_the_parent_is_generated_first():
+    # Tables with no FK between them are generated in name order, so here the
+    # parent ("accounts") already exists when the child's mirror pass runs and
+    # it is the missing FK, not the missing parent, that skips the mirror.
+    tables = {
+        "accounts": TableDef(
+            name="accounts",
+            columns=[ColumnDef("id", "int", {"pk"}), ColumnDef("name", "varchar")],
+        ),
+        "orders": TableDef(
+            name="orders",
+            columns=[ColumnDef("id", "int", {"pk"}), ColumnDef("account_name", "varchar")],
+        ),
+    }
+    refs = [
+        {
+            "source_table": "orders",
+            "source_column": "account_name",
+            "target_table": "accounts",
+            "target_column": "name",
+        }
+    ]
+    data = generate_data_from_dbml(tables, refs, base_rows=20, seed=2)
+    assert not data["orders"]["account_name"].isin(data["accounts"]["name"]).all()
