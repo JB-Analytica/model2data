@@ -1064,3 +1064,36 @@ def test_mirroring_goes_through_a_foreign_key_onto_a_non_id_key():
     name_of = data["customers"].set_index("customer_id")["name"]
     orders = data["orders"]
     assert orders["customer_name"].equals(orders["customer_id"].map(name_of))
+
+
+def test_mirroring_is_skipped_when_the_fk_column_is_not_in_the_child_table():
+    # A Ref naming a child column the table doesn't declare still classifies
+    # as a foreign key; the mirror that would ride on it has nothing to read.
+    tables = {
+        "customers": TableDef(
+            name="customers",
+            columns=[ColumnDef("id", "int", {"pk"}), ColumnDef("name", "varchar")],
+        ),
+        "orders": TableDef(
+            name="orders",
+            columns=[ColumnDef("id", "int", {"pk"}), ColumnDef("customer_name", "varchar")],
+        ),
+    }
+    refs = [
+        {
+            "source_table": "orders",
+            "source_column": "customer_id",
+            "target_table": "customers",
+            "target_column": "id",
+        },
+        {
+            "source_table": "orders",
+            "source_column": "customer_name",
+            "target_table": "customers",
+            "target_column": "name",
+        },
+    ]
+    data = generate_data_from_dbml(tables, refs, base_rows=20, seed=3)
+    orders = data["orders"]
+    assert "customer_id" not in orders.columns
+    assert not orders["customer_name"].isin(data["customers"]["name"]).all()
