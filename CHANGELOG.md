@@ -5,6 +5,26 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.7.3] - 2026-09-25
+
+### Fixed
+- **A `Ref` onto a unique key is now a foreign key, not just onto a primary key.** A `Ref` only
+  counted as a foreign key when its target column was `[pk]` or named `id`; anything else was
+  treated as an attribute to mirror, and with no foreign key to mirror through, the child column
+  was drawn as unrelated data. dbt projects commonly declare their keys with `unique` +
+  `not_null` tests rather than a primary key constraint, so
+  `Ref: orders.customer_id > customers.customer_id` onto a `[not null, unique]` column gave
+  `orders.customer_id` values from the default 0-100 range instead of real customers: at the
+  default 100 rows, the generated project's own `relationships` test failed on half of all
+  seeds. A `Ref` onto a `[unique]` column, or onto a single-column `[unique]` or `[pk]` index,
+  or onto `[primary key]`, is now generated as a foreign key and gets its `relationships` test.
+  One case stays as it was: when the child already has a primary-key foreign key to the same
+  parent, a `Ref` onto a unique column like `customers.email` is still mirrored through it, so
+  `orders.customer_email` stays the email of the order's own customer.
+- **Attribute mirroring works through a foreign key onto a column not named `id`.** The mirror
+  looked parent rows up by an `id` column whatever the foreign key actually pointed at, so it
+  failed on a parent keyed by `customer_id`. It now uses the foreign key's own target column.
+
 ## [1.7.2] - 2026-09-10
 
 ### Changed

@@ -638,3 +638,41 @@ def test_generic_tests_nest_parameters_under_arguments(tmp_path):
     assert set(relationships) == {"arguments"}, "params must live under `arguments:`"
     assert relationships["arguments"]["to"] == "ref('stg_customers')"
     assert relationships["arguments"]["field"] == "id"
+
+
+def test_relationships_test_emitted_for_ref_onto_unique_non_pk_column(tmp_path):
+    """A key declared with `unique` + `not null` rather than `pk` is still a
+    foreign-key target: the generator draws the child from the parent's
+    values, so the project gets the relationships test that proves it.
+    """
+    tables = {
+        "customers": TableDef(
+            name="customers",
+            columns=[ColumnDef("customer_id", "int", {"not null", "unique"})],
+        ),
+        "orders": TableDef(
+            name="orders",
+            columns=[
+                ColumnDef("order_id", "int", {"not null", "unique"}),
+                ColumnDef("customer_id", "int", {"not null"}),
+            ],
+        ),
+    }
+    refs = [
+        {
+            "source_table": "orders",
+            "source_column": "customer_id",
+            "target_table": "customers",
+            "target_column": "customer_id",
+        }
+    ]
+    generate_dbt_yml(tmp_path, tables, refs, source_name="shop")
+
+    stg_yaml = yaml.safe_load((tmp_path / "models" / "staging" / "stg_orders.yml").read_text())
+    orders_col = next(c for c in stg_yaml["models"][0]["columns"] if c["name"] == "customer_id")
+    relationship_test = next(
+        t["relationships"]
+        for t in orders_col["tests"]
+        if isinstance(t, dict) and "relationships" in t
+    )
+    assert relationship_test["arguments"]["field"] == "customer_id"

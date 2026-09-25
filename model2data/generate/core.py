@@ -283,19 +283,23 @@ def generate_data_from_dbml(
                 continue
 
             # find FK linking child → parent
-            fk_column = next(
+            fk_ref = next(
                 (
-                    r["source_column"]
+                    r
                     for r in fk_refs
                     if r["source_table"] == table_name and r["target_table"] == parent_table
                 ),
                 None,
             )
-
-            if not fk_column or fk_column not in df.columns:
+            if fk_ref is None:
                 continue
 
-            lookup = parent_df.groupby("id")[parent_column].first().to_dict()
+            fk_column = fk_ref["source_column"]
+            parent_key = fk_ref["target_column"]
+            if fk_column not in df.columns or parent_key not in parent_df.columns:
+                continue
+
+            lookup = parent_df.groupby(parent_key)[parent_column].first().to_dict()
 
             df[child_column] = df[fk_column].map(lookup)
 
