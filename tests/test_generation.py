@@ -1097,3 +1097,29 @@ def test_mirroring_is_skipped_when_the_fk_column_is_not_in_the_child_table():
     orders = data["orders"]
     assert "customer_id" not in orders.columns
     assert not orders["customer_name"].isin(data["customers"]["name"]).all()
+
+
+def test_attribute_ref_without_fk_is_skipped_when_the_parent_is_generated_first():
+    # Tables with no FK between them are generated in name order, so here the
+    # parent ("accounts") already exists when the child's mirror pass runs and
+    # it is the missing FK, not the missing parent, that skips the mirror.
+    tables = {
+        "accounts": TableDef(
+            name="accounts",
+            columns=[ColumnDef("id", "int", {"pk"}), ColumnDef("name", "varchar")],
+        ),
+        "orders": TableDef(
+            name="orders",
+            columns=[ColumnDef("id", "int", {"pk"}), ColumnDef("account_name", "varchar")],
+        ),
+    }
+    refs = [
+        {
+            "source_table": "orders",
+            "source_column": "account_name",
+            "target_table": "accounts",
+            "target_column": "name",
+        }
+    ]
+    data = generate_data_from_dbml(tables, refs, base_rows=20, seed=2)
+    assert not data["orders"]["account_name"].isin(data["accounts"]["name"]).all()
