@@ -28,6 +28,8 @@ class TableDef:
     columns: list[ColumnDef] = field(default_factory=list)
     description: Optional[str] = None
     composite_keys: list[dict] = field(default_factory=list)
+    # Table-level hints: `{"role": "fact"}` when the model sets a role.
+    note: Optional[dict] = None
 
 
 # -------------------------------

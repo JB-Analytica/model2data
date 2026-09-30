@@ -791,7 +791,10 @@ dependencies = [
     { name = "dbt-core" },
     { name = "dbt-duckdb" },
     { name = "faker" },
+    { name = "jsonschema" },
     { name = "pandas" },
+    { name = "pydbml" },
+    { name = "pyparsing" },
     { name = "pyyaml" },
     { name = "typer" },
 ]
@@ -816,9 +819,12 @@ requires-dist = [
     { name = "dbt-duckdb", specifier = ">=1.11" },
     { name = "dbt-postgres", marker = "extra == 'postgres'", specifier = ">=1.11" },
     { name = "faker", specifier = ">=37.12.0" },
+    { name = "jsonschema", specifier = ">=4.18" },
     { name = "pandas", specifier = ">=2.3.3" },
     { name = "poethepoet", marker = "extra == 'dev'", specifier = ">=0.38.0" },
     { name = "pre-commit", marker = "extra == 'dev'" },
+    { name = "pydbml", specifier = ">=1.2.1,<1.3" },
+    { name = "pyparsing", specifier = ">=3,<4" },
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "pytest-cov", marker = "extra == 'dev'" },
     { name = "pyyaml", specifier = ">=6.0.3" },
@@ -1462,12 +1468,33 @@ wheels = [
 ]
 
 [[package]]
+name = "pydbml"
+version = "1.2.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pyparsing" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/1b/7c/d8baefcdd447d50fe24ab94e5344f9142e49f5d353e5f63863db0536dffd/pydbml-1.2.1.tar.gz", hash = "sha256:8c1232291948fd5857792aa732a33e71418c47f6a2badea869dc37377394566b", size = 36432, upload-time = "2025-10-24T12:28:40.8Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/43/39/99396a0e876cef85155549b3a76144c77af8adc0f0c4f0e0dfc3d4ace109/pydbml-1.2.1-py3-none-any.whl", hash = "sha256:709ad1d040268367a1be4653affd7dae206433f5e7a799ab5b32fad2ed8aa384", size = 46318, upload-time = "2025-10-24T12:28:39.672Z" },
+]
+
+[[package]]
 name = "pygments"
 version = "2.19.2"
 source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/b0/77/a5b8c569bf593b0140bde72ea885a803b82086995367bf2037de0159d924/pygments-2.19.2.tar.gz", hash = "sha256:636cb2477cec7f8952536970bc533bc43743542f70392ae026374600add5b887", size = 4968631, upload-time = "2025-06-21T13:39:12.283Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c7/21/705964c7812476f378728bdf590ca4b771ec72385c533964653c68e86bdc/pygments-2.19.2-py3-none-any.whl", hash = "sha256:86540386c03d588bb81d44bc3928634ff26449851e99741617ecb9037ee5ec0b", size = 1225217, upload-time = "2025-06-21T13:39:07.939Z" },
+]
+
+[[package]]
+name = "pyparsing"
+version = "3.3.3"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/e4/11/b213bebff182584360cb8d17c72c1677fec5c5c228de439e63bcf8ab1c8f/pyparsing-3.3.3.tar.gz", hash = "sha256:928ae7e20211f3b6f3915a72f06a0cfd29ab9d24279dd6346b6b1a7146397d36", size = 1050487, upload-time = "2026-09-20T20:59:05.609Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/38/bb/d215ee7c73b61497b28a5503f9f53523f294fcc936762b7caf90e0c1c2b5/pyparsing-3.3.3-py3-none-any.whl", hash = "sha256:ece8c00a69cf01b45d0b1dedabb469c90d8caf996d4fda40f147627a122849a4", size = 126420, upload-time = "2026-09-20T20:59:04.025Z" },
 ]
 
 [[package]]
