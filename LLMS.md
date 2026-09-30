@@ -243,6 +243,9 @@ model2data --file SCHEMA.dbml [OPTIONS]
 --force                    Overwrite the destination directory if it already exists
 --adapter, -a    TEXT      duckdb (default) or postgres
 --unit-tests               Also generate dbt unit test fixtures
+--hint-tests     TEXT      error, warn (default) or off: severity of the dbt tests written from
+                           min/max, after, null_rate, distinct and grain hints
+--test-tolerance FLOAT     Absolute slack of the null_rate test (default 0.1)
 ```
 
 For anything not covered here, see [README.md](README.md) — this file exists to make a schema
