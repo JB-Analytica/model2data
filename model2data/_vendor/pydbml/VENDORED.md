@@ -17,6 +17,9 @@ change is listed below, one commit each, so each can be offered upstream.
    numbers take a sign and an exponent (`-5`, `1e3`); `default: null` is no
    default, where 1.2.1 returned the text `NULL` (a parse action returning
    None leaves the token in place).
+3. **Names and types** (`definitions/generic.py`, `definitions/column.py`): a
+   name is `\w+`, so unquoted non-ASCII names (`café`) read; a type may carry
+   arguments and `[]` together (`numeric(10,2)[]`).
 
 ## Updating
 

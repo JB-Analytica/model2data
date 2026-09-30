@@ -38,11 +38,9 @@ def _corpus(name: str):
 
 REFUSED = {
     "checks": "does not support check constraints",
-    "parameterised_types": 'needs an array of a parameterised type quoted: "numeric(10,2)[]"',
     "records": "does not support Records blocks",
     "ref_settings": "does not support a Ref's color",
     "table_partials": "does not support TablePartial",
-    "unicode_names": "needs a non-ASCII name quoted",
     "ref_directions": "references both users.id and legacy schema.old users.id",
 }
 
@@ -63,6 +61,19 @@ def test_every_kind_of_default_literal():
         "created_at": None,
     }
     assert columns["created_at"].extensions == {"x-default-expression": "now()"}
+
+
+def test_arrays_of_parameterised_types():
+    columns = _corpus("parameterised_types").tables["measurements"].columns
+    assert columns["samples"].type == "numeric(10,2)[]"
+    assert columns["labels"].type == "varchar(40)[]"
+    assert columns["taken_at"].type == "timestamp(6)"
+
+
+def test_names_outside_ascii_need_no_quotes():
+    model = _corpus("unicode_names")
+    assert list(model.tables["café"].columns) == ["id", "crème"]
+    assert model.tables["commandes"].columns["café_id"].references.to == "café.id"
 
 
 def test_the_corpus_is_all_here():

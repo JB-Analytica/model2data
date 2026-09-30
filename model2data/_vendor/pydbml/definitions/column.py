@@ -24,7 +24,10 @@ NULL_DEFAULT = object()
 type_args = ("(" + pp.original_text_for(expression) + ")")
 
 # column type is parsed as a single string, it will be split by blueprint
-column_type = pp.Combine((name + pp.Literal('[]')) | (name + '.' + name) | ((name) + type_args[0, 1]))
+# model2data: a type is an optionally schema-qualified name, optional
+# arguments, then an optional `[]`, so `numeric(10,2)[]` and `varchar(40)[]`
+# read; 1.2.1 allowed `[]` only straight after a bare name.
+column_type = pp.Combine(name + ('.' + name)[0, 1] + type_args[0, 1] + pp.Literal('[]')[0, 1])
 
 default = pp.CaselessLiteral('default:').suppress() + _ - (
     string_literal

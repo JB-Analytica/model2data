@@ -104,10 +104,6 @@ _UNSUPPORTED = (
         "the DBML reader (pydbml) does not support TablePartial: write the columns out",
     ),
     (
-        re.compile(r"\)\[\]"),
-        'the DBML reader (pydbml) needs an array of a parameterised type quoted: "numeric(10,2)[]"',
-    ),
-    (
         re.compile(r"^\s*Table\s+`|ref:\s*[<>-]+\s*`|^\s*`[^`]*`\s+\w", re.IGNORECASE),
         'a DBML name is quoted with double quotes, "user accounts": backticks hold expressions',
     ),
@@ -125,8 +121,6 @@ def _parse_issue(error: Any) -> Issue:
         found = re.search(r"found (.+)$", message)
         message = f"unexpected {found.group(1)}" if found else "unexpected text"
     hint = next((words for pattern, words in _UNSUPPORTED if pattern.search(line_text)), None)
-    if hint is None and any(ord(char) > 127 for char in line_text):
-        hint = 'the DBML reader (pydbml) needs a non-ASCII name quoted: "café"'
     detail = f"{message}. {hint[0].upper()}{hint[1:]}" if hint else message
     return Issue(
         "",

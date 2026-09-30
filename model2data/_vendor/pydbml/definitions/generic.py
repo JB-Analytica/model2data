@@ -4,7 +4,9 @@ from model2data._vendor.pydbml.parser.blueprints import ExpressionBlueprint
 
 pp.ParserElement.set_default_whitespace_chars(' \t\r')
 
-name = pp.Word(pp.alphanums + '_') | pp.QuotedString('"')
+# model2data: `\w` is Unicode-aware, so `café` is a name unquoted, as it is in
+# DBML; 1.2.1 took only ASCII letters and digits.
+name = pp.Regex(r'\w+') | pp.QuotedString('"')
 
 # Literals
 
