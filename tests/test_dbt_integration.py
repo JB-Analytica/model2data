@@ -143,3 +143,20 @@ def test_bare_dbt_build_succeeds_on_a_fresh_database(tmp_path, monkeypatch):
     result = _run_dbt("build", cwd=project_dir)
 
     assert "ERROR=0" in result.stdout, f"`dbt build` reported errors:\n{result.stdout}"
+
+
+@pytest.mark.skipif(DBT is None, reason="dbt CLI not found on PATH")
+def test_dbt_build_passes_on_the_state_after_the_last_day(tmp_path, monkeypatch):
+    """The seeds of a run with days are the state after the last day, so every
+    unique and relationship test holds across the inserted rows and the updates,
+    and the per-day files written beside the seeds are not loaded as seeds."""
+    monkeypatch.chdir(tmp_path)
+    example = EXAMPLE_DBML.with_name("ecommerce_daily.model2data.yml")
+
+    generate_cli(file=example, rows=50, seed=42, name="daily", force=True, days=4)
+
+    project_dir = tmp_path / "dbt_daily"
+    assert (project_dir / "days" / "orders" / "day_004.csv").exists()
+    seeds = _run_dbt("ls", "--resource-type", "seed", cwd=project_dir).stdout
+    assert "day_00" not in seeds
+    _run_dbt("build", cwd=project_dir)
