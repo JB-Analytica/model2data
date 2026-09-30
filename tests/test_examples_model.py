@@ -17,6 +17,13 @@ from model2data.model import dump, from_dbml, load, to_engine
 
 EXAMPLES = Path(__file__).resolve().parent.parent / "examples"
 DOCUMENTS = sorted(EXAMPLES.glob("*.model2data.yml"))
+# DBML has no `incremental` or `transitions`, so a document that moves from day to day has no
+# DBML twin; every other document is the conversion of one.
+DBML_TWINS = [
+    path
+    for path in DOCUMENTS
+    if path.with_name(path.name.replace(".model2data.yml", ".dbml")).exists()
+]
 
 
 def _generate(path: Path) -> str:
@@ -28,18 +35,18 @@ def _generate(path: Path) -> str:
 
 
 def test_every_dbml_example_has_its_document():
-    assert [path.name.replace(".model2data.yml", "") for path in DOCUMENTS] == [
+    assert [path.name.replace(".model2data.yml", "") for path in DBML_TWINS] == [
         path.stem for path in sorted(EXAMPLES.glob("*.dbml"))
     ]
 
 
-@pytest.mark.parametrize("document", DOCUMENTS, ids=lambda p: p.name)
+@pytest.mark.parametrize("document", DBML_TWINS, ids=lambda p: p.name)
 def test_the_document_and_its_dbml_generate_the_same_bytes(document: Path):
     dbml = EXAMPLES / document.name.replace(".model2data.yml", ".dbml")
     assert _generate(document) == _generate(dbml)
 
 
-@pytest.mark.parametrize("document", DOCUMENTS, ids=lambda p: p.name)
+@pytest.mark.parametrize("document", DBML_TWINS, ids=lambda p: p.name)
 def test_the_document_is_the_dbml_converted(document: Path):
     dbml = EXAMPLES / document.name.replace(".model2data.yml", ".dbml")
     converted = from_dbml(dbml.read_text(encoding="utf-8"))

@@ -522,6 +522,11 @@ class _Checks:
                     [*base, "incremental", "changes", position],
                     f"names {_show(member)}, which is not a column of {key}",
                 )
+            elif isinstance(member, str) and any(member in keyset for keyset in self.key_sets(key)):
+                self.add(
+                    [*base, "incremental", "changes", position],
+                    f"names {member}, which is part of a key of {key}: keys never change",
+                )
         updated_at = incremental.get("updated_at")
         if isinstance(updated_at, str):
             other = columns.get(updated_at)

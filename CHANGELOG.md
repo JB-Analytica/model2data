@@ -20,6 +20,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `count`, `count_distinct`) as well as `true`/`false`, `incremental` on a table (`new_per_day`,
   `update_rate`, `changes`, `updated_at`) and `transitions` among an enum column's hints. Read,
   written by `dump` and checked; what uses them is listed under its own entry.
+- **Generate the days after the first: `model2data generate --days N` / `--next`, and
+  `model2data.generate.days.generate_days`.** A table with `incremental` inserts `new_per_day` rows
+  each day, their dates and timestamps falling on that day, with keys continuing after the ones it
+  holds and foreign keys pointing at rows that exist by then, and updates `update_rate` of its rows:
+  an enum column with `transitions` moves along an allowed edge, any other `changes` column is drawn
+  again, and `updated_at` is set. Day *n* is fixed by the seed, `as_of`, *n* and the model: each table
+  and day draws from its own stream, so days do not shift when another table is added, and day 0 is
+  byte for byte what a run without days generates. `--days-format` writes `batches`
+  (`days/<table>/day_NNN.csv`), a `changelog` (`changelog/<table>.csv` with `_day` and `_op`) or only
+  the `final` state; the dbt seeds always hold the state after the last day. `generate_days(model,
+  days, ...)` returns one `DayResult` per day (`inserted`, `updated` and `state` per table);
+  `iter_days` yields them one at a time. `examples/ecommerce_daily.model2data.yml` demonstrates it.
+  `incremental.changes` naming a key column is now a validation error (keys never change).
 - **`model2data validate FILE`** checks a model -- the schema, then every check beyond it -- and
   prints every issue with its path in the document
   (`tables.orders.columns.status.generate.weights: weighs "returned", which is not a member of

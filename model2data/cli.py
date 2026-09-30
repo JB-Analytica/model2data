@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 import click
+import pandas as pd
 import typer
 from faker import Faker
 from typer.core import TyperGroup
@@ -23,6 +24,7 @@ from model2data.generate.core import (
     get_cyclic_tables,
     get_unresolved_composite_keys,
 )
+from model2data.generate.days import DayResult, generate_days
 from model2data.generate.faker import (
     DEFAULT_LOCALE,
     get_duplicate_unique_columns,
@@ -44,6 +46,7 @@ from model2data.parse.dbml import TableDef
 from model2data.utils import normalize_identifier
 
 SUPPORTED_ADAPTERS = ("duckdb", "postgres")
+DAYS_FORMATS = ("batches", "changelog", "final")
 
 
 def _parse_row_overrides(
@@ -236,6 +239,48 @@ def _dbt_names(tables: dict[str, TableDef]) -> dict[str, str]:
     return names
 
 
+def _write_batches(dest: Path, results: list[DayResult], names: dict[str, str]) -> None:
+    """`days/TABLE/day_NNN.csv`: day 0 whole, each later day the rows it inserted or updated.
+
+    Outside `seeds/` on purpose: dbt would load every CSV under it as a seed. A later
+    day's file holds the inserted rows, then the updated ones with their new values, so
+    loading it is an upsert on the key. Only tables with `incremental` get later days.
+    """
+    moving = {key for key in results[0].tables if _moves(results, key)}
+    for result in results:
+        for key, table_day in result.tables.items():
+            if result.day == 0:
+                frame = table_day.state
+            elif key in moving:
+                frame = pd.concat([table_day.inserted, table_day.updated], ignore_index=True)
+            else:
+                continue
+            path = dest / "days" / names[key] / f"day_{result.day:03d}.csv"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            frame.to_csv(path, index=False)
+
+
+def _moves(results: list[DayResult], key: str) -> bool:
+    """True when the table inserted or updated a row on some day."""
+    return any(len(r.tables[key].inserted) or len(r.tables[key].updated) for r in results[1:])
+
+
+def _write_changelog(dest: Path, results: list[DayResult], names: dict[str, str]) -> None:
+    """`changelog/TABLE.csv`: every row ever inserted or updated, `_day` and `_op` first."""
+    for key in results[0].tables:
+        parts = []
+        for result in results:
+            table_day = result.tables[key]
+            for op, frame in (("insert", table_day.inserted), ("update", table_day.updated)):
+                if len(frame):
+                    parts.append(frame.assign(_day=result.day, _op=op))
+        log = pd.concat(parts, ignore_index=True)
+        log = log[["_day", "_op", *[c for c in log.columns if c not in ("_day", "_op")]]]
+        path = dest / "changelog" / f"{names[key]}.csv"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        log.to_csv(path, index=False)
+
+
 @app.command(
     "generate",
     help=(
@@ -379,10 +424,44 @@ def main(
             "from the generated seed rows. Requires dbt-core >= 1.8 to run."
         ),
     ),
+    days: Optional[int] = typer.Option(
+        None,
+        "--days",
+        min=1,
+        help=(
+            "Also generate N days after the first, for the tables with `incremental`: new rows\n"
+            "and updates each day. The dbt seeds hold the state after the last day."
+        ),
+    ),
+    days_next: bool = typer.Option(
+        False,
+        "--next",
+        help="Shorthand for --days 1.",
+    ),
+    days_format: str = typer.Option(
+        "batches",
+        "--days-format",
+        help=(
+            "How the days are written beside the dbt project: 'batches' (days/TABLE/day_NNN.csv,\n"
+            "day 0 whole, later days the rows inserted or updated), 'changelog'\n"
+            "(changelog/TABLE.csv, every row with _day and _op), or 'final' (only the seeds)."
+        ),
+    ),
 ):
     """
     Generate synthetic data and a dbt project from a model.
     """
+
+    days = _given(days)
+    if _given(days_next):
+        if days is not None:
+            raise typer.BadParameter("Use --days or --next, not both.", param_hint="--next")
+        days = 1
+    days_format = (_given(days_format) or "batches").lower()
+    if days_format not in DAYS_FORMATS:
+        raise typer.BadParameter(
+            f"Choose one of: {', '.join(DAYS_FORMATS)}.", param_hint="--days-format"
+        )
 
     # -------------------------
     # Validate adapter
@@ -491,19 +570,35 @@ def main(
     # -------------------------
     typer.echo("🧮 Generating synthetic datasets from the model...")
     reset_stats()
+    day_results: list[DayResult] = []
     try:
-        generated_tables = generate_data_from_dbml(
-            tables=tables,
-            refs=refs,
-            base_rows=rows,
-            seed=seed,
-            row_overrides=row_overrides,
-            locale=locale,
-            as_of=anchor,
-            table_seeds=table_seeds,
-            time_profile=time_profile,
-            skew=skew,
-        )
+        if days:
+            day_results = generate_days(
+                inputs,
+                days,
+                base_rows=rows,
+                seed=seed,
+                row_overrides=row_overrides,
+                locale=locale,
+                as_of=anchor,
+                table_seeds=table_seeds,
+                time_profile=time_profile,
+                skew=skew,
+            )
+            generated_tables = day_results[-1].state
+        else:
+            generated_tables = generate_data_from_dbml(
+                tables=tables,
+                refs=refs,
+                base_rows=rows,
+                seed=seed,
+                row_overrides=row_overrides,
+                locale=locale,
+                as_of=anchor,
+                table_seeds=table_seeds,
+                time_profile=time_profile,
+                skew=skew,
+            )
     except ValueError as exc:
         # A mistake in the schema the model checks could not see, not a bug --
         # it deserves the same one-line, non-traceback treatment as every other
@@ -536,6 +631,10 @@ def main(
         csv_path = seeds_path / f"{table_key}.csv"
         df.to_csv(csv_path, index=False)
 
+    if day_results and days_format != "final":
+        write = _write_batches if days_format == "batches" else _write_changelog
+        write(dest, day_results, dbt_names)
+
     # -------------------------
     # Build dbt assets
     # -------------------------
@@ -567,6 +666,14 @@ def main(
     typer.echo("\n📊 Summary")
     typer.echo(f"  Tables generated:        {len(generated_tables)}")
     typer.echo(f"  Rows generated:          {total_rows}")
+    if day_results:
+        moving = [k for k in tables if any(len(r.tables[k].inserted) for r in day_results[1:])]
+        typer.echo(f"  Days generated:          {len(day_results) - 1} after the first")
+        if not moving:
+            typer.echo("  ⚠️  No table has `incremental`: nothing changes after the first day.")
+        for result in day_results:
+            for warning in result.warnings:
+                typer.echo(f"  ⚠️  Day {result.day}: {warning}")
     typer.echo(f"  Relationships:           {len(refs)}")
     if unmapped:
         typer.echo(f"  Columns using generic fallback text: {len(unmapped)}")

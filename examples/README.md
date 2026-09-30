@@ -247,6 +247,20 @@ cd dbt_mixed_quotes_crlf
 dbt seed && dbt run
 ```
 
+### 7. **ecommerce_daily** (`.model2data.yml` only) — A store that moves on day by day
+
+- **Domain**: The ecommerce model, with `incremental` on customers, orders and order items.
+- **Focus**: Days after the first: new rows each day, orders that move from `pending` to
+  `delivered` through `transitions`, and an `updated_at` column. It has no `.dbml` twin, because
+  DBML cannot express `incremental` or `transitions`.
+
+**Try it**:
+```bash
+model2data --file examples/ecommerce_daily.model2data.yml --rows 100 --seed 42 --as-of 2026-01-31 --days 7
+cd dbt_ecommerce_daily   # seeds hold the state after day 7; days/ holds a file per day
+dbt build
+```
+
 ---
 
 ## Feature Matrix
