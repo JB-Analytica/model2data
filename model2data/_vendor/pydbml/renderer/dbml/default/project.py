@@ -1,0 +1,29 @@
+from textwrap import indent
+from typing import Dict
+
+from model2data._vendor.pydbml.classes import Project
+from model2data._vendor.pydbml.renderer.dbml.default.renderer import DefaultDBMLRenderer
+from model2data._vendor.pydbml.renderer.dbml.default.utils import comment_to_dbml
+from model2data._vendor.pydbml.tools import doublequote_string
+
+
+def render_items(items: Dict[str, str]) -> str:
+    items_str = ''
+    for k, v in items.items():
+        if '\n' in v:
+            items_str += f"{k}: '''{v}'''\n"
+        else:
+            items_str += f"{k}: '{v}'\n"
+    return indent(items_str.rstrip('\n'), '    ') + '\n'
+
+
+@DefaultDBMLRenderer.renderer_for(Project)
+def render_project(model: Project) -> str:
+    result = comment_to_dbml(model.comment) if model.comment else ''
+    quoted_name = doublequote_string(model.name)
+    result += f'Project {quoted_name} {{\n'
+    result += render_items(model.items)
+    if model.note:
+        result += indent(DefaultDBMLRenderer.render(model.note), '    ') + '\n'
+    result += '}'
+    return result

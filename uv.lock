@@ -793,7 +793,6 @@ dependencies = [
     { name = "faker" },
     { name = "jsonschema" },
     { name = "pandas" },
-    { name = "pydbml" },
     { name = "pyparsing" },
     { name = "pyyaml" },
     { name = "typer" },
@@ -823,7 +822,6 @@ requires-dist = [
     { name = "pandas", specifier = ">=2.3.3" },
     { name = "poethepoet", marker = "extra == 'dev'", specifier = ">=0.38.0" },
     { name = "pre-commit", marker = "extra == 'dev'" },
-    { name = "pydbml", specifier = ">=1.2.1,<1.3" },
     { name = "pyparsing", specifier = ">=3,<4" },
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "pytest-cov", marker = "extra == 'dev'" },
@@ -1465,18 +1463,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/1f/f2/f11dd73284122713f5f89fc940f370d035fa8e1e078d446b3313955157fe/pydantic_core-2.41.5-pp311-pypy311_pp73-musllinux_1_1_armv7l.whl", hash = "sha256:a668ce24de96165bb239160b3d854943128f4334822900534f2fe947930e5770", size = 2330317, upload-time = "2025-11-04T13:43:40.406Z" },
     { url = "https://files.pythonhosted.org/packages/88/9d/b06ca6acfe4abb296110fb1273a4d848a0bfb2ff65f3ee92127b3244e16b/pydantic_core-2.41.5-pp311-pypy311_pp73-musllinux_1_1_x86_64.whl", hash = "sha256:f14f8f046c14563f8eb3f45f499cc658ab8d10072961e07225e507adb700e93f", size = 2316992, upload-time = "2025-11-04T13:43:43.602Z" },
     { url = "https://files.pythonhosted.org/packages/36/c7/cfc8e811f061c841d7990b0201912c3556bfeb99cdcb7ed24adc8d6f8704/pydantic_core-2.41.5-pp311-pypy311_pp73-win_amd64.whl", hash = "sha256:56121965f7a4dc965bff783d70b907ddf3d57f6eba29b6d2e5dabfaf07799c51", size = 2145302, upload-time = "2025-11-04T13:43:46.64Z" },
-]
-
-[[package]]
-name = "pydbml"
-version = "1.2.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "pyparsing" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/1b/7c/d8baefcdd447d50fe24ab94e5344f9142e49f5d353e5f63863db0536dffd/pydbml-1.2.1.tar.gz", hash = "sha256:8c1232291948fd5857792aa732a33e71418c47f6a2badea869dc37377394566b", size = 36432, upload-time = "2025-10-24T12:28:40.8Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/43/39/99396a0e876cef85155549b3a76144c77af8adc0f0c4f0e0dfc3d4ace109/pydbml-1.2.1-py3-none-any.whl", hash = "sha256:709ad1d040268367a1be4653affd7dae206433f5e7a799ab5b32fad2ed8aa384", size = 46318, upload-time = "2025-10-24T12:28:39.672Z" },
 ]
 
 [[package]]

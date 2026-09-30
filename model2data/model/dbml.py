@@ -69,9 +69,10 @@ def _parse(text: str) -> Any:
         # pydbml builds its grammar with pyparsing's pre-3.0 camelCase API,
         # deprecated in pyparsing 3.3, when it is first imported and used.
         warnings.simplefilter("ignore")
-        from pydbml import PyDBML
-        from pydbml import exceptions as pydbml_errors
         from pyparsing import ParseBaseException
+
+        from model2data._vendor.pydbml import PyDBML
+        from model2data._vendor.pydbml import exceptions as pydbml_errors
 
     try:
         with warnings.catch_warnings():
@@ -286,7 +287,7 @@ class _Converter:
         return out
 
     def _column(self, column: Any) -> dict[str, Any]:
-        from pydbml.classes import Enum, Expression
+        from model2data._vendor.pydbml.classes import Enum, Expression
 
         if isinstance(column.type, Enum):
             type_name = _key(column.type.schema, column.type.name)
