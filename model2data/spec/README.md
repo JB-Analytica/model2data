@@ -61,6 +61,12 @@ This README and `model.schema.json`, including every `description` in the schema
 every check under [Checks beyond the schema](#checks-beyond-the-schema). Examples are
 informative.
 
+A reader reports what it finds as issues, each with the path of the value and a **severity**:
+an **error** is a way the document does not conform, and a **warning** is something the reader
+points out in a document that still conforms (see [Warnings](#warnings)). Only errors make a
+document non-conforming; a reader reads a document with warnings as it reads any other. A
+validating tool shows both, and fails only on errors.
+
 ## Versioning
 
 The spec is versioned on its own, apart from the engine and the studio, with
@@ -140,8 +146,14 @@ case-insensitively.
 
 A foreign key of one column is written on it: `references: customers.id`, or
 `references: {to: users.id, one_to_one: true}`. The column is the **child**; the referenced
-column, the **parent**, must be its table's primary key, a member of a one-column `pk` key, or
+column, the **parent**, should be its table's primary key, a member of a one-column `pk` key, or
 unique. Every child value is a value of the parent, or null when the child is nullable.
+
+A parent column that is not a key is allowed, with a [warning](#warnings): real schemas have
+them (a load log naming a schema version by its hash, which several versions may share). Such a
+reference is generated like any foreign key -- every non-null child value is drawn from the
+values the parent column actually holds, so each one exists in the parent -- but it does not
+imply one parent row per value, as a reference onto a key does.
 
 A foreign key over several columns is written on its table under `foreign_keys`, pairing
 `columns` with `to_columns` in order. A many-to-many relationship, which no table holds the key
@@ -162,6 +174,9 @@ meaning. A hint's `x-model2data-applies-to` names the **kinds** of column it may
 | `foreign-key` | it has `references`, or is a child column of a `foreign_keys` entry |
 | `nullable` | it is not `pk`, not in a `pk` key, and not `not_null` |
 | `non-key` | it is none of: a foreign key, `pk`, in a key, `unique`, an enum |
+
+A column typed with an enum is of kind `enum` and never `numeric`, `boolean` or `temporal`,
+whatever the enum's name contains (`maintenance_type` contains `int`).
 
 The run's defaults for four hints are under `run.shape`; a column's own `generate` wins.
 
@@ -193,8 +208,7 @@ reports each failure with the path of the value (`tables.orders.columns.status.g
 
 1. Every `references`, `foreign_keys`, `relationships`, `groups.*.tables`, `run.rows_per_table`
    and `run.table_seeds` entry names a table (and column) of the model.
-2. A referenced parent column is a primary key, a one-column key, or unique; `columns` and
-   `to_columns` of a foreign key have the same length.
+2. `columns` and `to_columns` of a foreign key have the same length.
 3. A `keys` entry names columns of its own table.
 4. Every hint sits on a column of a kind it applies to.
 5. Every key of `weights` is a member of the column's enum.
@@ -204,6 +218,15 @@ reports each failure with the path of the value (`tables.orders.columns.status.g
    a bound left out takes its default (0 and 100).
 8. `null_rate` is only on a nullable column (it would otherwise have no rows to null).
 9. `run.table_seeds` only with `run.seed`.
+
+### Warnings
+
+A reader reports these as warnings, with the path of the value; a document that has them
+conforms.
+
+1. A referenced parent column is not a primary key, a one-column key, or unique; or the
+   `to_columns` of a foreign key are not together the parent's primary key, one of its `keys`, or
+   a unique column. The reference is generated as [References](#references) describes.
 
 ## From 0.1
 

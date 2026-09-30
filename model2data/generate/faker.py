@@ -730,14 +730,16 @@ def generate_column_values(
     explicit_min, explicit_max = min_val, max_val
     distribution = column_note.get("distribution", "uniform")
 
-    if fk_series is not None and not fk_series.empty:
+    if fk_series is not None and bool(fk_series.notna().any()):
         # A plain branch of the same if/elif chain (rather than an early
         # return) so a nullable FK column can actually come back null for
         # some rows -- e.g. an optional `manager_id` on a top-level
         # employee, or an order with no customer -- matching how every
         # other branch here already respects `not null`/`pk` via the
         # nullability pass below.
-        fk_values = fk_series.tolist()
+        # A parent that is not a key can hold nulls; a child draws only the
+        # values it actually holds (a null child comes from the null pass).
+        fk_values = [value for value in fk_series.tolist() if not pd.isna(value)]
         effective_skew = column.note.get("skew") if column.note else None
         if effective_skew is None:
             effective_skew = skew

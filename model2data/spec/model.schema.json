@@ -192,7 +192,7 @@
           "type": "string"
         },
         "references": {
-          "description": "The column is a foreign key onto this column of another (or the same) table, which must be the parent's primary key or unique. Many-to-one unless `one_to_one` is set.",
+          "description": "The column is a foreign key onto this column of another (or the same) table, which should be the parent's primary key or unique: onto any other column it is a warning, not an error, and every non-null child value is drawn from the values that column holds (see the README, References). Many-to-one unless `one_to_one` is set.",
           "oneOf": [
             { "$ref": "#/$defs/columnPath" },
             {

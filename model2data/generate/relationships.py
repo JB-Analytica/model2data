@@ -12,7 +12,7 @@ def classify_refs(
 ) -> Tuple[List[Dict], List[Dict]]:
     """
     Classify references into:
-        - fk_refs: Foreign keys (target column is a key of its table)
+        - fk_refs: Foreign keys, whose child values are drawn from the parent column
         - attribute_refs: Non-FK dependencies (mirroring parent attributes)
 
     A Ref onto a primary key, or a column named "id", is always a foreign key.
@@ -22,19 +22,36 @@ def classify_refs(
     parent. Then it stays an attribute ref and is mirrored through that FK, so
     `orders.customer_email > customers.email` next to
     `orders.customer_id > customers.id` keeps the email the customer's own.
+
+    A Ref onto a column that is no key at all (spec 0.2.0, "References") is
+    mirrored through a foreign key to the same parent when the child has one
+    (onto its primary key or a unique key), and is otherwise a foreign key like
+    any other, its values drawn from the ones the parent column holds -- `_dlt_loads.schema_version_hash`
+    onto `_dlt_version.version_hash` names a version that exists. Before 1.8
+    such a Ref with no FK to mirror through was drawn as unrelated data. A Ref
+    onto a column that does not exist is left an attribute ref, and skipped.
     """
     kinds = [_key_kind(tables, ref) for ref in refs]
-    pk_pairs = {
-        (ref["source_table"], ref["target_table"])
-        for ref, kind in zip(refs, kinds, strict=True)
-        if kind == "pk"
+    pairs = {
+        kind: {
+            (ref["source_table"], ref["target_table"])
+            for ref, ref_kind in zip(refs, kinds, strict=True)
+            if ref_kind == kind
+        }
+        for kind in ("pk", "unique")
     }
+    # The FKs a plain column can be mirrored through: onto a primary or unique key.
+    key_pairs = pairs["pk"] | pairs["unique"]
 
     fk_refs = []
     attribute_refs = []
     for ref, kind in zip(refs, kinds, strict=True):
         pair = (ref["source_table"], ref["target_table"])
-        if kind == "pk" or (kind == "unique" and pair not in pk_pairs):
+        if (
+            kind == "pk"
+            or (kind == "unique" and pair not in pairs["pk"])
+            or (kind == "column" and pair not in key_pairs)
+        ):
             fk_refs.append(ref)
         else:
             attribute_refs.append(ref)
@@ -43,7 +60,7 @@ def classify_refs(
 
 
 def _key_kind(tables: Dict[str, TableDef], ref: Dict) -> Optional[str]:
-    """Whether the column a Ref points at is a "pk", a "unique" key, or neither (None)."""
+    """What a Ref points at: a "pk", a "unique" key, a plain "column", or nothing (None)."""
     table = tables.get(ref["target_table"])
     if table is None:
         return None
@@ -54,7 +71,7 @@ def _key_kind(tables: Dict[str, TableDef], ref: Dict) -> Optional[str]:
         return "pk"
     if _is_unique(table, column):
         return "unique"
-    return None
+    return "column"
 
 
 def _single_column_keys(table: TableDef, key_type: str) -> set:
