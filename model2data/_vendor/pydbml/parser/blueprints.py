@@ -212,6 +212,7 @@ class TableBlueprint(Blueprint):
     comment: Optional[str] = None
     properties: Optional[Dict[str, str]] = None
     checks: Optional[List[Dict[str, str]]] = None  # model2data
+    records: Optional[List[Any]] = None  # model2data: RecordsBlueprints
 
     def build(self) -> 'Table':
         result = Table(
@@ -223,8 +224,13 @@ class TableBlueprint(Blueprint):
             comment=self.comment,
             properties=self.properties
         )
-        # model2data: the table's `checks { }`, as {expression, name?}.
+        # model2data: the table's `checks { }`, as {expression, name?}, and
+        # its sample rows, as {columns, rows}.
         result.checks = list(self.checks or [])
+        result.records = [
+            {'columns': list(records.columns), 'rows': [list(row) for row in records.rows]}
+            for records in self.records or []
+        ]
         columns = self.columns or []
         indexes = self.indexes or []
         for col_bp in columns:
@@ -333,3 +339,34 @@ class TableGroupBlueprint(Blueprint):
             note=self.note.build() if self.note else None,
             color=self.color
         )
+
+
+# model2data: blueprints for the DBML 1.2.1 could not read. -------------------
+
+@dataclass
+class PartialRefBlueprint(Blueprint):
+    """`~name` inside a table: where a TablePartial's columns are injected."""
+    name: str
+    ref_blueprints: Optional[List[ReferenceBlueprint]] = None  # never any; looked up like a column's
+
+
+@dataclass
+class TablePartialBlueprint(Blueprint):
+    """`TablePartial name [settings] { ... }`: columns, indexes and settings to inject."""
+    name: str
+    columns: Optional[List[ColumnBlueprint]] = None
+    indexes: Optional[List[IndexBlueprint]] = None
+    note: Optional[NoteBlueprint] = None
+    header_color: Optional[str] = None
+
+
+@dataclass
+class RecordsBlueprint(Blueprint):
+    """`Records table(a, b) { 1, 'x' ... }`, or `records (a, b) { ... }` inside a table.
+
+    `table` and `schema` are None inside a table: the table it sits in.
+    """
+    columns: List[str]
+    rows: List[List[Any]]
+    table: Optional[str] = None
+    schema: str = 'public'

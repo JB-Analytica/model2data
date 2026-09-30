@@ -37,8 +37,6 @@ def _corpus(name: str):
 
 
 REFUSED = {
-    "records": "does not support Records blocks",
-    "table_partials": "does not support TablePartial",
     "ref_directions": "references both users.id and legacy schema.old users.id",
 }
 
@@ -90,6 +88,61 @@ def test_check_constraints_are_kept_as_extensions():
         ]
     }
     assert load(dump(_corpus("checks"))) == _corpus("checks")
+
+
+def test_table_partials_are_injected_where_they_are_used():
+    model = _corpus("table_partials")
+    for name in ("users", "orders"):
+        table = model.tables[name]
+        assert table.color == "#FF0000"
+        assert table.columns["id"].pk
+        assert table.columns["created_at"].not_null
+        assert table.columns["created_at"].extensions == {"x-default-expression": "now()"}
+    assert list(model.tables["users"].columns) == ["id", "email", "created_at", "updated_at"]
+    assert list(model.tables["orders"].columns) == ["id", "user_id", "created_at", "updated_at"]
+    assert model.tables["orders"].columns["user_id"].references.to == "users.id"
+
+
+def test_a_tables_own_column_wins_over_a_partials_and_the_later_partial_over_the_earlier():
+    model = from_dbml(
+        "TablePartial a {\n  x int\n  y int\n}\n"
+        "TablePartial b {\n  y bigint\n  owner_id int [ref: > owners.id]\n}\n"
+        "Table owners [headercolor: #000] {\n  id int [pk]\n}\n"
+        "Table t {\n  ~a\n  x text\n  ~b\n}\n"
+    )
+    columns = model.tables["t"].columns
+    assert list(columns) == ["y", "x", "owner_id"]
+    assert columns["x"].type == "text"  # the table's own
+    assert columns["y"].type == "bigint"  # b is later than a
+    assert columns["owner_id"].references.to == "owners.id"
+
+
+def test_an_undefined_partial_is_an_error_naming_it():
+    with pytest.raises(ModelError, match="no TablePartial missing"):
+        from_dbml("Table t {\n  id int\n  ~missing\n}\n")
+
+
+def test_records_are_kept_as_extensions_with_typed_values():
+    model = _corpus("records")
+    assert model.tables["statuses"].extensions == {
+        "x-records": [{"columns": ["id", "label"], "rows": [[1, "open"], [2, "closed"]]}]
+    }
+    inline = from_dbml(
+        "Table flags {\n  id int [pk]\n  on boolean\n  note text\n"
+        "  records {\n    1, true, null\n    2, false, `now()`\n  }\n}\n"
+    )
+    assert inline.tables["flags"].extensions["x-records"] == [
+        {
+            "columns": ["id", "on", "note"],
+            "rows": [[1, True, None], [2, False, {"expression": "now()"}]],
+        }
+    ]
+    assert load(dump(model)) == model
+
+
+def test_records_naming_a_missing_column_are_an_error():
+    with pytest.raises(ModelError, match="does not have: nope"):
+        from_dbml("Table t {\n  id int\n}\nRecords t(nope) {\n  1\n}\n")
 
 
 def test_the_corpus_is_all_here():

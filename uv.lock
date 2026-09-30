@@ -822,7 +822,7 @@ requires-dist = [
     { name = "pandas", specifier = ">=2.3.3" },
     { name = "poethepoet", marker = "extra == 'dev'", specifier = ">=0.38.0" },
     { name = "pre-commit", marker = "extra == 'dev'" },
-    { name = "pyparsing", specifier = ">=3,<4" },
+    { name = "pyparsing", specifier = ">=3.1,<4" },
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "pytest-cov", marker = "extra == 'dev'" },
     { name = "pyyaml", specifier = ">=6.0.3" },

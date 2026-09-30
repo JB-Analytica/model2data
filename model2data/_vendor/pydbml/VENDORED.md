@@ -26,6 +26,21 @@ change is listed below, one commit each, so each can be offered upstream.
    `parser/blueprints.py`): a column's `check: \`expr\`` and a table's
    `checks { \`expr\` [name: '...'] }` parse; the built `Column.checks` holds
    the expressions, `Table.checks` a list of `{expression, name?}`.
+6. **`TablePartial`** (`definitions/table_partial.py`, `definitions/table.py`,
+   `parser/parser.py`, `parser/blueprints.py`): partials parse, and
+   `PyDBMLParser.build_database` injects each `~name` as DBML defines it --
+   columns at the `~` position, the table's own columns winning over a
+   partial's and a later partial over an earlier one, indexes appended,
+   colour and note applying when the table sets none, inline refs registered
+   for the table they land in. An undefined partial is a `ValidationError`.
+7. **`Records`** (`definitions/records.py`, `definitions/table.py`,
+   `parser/parser.py`, `parser/blueprints.py`): top-level `Records t(a, b)`
+   and in-table `records (a, b)` blocks parse, with typed values (a string, a
+   number, true/false/null, or `{'expression': text}`); `Table.records` holds
+   `{columns, rows}`. A column list defaults to the table's columns; an
+   unknown column or a row of the wrong length is a `ValidationError`.
+
+Needs pyparsing 3.1 or later (`DelimitedList`).
 
 ## Updating
 

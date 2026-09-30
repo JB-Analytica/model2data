@@ -229,10 +229,16 @@ def test_convert_writes_a_file_and_will_not_overwrite_without_force(tmp_path):
 
 
 def test_convert_refuses_dbml_it_cannot_read(tmp_path):
-    bad = _write(tmp_path, "bad.dbml", "Table t {\n  id int [pk, check: `id > 0`]\n}\n")
+    # Not a DBML gap -- a 0.2.0 column references one column, not two.
+    bad = _write(
+        tmp_path,
+        "bad.dbml",
+        "Table a {\n  id int [pk]\n}\nTable b {\n  id int [pk]\n}\n"
+        "Table t {\n  x int [ref: > a.id, ref: > b.id]\n}\n",
+    )
     result = runner.invoke(app, ["convert", str(bad)])
     assert result.exit_code == 1
-    assert "does not support check constraints" in result.output
+    assert "references both a.id and b.id" in result.output
 
 
 def test_help_lists_the_commands():

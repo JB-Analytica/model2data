@@ -24,10 +24,12 @@ neither are, on the column that declares an inline ref, or else on the left of
 a `Ref:` line. A ref onto a column that is not a key converts as written, and
 reading the model then warns about it (spec 0.2.0, "Warnings").
 
-pydbml 1.2 cannot read some newer or rarer DBML: `Records` and
-`TablePartial`. Each is reported with its line and what to change, rather than
-worked around. The one gap with a clean workaround, `default: null` arriving
-as the text `NULL`, is handled here.
+DBML is read by PyDBML 1.2.1, vendored in `model2data/_vendor/pydbml` and
+patched to read what model2data studio reads: signed and exponent numbers,
+`default: null`, unquoted non-ASCII names, `numeric(10,2)[]`, a ref's
+`color`, check constraints, `Records` and `TablePartial` (see its
+VENDORED.md). Check constraints and records have no 0.2.0 member, so they are
+kept as the extensions `x-checks` and `x-records`. A ref's colour is dropped.
 """
 
 from __future__ import annotations
@@ -89,14 +91,6 @@ def _parse(text: str) -> Any:
 
 
 _UNSUPPORTED = (
-    (
-        re.compile(r"^\s*Records\b"),
-        "the DBML reader (pydbml) does not support Records blocks: remove them",
-    ),
-    (
-        re.compile(r"^\s*(TablePartial\b|~)"),
-        "the DBML reader (pydbml) does not support TablePartial: write the columns out",
-    ),
     (
         re.compile(r"^\s*Table\s+`|ref:\s*[<>-]+\s*`|^\s*`[^`]*`\s+\w", re.IGNORECASE),
         'a DBML name is quoted with double quotes, "user accounts": backticks hold expressions',
@@ -268,6 +262,9 @@ class _Converter:
         # conversion loses nothing a later version could use.
         if getattr(table, "checks", None):
             out["x-checks"] = list(table.checks)
+        # Sample rows likewise: an extension until the spec has a place for them.
+        if getattr(table, "records", None):
+            out["x-records"] = list(table.records)
         return out
 
     def _column(self, column: Any) -> dict[str, Any]:

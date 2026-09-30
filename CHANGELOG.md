@@ -27,22 +27,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   1.2 core schema (`no`, `on`, `NO` and `2026-01-01` are strings), and duplicate keys, anchors,
   aliases, merge keys, tags and second documents are errors. `dump(load(x))` of a canonical
   document is `x`, byte for byte.
-- `jsonschema` is a direct dependency (it was already installed through dbt-core), and so are
-  `pydbml` (`>=1.2.1,<1.3`) and `pyparsing` (`>=3,<4`).
+- `jsonschema` is a direct dependency (it was already installed through dbt-core), and so is
+  `pyparsing` (`>=3.1,<4`). PyDBML is vendored, not a dependency: see below.
 
 ### Changed
-- **DBML is read with `pydbml` and converted to the model, instead of by a line parser.**
+- **DBML is read with PyDBML and converted to the model, instead of by a line parser.**
+  PyDBML 1.2.1 is vendored in `model2data/_vendor/pydbml` (MIT, licence shipped beside it) and
+  patched to read what dbdiagram and model2data studio read: signed and exponent numbers,
+  `default: null`, unquoted non-ASCII names, `numeric(10,2)[]`, a Ref's `color`, check
+  constraints, `Records` and `TablePartial`. Check constraints and records are kept as the
+  extensions `x-checks` and `x-records`; each patch is listed in its `VENDORED.md`.
   `parse_dbml(path)` is now `from_dbml` then `to_engine`, and returns the same `(tables, refs)`;
   `TableDef` and `ColumnDef` are still in `model2data.parse.dbml`, and `TableDef` gains a `note`
   holding a table's `role`. The spec's "From 0.1" table is the conversion: a note that is a JSON
   object is hints (`measure` and a table's `role` included), any other note a description; a flat
   `distribution` and its parameters become `distribution: {kind: ...}`.
 - **DBML that cannot be read is refused, with the line and what to change, instead of read in
-  part with a warning.** `get_parse_warnings()` is kept and always empty. pydbml cannot read
-  `check` constraints, `Records`, `TablePartial`, unquoted non-ASCII names, a signed or exponent
-  number default (`-5`, `1e3`), an unquoted parameterised array type (`numeric(10,2)[]`), a
-  Ref's `color`, or backtick-quoted names (DBML quotes names with double quotes; backticks hold
-  expressions): each says so. `examples/mixed_quotes_crlf.dbml` now double-quotes its names. An
+  part with a warning.** `get_parse_warnings()` is kept and always empty. What stays refused is
+  what DBML itself does not allow or the model cannot hold: backtick-quoted names (DBML quotes
+  names with double quotes; backticks hold expressions), and a column with two refs (a 0.2.0
+  column references one column). Each says so. `examples/mixed_quotes_crlf.dbml` now double-quotes its names. An
   empty DBML file, which a model cannot be (it has at least one table), is an error.
 - **A table key is the table's name as written**, `schema.name` outside the default schema.
   Where it becomes a seed, a staging model and every `ref()`, the CLI normalises it to
