@@ -1,0 +1,83 @@
+# yaml-language-server: $schema=https://www.jbanalytica.com/model2data/spec/0.2.0/model.schema.json
+model2data: 0.2.0
+description: >
+  The online store of ecommerce, moving on day by day: new customers, orders and line items each day, and orders that move from pending to delivered. Generate the days after the first with `model2data generate --days 7`.
+
+enums:
+  order_status: [pending, processing, shipped, delivered, cancelled]
+
+tables:
+  customers:
+    incremental: {new_per_day: 5}
+    columns:
+      id: {type: bigint, pk: true, not_null: true}
+      email: {type: email, unique: true, not_null: true}
+      first_name: {type: first_name, not_null: true}
+      last_name: {type: last_name, not_null: true}
+      phone: phone_number
+      country: {type: country, not_null: true}
+      created_at: {type: timestamp, not_null: true}
+
+  products:
+    columns:
+      id: {type: bigint, pk: true, not_null: true}
+      name: {type: word, not_null: true}
+      sku: {type: ean13, unique: true, not_null: true}
+      category: {type: word, not_null: true}
+      price:
+        type: numeric
+        not_null: true
+        generate: {min: 5.99, max: 999.99}
+      stock_quantity:
+        type: int
+        not_null: true
+        generate: {min: 0, max: 1000}
+      created_at: {type: timestamp, not_null: true}
+
+  orders:
+    incremental: {new_per_day: 20, update_rate: 0.1, updated_at: updated_at}
+    columns:
+      id: {type: bigint, pk: true, not_null: true}
+      customer_id: {type: bigint, not_null: true, references: customers.id}
+      order_date: {type: timestamp, not_null: true}
+      total_amount:
+        type: numeric
+        not_null: true
+        generate: {min: 10, max: 5000}
+      status:
+        type: order_status
+        generate:
+          transitions:
+            pending: [processing, cancelled]
+            processing: [shipped, cancelled]
+            shipped: [delivered]
+      updated_at:
+        type: timestamp
+        not_null: true
+        generate: {after: order_date}
+
+  order_items:
+    incremental: {new_per_day: 50}
+    columns:
+      id: {type: bigint, pk: true, not_null: true}
+      order_id: {type: bigint, not_null: true, references: orders.id}
+      product_id: {type: bigint, not_null: true, references: products.id}
+      quantity:
+        type: int
+        not_null: true
+        generate: {min: 1, max: 10}
+      unit_price:
+        type: numeric
+        not_null: true
+        generate: {min: 5.99, max: 999.99}
+
+  product_reviews:
+    columns:
+      id: {type: bigint, pk: true, not_null: true}
+      product_id: {type: bigint, not_null: true, references: products.id}
+      customer_id: {type: bigint, not_null: true, references: customers.id}
+      rating:
+        type: int
+        not_null: true
+        generate: {min: 1, max: 5}
+      comment: text
