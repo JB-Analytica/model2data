@@ -510,4 +510,5 @@ def test_cli_prints_a_readable_error_on_a_bad_hint(tmp_path):
     result = _run(tmp_path, "bad_hint", BAD_HINT_SCHEMA)
     assert result.exit_code == 1
     assert "❌" in result.output
-    assert "t.label" in result.output
+    # Reported at its document path (spec 0.2.0), no longer as `t.label`.
+    assert "tables.t.columns.label.generate.weights" in result.output

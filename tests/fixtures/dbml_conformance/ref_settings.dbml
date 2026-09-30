@@ -1,0 +1,9 @@
+// Ref settings beyond the referential actions: a relationship colour.
+Table teams {
+  id int [pk]
+}
+Table players {
+  id int [pk]
+  team_id int
+}
+Ref: players.team_id > teams.id [delete: cascade, color: #AABBCC]

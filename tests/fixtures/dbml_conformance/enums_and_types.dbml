@@ -1,0 +1,19 @@
+// Enums (quoted, noted, schema-qualified), parameterised and array types.
+Enum status {
+  active [note: 'live']
+  "on hold"
+  closed
+}
+Enum billing.plan {
+  free
+  pro
+}
+Table accounts {
+  id int [pk, increment]
+  status status [not null, default: 'active']
+  plan billing.plan
+  price decimal(10, 2) [note: '{"min": 1, "max": 99}']
+  code "character varying(12)"
+  tags "text[]"
+  created_at timestamptz [default: `now()`]
+}

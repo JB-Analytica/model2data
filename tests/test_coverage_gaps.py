@@ -2,8 +2,11 @@
 
 from pathlib import Path
 
+import pytest
+
 from model2data.generate.faker import generate_column_values
-from model2data.parse.dbml import ColumnDef, _strip_quotes, parse_dbml
+from model2data.model import ModelError
+from model2data.parse.dbml import ColumnDef, parse_dbml
 from model2data.utils import normalize_identifier
 
 
@@ -120,12 +123,6 @@ class TestGenerateColumnValuesFaker:
 class TestDBMLParsing:
     """Test dbml.py parsing edge cases (lines 39-44, 64, 68-72, 80, 87-92, 98, 146)."""
 
-    def test_strip_quotes_basic(self):
-        """Test _strip_quotes function."""
-        assert _strip_quotes("'table_name'") == "table_name"
-        assert _strip_quotes('"table_name"') == "table_name"
-        assert _strip_quotes("table_name") == "table_name"
-
     def test_parse_dbml_with_schema_prefix(self):
         """Test parsing table with schema prefix (e.g., [schema].[table])."""
         dbml_content = """
@@ -211,9 +208,10 @@ Table users {
         dbml_file.write_text("")
 
         try:
-            tables, refs = parse_dbml(dbml_file)
-            assert len(tables) == 0
-            assert len(refs) == 0
+            # A model has at least one table (spec 0.2.0), so an empty file is
+            # refused rather than read as an empty schema.
+            with pytest.raises(ModelError, match="tables: must not be empty"):
+                parse_dbml(dbml_file)
         finally:
             dbml_file.unlink()
 
@@ -227,7 +225,7 @@ Table users {
         dbml_file.write_text(dbml_content)
 
         try:
-            tables, refs = parse_dbml(dbml_file)
-            assert len(tables) == 0
+            with pytest.raises(ModelError, match="tables: must not be empty"):
+                parse_dbml(dbml_file)
         finally:
             dbml_file.unlink()

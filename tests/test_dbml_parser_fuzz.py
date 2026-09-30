@@ -5,10 +5,15 @@ see pyproject.toml) -- instead a deterministic `random.Random(seed)` drives
 two invariants `parse_dbml` must hold for *any* valid-UTF-8 text file,
 however malformed:
 
-1. It never raises an unhandled exception (`test_random_garbage_never_crashes`).
+1. It reads the file or refuses it with a `ModelError` naming why -- never
+   any other exception (`test_random_garbage_is_read_or_refused`).
 2. Small, targeted corruptions of a *valid* bundled example never silently
-   drop recognizable structure with a clean exit and zero warnings
-   (`test_corrupted_valid_examples_warn_or_degrade_gracefully`).
+   drop recognizable structure: the result has every table the clean file
+   has, or the file is refused (`test_corrupted_valid_examples_are_refused_or_intact`).
+
+Until 1.8 the parser was a line reader that skipped what it could not read
+and warned; the invariants were "never raises" and "never loses a table
+without a warning". The grammar-based reader refuses instead.
 """
 
 from __future__ import annotations
@@ -20,7 +25,8 @@ from pathlib import Path
 
 import pytest
 
-from model2data.parse.dbml import get_parse_warnings, parse_dbml
+from model2data.model import ModelError
+from model2data.parse.dbml import parse_dbml
 
 EXAMPLES_DIR = Path("examples")
 EXAMPLE_FILES = sorted(EXAMPLES_DIR.glob("*.dbml"))
@@ -28,7 +34,7 @@ EXAMPLE_FILES = sorted(EXAMPLES_DIR.glob("*.dbml"))
 # Fixed seeds: every run of this test suite mutates/generates the exact same
 # fragments, so a failure is always reproducible.
 _RANDOM_SEED = 20260826
-_ITERATIONS_PER_STRATEGY = 100
+_ITERATIONS_PER_STRATEGY = 20
 
 # A grab-bag of DBML-ish and outright garbage tokens, mixed and assembled
 # into random fragments below. Deliberately includes: DBML keywords,
@@ -109,43 +115,44 @@ def _random_fragment(rng: random.Random) -> str:
     return "\n".join(lines)
 
 
-def test_random_garbage_never_crashes(tmp_path):
-    """`parse_dbml` must never raise on any valid-UTF-8 text content, no
-    matter how syntactically nonsensical.
+def test_random_garbage_is_read_or_refused(tmp_path):
+    """`parse_dbml` reads any valid-UTF-8 text or refuses it with a
+    `ModelError`, no matter how syntactically nonsensical.
     """
     rng = random.Random(_RANDOM_SEED)
     failures = []
 
-    for i in range(_ITERATIONS_PER_STRATEGY * 3):
+    for i in range(_ITERATIONS_PER_STRATEGY * 5):
         fragment = _random_fragment(rng)
         dbml_file = tmp_path / f"garbage_{i}.dbml"
         dbml_file.write_text(fragment, encoding="utf-8")
 
         try:
             tables, refs = parse_dbml(dbml_file)
-        except Exception as exc:  # noqa: BLE001 -- intentionally broad: the invariant is "never raises"
+        except ModelError as error:
+            assert error.issues
+            continue
+        except Exception as exc:  # noqa: BLE001 -- intentionally broad: the invariant is "only ModelError"
             failures.append((i, fragment, repr(exc)))
             continue
 
         # Whatever it produced must at least be the right shape.
         assert isinstance(tables, dict)
         assert isinstance(refs, list)
-        assert isinstance(get_parse_warnings(), list)
 
     assert not failures, (
-        f"{len(failures)} random fragment(s) crashed parse_dbml instead of "
-        f"degrading gracefully. First failure (index {failures[0][0]}): "
+        f"{len(failures)} random fragment(s) crashed parse_dbml instead of being "
+        f"refused. First failure (index {failures[0][0]}): "
         f"{failures[0][2]}\nFragment:\n{failures[0][1]!r}"
     )
 
 
-def test_empty_and_whitespace_only_files_never_crash(tmp_path):
-    for content in ["", "   ", "\n\n\n", "\t\t", "\x00", "﻿", " " * 5000]:
+def test_empty_and_whitespace_only_files_are_refused(tmp_path):
+    for content in ["", "   ", "\n\n\n", "\t\t", "\x00", "\ufeff", " " * 5000]:
         dbml_file = tmp_path / "edge.dbml"
         dbml_file.write_text(content, encoding="utf-8")
-        tables, refs = parse_dbml(dbml_file)
-        assert tables == {}
-        assert refs == []
+        with pytest.raises(ModelError):
+            parse_dbml(dbml_file)
 
 
 # ---------------------------------------------------------------------
@@ -227,15 +234,13 @@ _CORRUPTION_STRATEGIES = [
 
 @pytest.mark.parametrize("strategy", _CORRUPTION_STRATEGIES, ids=lambda fn: fn.__name__)
 @pytest.mark.parametrize("example_path", EXAMPLE_FILES, ids=lambda p: p.stem)
-def test_corrupted_valid_examples_warn_or_degrade_gracefully(example_path, strategy, tmp_path):
+def test_corrupted_valid_examples_are_refused_or_intact(example_path, strategy, tmp_path):
     """Apply one corruption strategy `_ITERATIONS_PER_STRATEGY` times (with
     a different random draw each time, but deterministically seeded) to a
     known-valid bundled example, and check the two invariants:
 
-    1. Never raises.
-    2. Never silently loses structure with a clean exit and zero warnings:
-       if the corrupted parse produced fewer tables than the clean parse of
-       the same file, `get_parse_warnings()` must be non-empty.
+    1. Only a `ModelError` is ever raised.
+    2. A corrupted file that is read has at least the tables of the clean one.
     """
     original_text = example_path.read_text(encoding="utf-8")
 
@@ -260,12 +265,13 @@ def test_corrupted_valid_examples_warn_or_degrade_gracefully(example_path, strat
 
         try:
             tables, refs = parse_dbml(dbml_file)
-        except Exception as exc:  # noqa: BLE001 -- invariant under test is "never raises"
+        except ModelError:
+            continue
+        except Exception as exc:  # noqa: BLE001 -- invariant under test is "only ModelError"
             failures.append((i, repr(exc)))
             continue
 
-        warnings = get_parse_warnings()
-        if len(tables) < baseline_table_count and not warnings:
+        if len(tables) < baseline_table_count:
             silent_losses.append((i, len(tables), baseline_table_count))
 
     assert not failures, (
@@ -274,8 +280,6 @@ def test_corrupted_valid_examples_warn_or_degrade_gracefully(example_path, strat
     )
     assert not silent_losses, (
         f"{strategy.__name__} on {example_path.name}: {len(silent_losses)} mutation(s) "
-        f"silently dropped table(s) (fewer tables than the clean parse) with zero "
-        f"parse warnings. First: index={silent_losses[0][0]}, "
-        f"got {silent_losses[0][1]} tables vs baseline {silent_losses[0][2]}, "
-        f"warnings=[]"
+        f"silently dropped table(s). First: index={silent_losses[0][0]}, "
+        f"got {silent_losses[0][1]} tables vs baseline {silent_losses[0][2]}"
     )

@@ -1,0 +1,16 @@
+/* Notes across lines: triple-quoted on columns (hints included), the
+   object form on a table, escaped quotes, and block comments. */
+Table readings {
+  id int [pk]
+  value numeric [note: '''
+    {"min": 1, "max": 10}
+  ''']
+  unit varchar [note: '''
+    Prose over
+    two lines.
+  ''']
+  label text [note: 'it\'s escaped']
+  Note {
+    'An object-form table note'
+  }
+}

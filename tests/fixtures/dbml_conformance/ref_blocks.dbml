@@ -1,0 +1,22 @@
+// Ref forms: named, long block, composite, backwards, with settings.
+Table a {
+  id int [pk]
+  x int
+  y int
+}
+Table b {
+  id int [pk]
+  a_id int
+  ax int
+  ay int
+}
+Table c {
+  id int [pk]
+  b_id int
+}
+Ref named_one: b.a_id > a.id
+Ref {
+  c.b_id > b.id [delete: cascade, update: no action]
+}
+Ref: a.(x, y) < b.(ax, ay)
+Ref: b.id < c.id

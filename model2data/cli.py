@@ -1,11 +1,16 @@
 import random
+import re
 import shutil
-from datetime import datetime
+from dataclasses import replace
+from datetime import date, datetime
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
+import click
 import typer
 from faker import Faker
+from typer.core import TyperGroup
+from typer.models import ParameterInfo
 
 from model2data.dbt.project import (
     create_profiles_yml,
@@ -25,7 +30,17 @@ from model2data.generate.faker import (
     reset_stats,
 )
 from model2data.generate.options import TimeProfile
-from model2data.parse.dbml import get_parse_warnings, parse_dbml
+from model2data.model import (
+    Issue,
+    Model,
+    ModelError,
+    Shape,
+    dump,
+    load,
+    to_engine,
+    validate,
+)
+from model2data.parse.dbml import TableDef
 from model2data.utils import normalize_identifier
 
 SUPPORTED_ADAPTERS = ("duckdb", "postgres")
@@ -114,19 +129,122 @@ def _parse_table_seeds(
     return table_seeds
 
 
+class _GenerateByDefault(TyperGroup):
+    """`model2data --file x` still means `model2data generate --file x`.
+
+    The CLI was a single command before it had `validate` and `convert`; every
+    script calling it that way keeps working, because anything that is not a
+    subcommand's name (or `--help`) is handed to `generate`.
+    """
+
+    def parse_args(self, ctx: click.Context, args: list[str]) -> list[str]:
+        if not args or (args[0] not in self.commands and args[0] not in ("--help", "-h")):
+            args = ["generate", *args]
+        return super().parse_args(ctx, args)
+
+
 app = typer.Typer(
+    cls=_GenerateByDefault,
     help=(
-        "model2data: Generate analytics-ready datasets from DBML models.\n\n"
-        "Given a DBML file, this tool produces:\n"
+        "model2data: Generate analytics-ready datasets from a data model.\n\n"
+        "Given a model -- a .model2data.yml document (spec 0.2.0), the same as JSON,\n"
+        "or a DBML file -- this tool produces:\n"
         "• Synthetic but realistic data\n"
         "• A runnable dbt project scaffold\n"
-        "• dbt seeds, staging models, and profiles\n"
+        "• dbt seeds, staging models, and profiles\n\n"
+        "`model2data --file MODEL` generates; `validate` and `convert` check and\n"
+        "convert a model."
     ),
     add_completion=False,
 )
 
 
-@app.command(help="Generate synthetic data and a dbt project from a DBML model.")
+def _given(value: Any) -> Any:
+    """`value`, or None when a direct call left the option at its Typer default.
+
+    `main` is also called as a plain function (see tests/), which leaves every
+    option it isn't passed holding its `OptionInfo` default rather than None.
+    """
+    return None if isinstance(value, ParameterInfo) else value
+
+
+def _read_model(file: Path) -> Model:
+    """The model in `file`, or exit 1 listing every issue found in it."""
+    try:
+        model = load(file)
+    except ModelError as error:
+        _print_issues(file, [*error.issues, *error.warnings])
+        raise typer.Exit(1) from None
+    if model.warnings:
+        _print_issues(file, model.warnings)
+    return model
+
+
+def _print_issues(file: Path, issues: list[Issue]) -> None:
+    """Errors, then warnings, each with its document path."""
+    errors = [issue for issue in issues if issue.is_error]
+    warnings = [issue for issue in issues if not issue.is_error]
+    for marker, group, word in (("❌", errors, "error"), ("⚠️ ", warnings, "warning")):
+        if not group:
+            continue
+        count = f"1 {word}" if len(group) == 1 else f"{len(group)} {word}s"
+        typer.echo(f"{marker} {file.name}: {count}")
+        for issue in group:
+            text = str(issue).removeprefix("warning: ").replace("\n", "\n      ")
+            typer.echo(f"  - {text}")
+
+
+def _model_stem(file: Path) -> str:
+    """`orders.model2data.yml` -> `orders`: the name a model without `name` goes by."""
+    name = file.name
+    for suffix in (".model2data.yml", ".model2data.yaml", ".model2data.json"):
+        if name.lower().endswith(suffix):
+            return name[: -len(suffix)]
+    return file.stem
+
+
+def _dbt_identifier(key: str) -> str:
+    """A table key as the seed and model name it gets in the dbt project.
+
+    Spec 0.2.0 leaves a name as written (`user accounts`, `raw.orders`) and has
+    a consumer normalise it where it reaches a file or a dbt identifier, to
+    `[a-z0-9_]`. Underscores are kept as they are, so `_dlt_loads` and
+    `stories__kids` stay what they were.
+    """
+    cleaned = re.sub(r"[^0-9a-z_]+", "_", key.lower())
+    if cleaned.strip("_") == "":
+        cleaned = "table"
+    elif cleaned[0].isdigit():
+        cleaned = f"t_{cleaned}"
+    return cleaned
+
+
+def _dbt_names(tables: dict[str, TableDef]) -> dict[str, str]:
+    """Each table key's dbt identifier, refusing two keys that normalise alike."""
+    names: dict[str, str] = {}
+    owners: dict[str, str] = {}
+    for key in tables:
+        name = _dbt_identifier(key)
+        if name in owners:
+            typer.echo(
+                f"❌ Tables {owners[name]!r} and {key!r} would both be the dbt seed {name!r}. "
+                "Rename one of them."
+            )
+            raise typer.Exit(1)
+        owners[name] = key
+        names[key] = name
+    return names
+
+
+@app.command(
+    "generate",
+    help=(
+        "Generate synthetic data and a dbt project from a model: a .model2data.yml "
+        "(or .yaml/.json) document, or a DBML file. The model's run settings are the "
+        "defaults; every option given here overrides them. `generate` is the default "
+        "command: `model2data --file MODEL` runs it."
+    ),
+)
 def main(
     file: Path = typer.Option(  # noqa: B008
         ...,
@@ -137,14 +255,14 @@ def main(
         dir_okay=False,
         readable=True,
         resolve_path=True,
-        help="Path to the DBML file to generate data from.",
+        help="The model: a .model2data.yml / .yaml / .json document, or a .dbml file.",
     ),
-    rows: int = typer.Option(
-        100,
+    rows: Optional[int] = typer.Option(
+        None,
         "--rows",
         "-r",
         min=10,
-        help="Number of rows to generate per table.",
+        help="Number of rows to generate per table (default: the model's run.rows, else 100).",
     ),
     # noqa: B008 is needed on some options and not others because ruff waves a
     # call through in a default only when the annotation is one of the types it
@@ -187,16 +305,16 @@ def main(
             "Pin it and a --seed run reproduces on any later day, not just the day it first ran."
         ),
     ),
-    business_hours: bool = typer.Option(
-        False,
-        "--business-hours",
+    business_hours: Optional[bool] = typer.Option(
+        None,
+        "--business-hours/--no-business-hours",
         help=(
             "Weight generated timestamps toward weekdays and working hours,\n"
             "instead of spreading them evenly over every hour of every day."
         ),
     ),
-    growth: float = typer.Option(
-        0.0,
+    growth: Optional[float] = typer.Option(
+        None,
         "--growth",
         min=-1.0,
         help=(
@@ -204,8 +322,8 @@ def main(
             "is half again as busy as the start, -0.3 means it tailed off. Default: flat."
         ),
     ),
-    seasonality: float = typer.Option(
-        0.0,
+    seasonality: Optional[float] = typer.Option(
+        None,
         "--seasonality",
         min=0.0,
         max=1.0,
@@ -214,8 +332,8 @@ def main(
             "peaking in the fourth quarter."
         ),
     ),
-    skew: float = typer.Option(
-        0.0,
+    skew: Optional[float] = typer.Option(
+        None,
         "--skew",
         min=0.0,
         max=1.0,
@@ -237,7 +355,10 @@ def main(
         None,
         "--name",
         "-n",
-        help="Optional override for the generated dbt project's name.",
+        help=(
+            "Optional override for the generated dbt project's name "
+            "(default: the model's name, else the file's)."
+        ),
     ),
     force: bool = typer.Option(
         False,
@@ -260,18 +381,54 @@ def main(
     ),
 ):
     """
-    Generate synthetic data and a dbt project from a DBML model.
+    Generate synthetic data and a dbt project from a model.
     """
 
     # -------------------------
     # Validate adapter
     # -------------------------
-    adapter = adapter.lower()
+    adapter = (_given(adapter) or "duckdb").lower()
     if adapter not in SUPPORTED_ADAPTERS:
         typer.echo(
             f"❌ Unsupported adapter '{adapter}'. Choose one of: {', '.join(SUPPORTED_ADAPTERS)}."
         )
         raise typer.Exit(1)
+
+    # -------------------------
+    # Read the model (names untouched)
+    # -------------------------
+    model = _read_model(file)
+    inputs = to_engine(model)
+    tables, refs = inputs.tables, inputs.refs
+    run = inputs.run
+    shape = run.shape or Shape()
+
+    # -------------------------
+    # Settings: an option given here, else the model's run, else the default
+    # -------------------------
+    def pick(option: Any, from_run: Any, default: Any) -> Any:
+        option = _given(option)
+        if option is not None:
+            return option
+        return from_run if from_run is not None else default
+
+    rows = pick(rows, run.rows, 100)
+    seed = pick(seed, run.seed, None)
+    locale = pick(locale, run.locale, None)
+    as_of_option = _given(as_of)
+    anchor: Optional[date] = (
+        as_of_option.date()
+        if isinstance(as_of_option, datetime)
+        else date.fromisoformat(run.as_of)
+        if run.as_of
+        else None
+    )
+    time_profile = TimeProfile(
+        business_hours=bool(pick(business_hours, shape.business_hours, False)),
+        growth=float(pick(growth, shape.growth, 0.0)),
+        seasonality=float(pick(seasonality, shape.seasonality, 0.0)),
+    )
+    skew = float(pick(skew, shape.skew, 0.0))
 
     # -------------------------
     # Deterministic seed
@@ -280,23 +437,9 @@ def main(
         random.seed(seed)
         Faker.seed(seed)
         typer.echo(f"🔁 Using deterministic seed: {seed}")
+    if anchor is not None:
+        typer.echo(f"📅 Anchoring generated dates on: {anchor}")
 
-    # Same reason as `_parse_row_overrides`'s isinstance guard: `main` is also
-    # called directly as a plain function, which leaves this holding its
-    # `OptionInfo` default rather than None. Anything that isn't a real
-    # datetime means "not supplied", i.e. anchor on today.
-    as_of = as_of if isinstance(as_of, datetime) else None
-    if as_of is not None:
-        typer.echo(f"📅 Anchoring generated dates on: {as_of.date()}")
-
-    # Same guard again for the shaping options: a direct call leaves them as
-    # `OptionInfo` objects, which means "not supplied", i.e. the uniform draw.
-    time_profile = TimeProfile(
-        business_hours=business_hours if isinstance(business_hours, bool) else False,
-        growth=growth if isinstance(growth, (int, float)) else 0.0,
-        seasonality=seasonality if isinstance(seasonality, (int, float)) else 0.0,
-    )
-    skew = skew if isinstance(skew, (int, float)) else 0.0
     if not time_profile.is_uniform:
         shaped = [
             label
@@ -311,20 +454,11 @@ def main(
     if skew:
         typer.echo(f"📈 Skewing child rows over their parents: {skew:.0%}")
 
-    # -------------------------
-    # Parse DBML (names untouched)
-    # -------------------------
-    tables, refs = parse_dbml(file)
-    parse_warnings = get_parse_warnings()
-    if not tables:
-        typer.echo("❌ No tables found in the provided DBML file.")
-        raise typer.Exit(1)
-
     # Validated before anything touches the filesystem: a typo'd table name here
     # should not leave a half-scaffolded project behind for the next run to trip
     # over with a confusing "destination already exists".
-    row_overrides = _parse_row_overrides(rows_for, tables)
-    table_seeds = _parse_table_seeds(table_seed, tables)
+    row_overrides = {**(run.rows_per_table or {}), **_parse_row_overrides(rows_for, tables)}
+    table_seeds = {**(run.table_seeds or {}), **_parse_table_seeds(table_seed, tables)}
     if table_seeds and seed is None:
         raise typer.BadParameter(
             "--table-seed re-rolls one table out of the run's seed, so there has to "
@@ -332,15 +466,16 @@ def main(
             param_hint="--table-seed",
         )
     if table_seeds:
-        rolled = ", ".join(f"{name}={value}" for name, value in sorted(table_seeds.items()))
+        rolled = ", ".join(f"{key}={value}" for key, value in sorted(table_seeds.items()))
         typer.echo(f"🎲 Re-rolling with a table seed of its own: {rolled}")
+    dbt_names = _dbt_names(tables)
 
-    project_name = normalize_identifier(name or file.stem)
+    project_name = normalize_identifier(_given(name) or model.name or _model_stem(file))
     dest = Path.cwd() / f"dbt_{project_name}"
     profile_name = f"{project_name}_profile"
 
     if dest.exists():
-        if not force:
+        if not _given(force):
             typer.echo(f"❌ Destination {dest} already exists.\nUse --force to overwrite.")
             raise typer.Exit(1)
         shutil.rmtree(dest)
@@ -354,7 +489,7 @@ def main(
     # -------------------------
     # Generate synthetic data
     # -------------------------
-    typer.echo("🧮 Generating synthetic datasets from DBML definitions...")
+    typer.echo("🧮 Generating synthetic datasets from the model...")
     reset_stats()
     try:
         generated_tables = generate_data_from_dbml(
@@ -364,24 +499,40 @@ def main(
             seed=seed,
             row_overrides=row_overrides,
             locale=locale,
-            as_of=as_of,
+            as_of=anchor,
             table_seeds=table_seeds,
             time_profile=time_profile,
             skew=skew,
         )
     except ValueError as exc:
-        # A bad column-note hint (an unknown enum value in `weights`, `distinct`
-        # on a foreign key...) is a mistake in the schema, not a bug -- it
-        # deserves the same one-line, non-traceback treatment as every other
+        # A mistake in the schema the model checks could not see, not a bug --
+        # it deserves the same one-line, non-traceback treatment as every other
         # validation error this command already reports.
         typer.echo(f"❌ {exc}")
         raise typer.Exit(1) from None
 
     # -------------------------
+    # dbt names: a table key becomes a [a-z0-9_] seed and model name here,
+    # once, so the CSV's stem, `stg_<name>` and every `ref()` agree.
+    # -------------------------
+    dbt_tables = {
+        dbt_names[key]: replace(table, name=dbt_names[key]) for key, table in tables.items()
+    }
+    dbt_refs = [
+        {
+            **ref,
+            "source_table": dbt_names.get(ref["source_table"], ref["source_table"]),
+            "target_table": dbt_names.get(ref["target_table"], ref["target_table"]),
+        }
+        for ref in refs
+    ]
+    dbt_frames = {dbt_names.get(key, key): df for key, df in generated_tables.items()}
+
+    # -------------------------
     # Write dbt seeds (normalized names)
     # -------------------------
     seeds_path = dest / "seeds/raw"
-    for table_key, df in generated_tables.items():
+    for table_key, df in dbt_frames.items():
         csv_path = seeds_path / f"{table_key}.csv"
         df.to_csv(csv_path, index=False)
 
@@ -392,16 +543,16 @@ def main(
     create_staging_models(dest, project_name)
 
     typer.echo("🧪 Generating dbt yml with tests...")
-    generate_dbt_yml(dest, tables, refs, project_name)
+    generate_dbt_yml(dest, dbt_tables, dbt_refs, project_name)
 
-    if unit_tests:
+    if _given(unit_tests):
         typer.echo("🔬 Generating dbt unit test fixtures (requires dbt-core >= 1.8)...")
-        generate_unit_tests(dest, tables, generated_tables)
+        generate_unit_tests(dest, dbt_tables, dbt_frames)
 
     typer.echo(f"🪪 Ensuring dbt profile exists ({adapter})...")
     create_profiles_yml(dest, profile_name, adapter=adapter)
 
-    # Keep original DBML for reference
+    # Keep the original model file for reference
     shutil.copy(file, dest / file.name)
 
     # -------------------------
@@ -416,7 +567,7 @@ def main(
     typer.echo("\n📊 Summary")
     typer.echo(f"  Tables generated:        {len(generated_tables)}")
     typer.echo(f"  Rows generated:          {total_rows}")
-    typer.echo(f"  Relationships in DBML:   {len(refs)}")
+    typer.echo(f"  Relationships:           {len(refs)}")
     if unmapped:
         typer.echo(f"  Columns using generic fallback text: {len(unmapped)}")
         for col_name, data_type in unmapped:
@@ -442,10 +593,6 @@ def main(
         )
         for label in duplicate_unique:
             typer.echo(f"    - {label}")
-    if parse_warnings:
-        typer.echo(f"  ⚠️  DBML lines model2data could not fully parse: {len(parse_warnings)}")
-        for warning in parse_warnings:
-            typer.echo(f"    - {warning}")
 
     # -------------------------
     # Done
@@ -454,3 +601,63 @@ def main(
     typer.echo("Next steps:")
     typer.echo(f"  cd {dest}")
     typer.echo("  dbt build   # loads the seeds, builds the models, runs every test")
+
+
+@app.command("validate")
+def validate_command(
+    file: Path = typer.Argument(  # noqa: B008
+        ...,
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+        help="The model: a .model2data.yml / .yaml / .json document, or a .dbml file.",
+    ),
+):
+    """Check that a model conforms to spec 0.2.0, printing every issue with its path.
+
+    Exits 1 when there is an error; warnings are printed, and the model conforms.
+    """
+    issues = validate(file)
+    _print_issues(file, issues)
+    if any(issue.is_error for issue in issues):
+        raise typer.Exit(1)
+    typer.echo(f"✅ {file.name} conforms to spec 0.2.0.")
+
+
+@app.command("convert")
+def convert_command(
+    file: Path = typer.Argument(  # noqa: B008
+        ...,
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+        help="The model to convert: a .dbml file (or a .model2data.yml / .json document).",
+    ),
+    output: Optional[Path] = typer.Option(  # noqa: B008
+        None,
+        "--output",
+        "-o",
+        dir_okay=False,
+        help="Where to write the .model2data.yml document (default: print it).",
+    ),
+    force: bool = typer.Option(False, "--force", help="Overwrite the output file if it exists."),
+):
+    """Convert a model -- DBML, typically -- to a spec 0.2.0 .model2data.yml document."""
+    try:
+        model = load(file)
+    except ModelError as error:
+        _print_issues(file, [*error.issues, *error.warnings])
+        raise typer.Exit(1) from None
+    text = dump(model)
+    if model.warnings and output is not None:
+        _print_issues(file, model.warnings)
+    if output is None:
+        typer.echo(text, nl=False)
+        return
+    if output.exists() and not force:
+        typer.echo(f"❌ {output} already exists. Use --force to overwrite it.")
+        raise typer.Exit(1)
+    output.write_text(text, encoding="utf-8")
+    typer.echo(f"✅ Wrote {output}")

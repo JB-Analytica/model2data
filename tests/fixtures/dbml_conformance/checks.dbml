@@ -1,0 +1,10 @@
+// Check constraints, on a column and in a table's `checks {}` block.
+Table products {
+  id int [pk]
+  price decimal(10, 2) [not null, check: `price > 0`]
+  discount decimal(10, 2)
+  checks {
+    `discount < price` [name: 'discount_below_price']
+    `price < 10000`
+  }
+}

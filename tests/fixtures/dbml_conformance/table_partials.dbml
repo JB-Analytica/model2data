@@ -1,0 +1,18 @@
+// TablePartial: shared columns, settings and indexes injected with `~name`.
+TablePartial audited [headercolor: #FF0000] {
+  created_at timestamp [not null, default: `now()`]
+  updated_at timestamp
+}
+TablePartial keyed {
+  id int [pk, increment]
+}
+Table users {
+  ~keyed
+  email varchar [unique, not null]
+  ~audited
+}
+Table orders {
+  ~keyed
+  user_id int [ref: > users.id]
+  ~audited
+}
