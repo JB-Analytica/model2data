@@ -127,6 +127,15 @@
           "description": "The table's role when a star schema or a Data Vault is derived from the model, overriding the inferred one. `fact`: events or measurements. `dimension`: an entity described. A bridge is only ever inferred.",
           "enum": ["fact", "dimension"]
         },
+        "grain": {
+          "description": "The columns that together identify one row of the table: what a row of a fact is (an order line, a daily balance). Its members are columns of the table. Exported as a uniqueness test over them, and as the primary entity of a semantic model derived from the table.",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/name" },
+          "examples": [["order_id", "line_number"]]
+        },
+        "incremental": { "$ref": "#/$defs/incremental" },
         "columns": {
           "description": "The table's columns, keyed by name, in the order they are generated and exported. A column written as a plain string is a column of that type and nothing else: `country: country`.",
           "type": "object",
@@ -211,8 +220,12 @@
           "examples": ["customers.id", { "to": "users.id", "one_to_one": true }]
         },
         "measure": {
-          "description": "Whether the column is a measure (a value to sum or average) when a star schema or a Data Vault is derived from the model, overriding the inferred answer.",
-          "type": "boolean"
+          "description": "Whether the column is a measure when a star schema, a Data Vault or a semantic layer is derived from the model, and how it aggregates, overriding the inferred answer. `true` is a measure aggregated by `sum`; `false` is not a measure. `count` and `count_distinct` apply to any column, the others to numeric ones.",
+          "oneOf": [
+            { "type": "boolean" },
+            { "enum": ["sum", "average", "min", "max", "median", "count", "count_distinct"] }
+          ],
+          "examples": [true, "average"]
         },
         "generate": { "$ref": "#/$defs/generate" },
         "x-default-expression": {
@@ -287,6 +300,37 @@
         "description": { "type": "string" }
       },
       "additionalProperties": false
+    },
+
+    "incremental": {
+      "description": "How the table moves from one generated day to the next, when a run generates further days after the first (`model2data generate --next`). Each day adds `new_per_day` rows and updates `update_rate` of the rows already there. Without it a table does not change after the first day.",
+      "type": "object",
+      "properties": {
+        "new_per_day": {
+          "description": "Rows inserted per generated day. Their temporal columns fall on that day.",
+          "type": "integer",
+          "minimum": 0,
+          "examples": [40]
+        },
+        "update_rate": {
+          "description": "The fraction of the table's existing rows that change on a generated day.",
+          "$ref": "#/$defs/fraction",
+          "examples": [0.05]
+        },
+        "changes": {
+          "description": "The columns an update may change. A column with `generate.transitions` moves along them; any other listed column is drawn again. Without it, an update changes only the columns that have `transitions`.",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/name" }
+        },
+        "updated_at": {
+          "description": "A temporal column set to the day a row was last inserted or updated.",
+          "$ref": "#/$defs/name"
+        }
+      },
+      "additionalProperties": false,
+      "examples": [{ "new_per_day": 40, "update_rate": 0.05, "updated_at": "updated_at" }]
     },
 
     "distributionKind": {
@@ -416,6 +460,17 @@
           "description": "Replaces the run's seasonality for this column. A day weighs 1 + seasonality · cos(2π (d − 320) / 365.25), d its day of the year: an annual peak on 16 November. 0 is no seasonal pattern; 1 the strongest.",
           "$ref": "#/$defs/fraction",
           "x-model2data-applies-to": ["temporal"]
+        },
+        "transitions": {
+          "description": "The states each enum member may move to when the row is updated on a later generated day (see a table's `incremental`): a mapping of member to the members that may follow it. A member with no entry, or an empty list, does not change. Every key and every target is a member of the column's enum.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": { "$ref": "#/$defs/enumValue" }
+          },
+          "x-model2data-applies-to": ["enum"],
+          "examples": [{ "pending": ["paid", "cancelled"], "paid": ["shipped"], "shipped": ["delivered"] }]
         }
       },
       "patternProperties": { "^x-": true },

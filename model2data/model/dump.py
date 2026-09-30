@@ -26,7 +26,7 @@ from collections.abc import Mapping
 from typing import Any, Optional
 
 from model2data.model._yaml import scalar
-from model2data.model.document import column_to_dict, to_dict
+from model2data.model.document import column_to_dict, incremental_to_dict, to_dict
 from model2data.model.types import Model
 from model2data.model.validate import SCHEMA_URL
 
@@ -75,6 +75,11 @@ def _tables(model: Model) -> list[str]:
             ("description", table.description),
             ("color", table.color),
             ("role", table.role),
+            ("grain", list(table.grain) if table.grain is not None else None),
+            (
+                "incremental",
+                incremental_to_dict(table.incremental) if table.incremental is not None else None,
+            ),
         ):
             if value is not None:
                 lines += _entry(name, value, 2)

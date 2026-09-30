@@ -182,9 +182,58 @@ The run's defaults for four hints are under `run.shape`; a column's own `generat
 
 ### Modelling
 
-`role` on a table and `measure` on a column steer the star schema and Data Vault a consumer may
-derive from the model. The generator does not read them; they sit beside `generate`, not in it,
-because they are about the model rather than its data.
+`role` and `grain` on a table and `measure` on a column steer what a consumer derives from the
+model: a star schema, a Data Vault, a semantic layer, tests. The generator does not read them;
+they sit beside `generate`, not in it, because they are about the model rather than its data.
+
+- `grain` lists the columns that together identify one row: what one row of a fact *is*. A
+  consumer may test it as a unique combination and use it as the primary entity of a semantic
+  model.
+- `measure` is `true` (a measure, aggregated by `sum`), `false` (not a measure), or how it
+  aggregates: `sum`, `average`, `min`, `max`, `median`, `count`, `count_distinct`. The last two
+  apply to any column, the rest to numeric ones.
+
+```yaml
+orders:
+  role: fact
+  grain: [order_id, line_number]
+  columns:
+    total: {type: numeric, measure: sum}
+    unit_price: {type: numeric, measure: average}
+    customer_id: {type: bigint, references: customers.id, measure: count_distinct}
+```
+
+### Days after the first
+
+A run generates one day's state of the model: the rows as they stand on `as_of`. A table with
+`incremental` also moves forward, one day at a time, when a reader asks for the next day
+(`model2data generate --next`):
+
+```yaml
+orders:
+  incremental:
+    new_per_day: 40          # rows inserted each day, their dates falling on it
+    update_rate: 0.05        # the share of existing rows that change each day
+    changes: [status]        # which columns an update may change
+    updated_at: updated_at   # set to the day a row was inserted or last changed
+  columns:
+    status:
+      type: order_status
+      generate:
+        transitions: {pending: [paid, cancelled], paid: [shipped], shipped: [delivered]}
+```
+
+- An update changes the columns in `changes`, or, without it, the columns that have
+  `transitions`. A column with `transitions` moves from its current member to one of the members
+  listed for it, and stays when none are; any other changed column is drawn again by its type and
+  hints.
+- Keys never change, and a foreign key keeps pointing at a row that exists.
+- Day *n* is fixed by the seed, `as_of` and *n*: generating days 1 to *n* again gives the same
+  bytes, and day *n* never depends on anything but the days before it.
+- A table without `incremental` does not change after the first day.
+
+How the days are delivered (a file per day, a change log with an operation per row, the state as
+of the last day) is the reader's choice; the rows each day holds are not.
 
 ### Run settings
 
@@ -218,6 +267,10 @@ reports each failure with the path of the value (`tables.orders.columns.status.g
    a bound left out takes its default (0 and 100).
 8. `null_rate` is only on a nullable column (it would otherwise have no rows to null).
 9. `run.table_seeds` only with `run.seed`.
+10. `grain`, `incremental.changes` and `incremental.updated_at` name columns of their own table,
+    and `updated_at` is a temporal column.
+11. Every key and every target of `transitions` is a member of the column's enum.
+12. A `measure` aggregating by `sum`, `average`, `min`, `max` or `median` is on a numeric column.
 
 ### Warnings
 

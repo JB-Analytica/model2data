@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   format is [model2data/spec/README.md](model2data/spec/README.md) and its JSON Schema, packaged
   with the engine. Every `examples/*.dbml` now has its `examples/*.model2data.yml`, and the two
   generate the same bytes under a seed and an `--as-of`.
+- **Spec 0.2.0 vocabulary for modelling and time:** `grain` on a table (the columns that
+  identify a row), `measure` as an aggregation (`sum`, `average`, `min`, `max`, `median`,
+  `count`, `count_distinct`) as well as `true`/`false`, `incremental` on a table (`new_per_day`,
+  `update_rate`, `changes`, `updated_at`) and `transitions` among an enum column's hints. Read,
+  written by `dump` and checked; what uses them is listed under its own entry.
 - **`model2data validate FILE`** checks a model -- the schema, then every check beyond it -- and
   prints every issue with its path in the document
   (`tables.orders.columns.status.generate.weights: weighs "returned", which is not a member of

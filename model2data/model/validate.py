@@ -116,7 +116,7 @@ def _json_keys(value: Any) -> Any:
                     name: _stringify_keys(members) if isinstance(members, Mapping) else members
                     for name, members in item.items()
                 }
-            elif key == "weights" and isinstance(item, Mapping):
+            elif key in ("weights", "transitions") and isinstance(item, Mapping):
                 out[key] = _stringify_keys(item)
             else:
                 out[key] = _json_keys(item)
@@ -503,6 +503,40 @@ class _Checks:
                 in_key=name in in_any_key,
             )
         self._after_cycles(key, columns)
+        self._grain_and_incremental(key, table, columns)
+
+    def _grain_and_incremental(self, key: str, table: Mapping, columns: dict[str, dict]) -> None:
+        base = ["tables", key]
+        for position, member in enumerate(_list(table.get("grain"))):
+            if isinstance(member, str) and member not in columns:
+                self.add(
+                    [*base, "grain", position],
+                    f"names {_show(member)}, which is not a column of {key}",
+                )
+        incremental = table.get("incremental")
+        if not isinstance(incremental, Mapping):
+            return
+        for position, member in enumerate(_list(incremental.get("changes"))):
+            if isinstance(member, str) and member not in columns:
+                self.add(
+                    [*base, "incremental", "changes", position],
+                    f"names {_show(member)}, which is not a column of {key}",
+                )
+        updated_at = incremental.get("updated_at")
+        if isinstance(updated_at, str):
+            other = columns.get(updated_at)
+            if other is None:
+                self.add(
+                    [*base, "incremental", "updated_at"],
+                    f"names {_show(updated_at)}, which is not a column of {key}",
+                )
+            elif not kinds.is_temporal_type(str(other.get("type", ""))) or self.enum_named(
+                other.get("type")
+            ):
+                self.add(
+                    [*base, "incremental", "updated_at"],
+                    f"names {updated_at}, which is not a date or timestamp column",
+                )
 
     # -- references ----------------------------------------------------
     def _parent_issue(self, to: str) -> Optional[tuple[str, bool]]:
@@ -597,6 +631,17 @@ class _Checks:
         in_pk: bool,
         in_key: bool,
     ) -> None:
+        measure = column.get("measure")
+        if isinstance(measure, str) and measure not in ("count", "count_distinct"):
+            measure_type = column.get("type")
+            if self.enum_named(measure_type) or not kinds.is_numeric_type(
+                measure_type if isinstance(measure_type, str) else ""
+            ):
+                self.add(
+                    [*path, "measure"],
+                    f"aggregates by {measure}, which needs a numeric column "
+                    f"({measure_type!s} is not one); count and count_distinct apply to any",
+                )
         generate = column.get("generate")
         if not isinstance(generate, Mapping):
             return
@@ -650,6 +695,19 @@ class _Checks:
                         f"weighs {_show(text)}, which is not a member of {enum_name} "
                         f"(members: {', '.join(str(m) for m in members)})",
                     )
+
+        transitions = generate.get("transitions")
+        if enum is not None and isinstance(transitions, Mapping):
+            enum_name, members = enum
+            for state, targets in transitions.items():
+                for member in [state, *_list(targets)]:
+                    text = _member_text(member)
+                    if text not in members:
+                        self.add(
+                            [*gen_path, "transitions"],
+                            f"names {_show(text)}, which is not a member of {enum_name} "
+                            f"(members: {', '.join(str(m) for m in members)})",
+                        )
 
         after = generate.get("after")
         if temporal and isinstance(after, str):

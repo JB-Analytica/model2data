@@ -12,6 +12,7 @@ from model2data.model.types import (
     Enum,
     ForeignKey,
     Group,
+    Incremental,
     Key,
     Model,
     Reference,
@@ -87,6 +88,8 @@ def _table(table: Mapping) -> Table:
         description=table.get("description"),
         color=table.get("color"),
         role=table.get("role"),
+        grain=list(table["grain"]) if table.get("grain") is not None else None,
+        incremental=_incremental(table["incremental"]) if "incremental" in table else None,
         keys=[
             Key("pk" if "pk" in key else "unique", list(key.get("pk") or key.get("unique")))
             for key in table.get("keys") or []
@@ -102,6 +105,24 @@ def _table(table: Mapping) -> Table:
         ],
         extensions=_extensions(table),
     )
+
+
+def _incremental(incremental: Mapping) -> Incremental:
+    return Incremental(
+        new_per_day=incremental.get("new_per_day"),
+        update_rate=incremental.get("update_rate"),
+        changes=list(incremental["changes"]) if incremental.get("changes") is not None else None,
+        updated_at=incremental.get("updated_at"),
+    )
+
+
+def incremental_to_dict(incremental: Incremental) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    _put(out, "new_per_day", incremental.new_per_day)
+    _put(out, "update_rate", incremental.update_rate)
+    _put(out, "changes", list(incremental.changes) if incremental.changes is not None else None)
+    _put(out, "updated_at", incremental.updated_at)
+    return out
 
 
 def _column(column: Any) -> Column:
@@ -195,6 +216,9 @@ def table_to_dict(table: Table) -> dict[str, Any]:
     _put(out, "description", table.description)
     _put(out, "color", table.color)
     _put(out, "role", table.role)
+    _put(out, "grain", list(table.grain) if table.grain is not None else None)
+    if table.incremental is not None:
+        out["incremental"] = incremental_to_dict(table.incremental)
     out["columns"] = {name: column_to_dict(column) for name, column in table.columns.items()}
     _put(out, "keys", [{key.kind: list(key.columns)} for key in table.keys])
     foreign_keys = []

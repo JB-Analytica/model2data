@@ -48,7 +48,8 @@ class Column:
     default: Scalar = None
     description: Optional[str] = None
     references: Optional[Reference] = None
-    measure: Optional[bool] = None
+    # True, or how the measure aggregates (`sum`, `average`, ...); True reads as `sum`.
+    measure: Union[bool, str, None] = None
     generate: dict[str, Any] = field(default_factory=dict)
     extensions: dict[str, Any] = field(default_factory=dict)
 
@@ -70,11 +71,23 @@ class ForeignKey:
 
 
 @dataclass
+class Incremental:
+    """How a table moves from one generated day to the next (`generate --next`)."""
+
+    new_per_day: Optional[int] = None
+    update_rate: Optional[float] = None
+    changes: Optional[list[str]] = None
+    updated_at: Optional[str] = None
+
+
+@dataclass
 class Table:
     columns: dict[str, Column]
     description: Optional[str] = None
     color: Optional[str] = None
     role: Optional[Literal["fact", "dimension"]] = None
+    grain: Optional[list[str]] = None
+    incremental: Optional[Incremental] = None
     keys: list[Key] = field(default_factory=list)
     foreign_keys: list[ForeignKey] = field(default_factory=list)
     extensions: dict[str, Any] = field(default_factory=dict)
