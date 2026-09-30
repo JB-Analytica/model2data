@@ -13,7 +13,7 @@ from datetime import date
 from typing import Any, Optional
 
 from model2data.generate import kinds
-from model2data.model.types import Column, Model, Run, Table
+from model2data.model.types import Column, Incremental, Model, Run, Table
 from model2data.parse.dbml import ColumnDef, TableDef
 
 
@@ -26,13 +26,17 @@ class EngineInputs:
     the default schema -- in document order, and one child-first ref dict per
     foreign-key column pair. A one-to-one ref carries `"one_to_one": True`.
     `many_to_many` holds the `relationships`, which generate nothing. `run` is
-    the document's `run` (empty when it has none).
+    the document's `run` (empty when it has none). `incremental` holds the
+    `incremental` block of each table that has one, by table key: how the table
+    moves on in `model2data.generate.days.generate_days`. A column's
+    `transitions` travel in its hints.
     """
 
     tables: dict[str, TableDef]
     refs: list[dict]
     many_to_many: list[dict] = field(default_factory=list)
     run: Run = field(default_factory=Run)
+    incremental: dict[str, Incremental] = field(default_factory=dict)
 
 
 def to_engine(model: Model) -> EngineInputs:
@@ -77,7 +81,12 @@ def to_engine(model: Model) -> EngineInputs:
                 "target_column": right_column,
             }
         )
-    return EngineInputs(tables, refs, many_to_many, model.run or Run())
+    incremental = {
+        key: table.incremental
+        for key, table in model.tables.items()
+        if table.incremental is not None
+    }
+    return EngineInputs(tables, refs, many_to_many, model.run or Run(), incremental)
 
 
 def _table_def(model: Model, key: str, table: Table) -> TableDef:

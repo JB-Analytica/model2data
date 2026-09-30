@@ -78,3 +78,39 @@ def test_uuid_and_hash_columns_follow_the_seed(uuid_schema: Path):
 )
 def test_every_example_reproduces_across_processes(example: Path):
     assert _generate_in_fresh_process(example, "1") == _generate_in_fresh_process(example, "2")
+
+
+_GENERATE_DAYS = """
+import datetime as dt, sys
+from pathlib import Path
+from model2data.generate.days import generate_days
+from model2data.model import Incremental, load, to_engine
+inputs = to_engine(load(Path(sys.argv[1])))
+if not inputs.incremental:
+    inputs.incremental = {
+        key: Incremental(new_per_day=5, update_rate=0.25) for key in inputs.tables
+    }
+for result in generate_days(inputs, 3, base_rows=40, seed=7, as_of=dt.datetime(2026, 1, 1)):
+    for name in sorted(result.tables):
+        table = result.tables[name]
+        sys.stdout.write(f"== day {result.day} {name}\\n")
+        for frame in (table.inserted, table.updated, table.state):
+            sys.stdout.write(frame.to_csv(index=False) + "--\\n")
+"""
+
+
+def _days_in_fresh_process(model: Path, hash_seed: str) -> str:
+    return subprocess.run(
+        [sys.executable, "-c", _GENERATE_DAYS, str(model)],
+        check=True,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PYTHONHASHSEED": hash_seed},
+    ).stdout
+
+
+@pytest.mark.parametrize("example", sorted(EXAMPLES.glob("*.model2data.yml")), ids=lambda p: p.name)
+def test_every_example_reproduces_its_days_across_processes(example: Path):
+    first = _days_in_fresh_process(example, "1")
+    assert "== day 3" in first
+    assert first == _days_in_fresh_process(example, "2")

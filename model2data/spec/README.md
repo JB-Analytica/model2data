@@ -227,7 +227,23 @@ orders:
   `transitions`. A column with `transitions` moves from its current member to one of the members
   listed for it, and stays when none are; any other changed column is drawn again by its type and
   hints.
-- Keys never change, and a foreign key keeps pointing at a row that exists.
+- A day's new rows continue the existing ones: an integer key continues after the largest value
+  held, any other unique value differs from every value held, and a foreign key points at a row
+  that exists by then, one inserted the same day included (parents are inserted before
+  children). A foreign key that must be unique takes each parent once, so a table whose parents
+  run out inserts fewer rows that day. Every date and timestamp column of a new row falls on the
+  day (a timestamp at any time of it, weighted toward working hours when the run shape has
+  `business_hours`), a nullable one staying null where an ordinary draw would be, and a column
+  that follows another (`after`, or a created/updated/closed stage) is not before it.
+- `update_rate` is applied to the rows that existed before the day's insertions: the day updates
+  `update_rate` times their number, rounded half up. A row with nowhere to move is
+  counted all the same, and gets its `updated_at`. A temporal column in `changes` is set to a
+  time on the day.
+- `updated_at`, when given, is set on a new row to the latest time of the row's own temporal
+  columns, and on an updated row to a time on the day no earlier than any temporal column the
+  update changed.
+- Keys never change (a key column, one that is `pk` or `unique` or in a `keys` entry, is not
+  listed in `changes`), and a foreign key keeps pointing at a row that exists.
 - Day *n* is fixed by the seed, `as_of` and *n*: generating days 1 to *n* again gives the same
   bytes, and day *n* never depends on anything but the days before it.
 - A table without `incremental` does not change after the first day.
@@ -268,7 +284,7 @@ reports each failure with the path of the value (`tables.orders.columns.status.g
 8. `null_rate` is only on a nullable column (it would otherwise have no rows to null).
 9. `run.table_seeds` only with `run.seed`.
 10. `grain`, `incremental.changes` and `incremental.updated_at` name columns of their own table,
-    and `updated_at` is a temporal column.
+    `updated_at` is a temporal column, and `changes` names no column of a key.
 11. Every key and every target of `transitions` is a member of the column's enum.
 12. A `measure` aggregating by `sum`, `average`, `min`, `max` or `median` is on a numeric column.
 
