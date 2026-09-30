@@ -164,6 +164,29 @@ def test_transitions_only_follow_allowed_edges():
     assert changed > 50
 
 
+def test_new_rows_start_in_a_state_no_transition_leads_into():
+    # Only `pending` is never a target, so a new order starts there, never
+    # already delivered. Day 0 is the state rows have reached, so it has them all.
+    days = _days(4, rows=200)
+    assert set(days[0].tables["orders"].state["status"].dropna()) - {"pending"}
+    for day in days[1:]:
+        inserted = day.tables["orders"].inserted["status"].dropna()
+        assert len(inserted) > 0
+        assert set(inserted) == {"pending"}
+
+
+def test_a_transition_cycle_has_no_start_so_every_member_may_begin():
+    document = to_dict(load(DAILY))
+    status = document["tables"]["orders"]["columns"]["status"]
+    members = document["enums"][status["type"]]
+    status["generate"]["transitions"] = {
+        m: [members[(i + 1) % len(members)]] for i, m in enumerate(members)
+    }
+    days = generate_days(from_dict(document), 3, base_rows=200, seed=7, as_of=AS_OF)
+    starts = set().union(*(set(d.tables["orders"].inserted["status"].dropna()) for d in days[1:]))
+    assert len(starts) > 1
+
+
 def test_update_counts_follow_update_rate_and_only_changes_columns_change():
     days = _days(4)
     for before, after in zip(days, days[1:], strict=False):

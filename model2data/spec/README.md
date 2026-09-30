@@ -227,6 +227,10 @@ orders:
   `transitions`. A column with `transitions` moves from its current member to one of the members
   listed for it, and stays when none are; any other changed column is drawn again by its type and
   hints.
+- A new row of a column with `transitions` starts in an initial state: a member no transition
+  leads into (a new order is `pending`, never already `delivered`), drawn by `weights` among
+  them. When every member can be reached from another, every member is a start. Day 0 is the
+  state rows have reached by `as_of`, so it holds every member.
 - A day's new rows continue the existing ones: an integer key continues after the largest value
   held, any other unique value differs from every value held, and a foreign key points at a row
   that exists by then, one inserted the same day included (parents are inserted before

@@ -416,6 +416,8 @@ class _Engine:
                 fresh_keys=False,
             )
         frame = pd.DataFrame({name: data[name] for name in names})
+        for column in table.columns:
+            _start_in_initial_states(frame, column)
         frame = self._mirror(key, frame)
         self._composite_keys(key, table, frame, state)
         self._place_in_day(table, frame, inc, list(names), only_updated_at=False)
@@ -700,6 +702,35 @@ class _Engine:
             current = stamps[name]
             later = current.notna() & latest.notna() & (latest > current)
             stamps[name] = current.where(~later, latest)
+
+
+def _initial_states(column: ColumnDef) -> list[str]:
+    """The members a new row of a `transitions` column may start in.
+
+    A member no transition leads into is where a row's life begins: a new
+    order is `pending`, never already `delivered`. When every member can be
+    reached from another (a cycle), there is no such start and every member
+    is allowed, as it is on day 0.
+    """
+    transitions = (column.note or {}).get("transitions")
+    members = [str(member) for member in column.enum_values or []]
+    if not transitions or not members:
+        return members
+    targets = {str(target) for targets in transitions.values() for target in targets or []}
+    return [member for member in members if member not in targets] or members
+
+
+def _start_in_initial_states(frame: pd.DataFrame, column: ColumnDef) -> None:
+    """Redraw, among the initial states, any new row that starts past them."""
+    initial = _initial_states(column)
+    if not initial or len(initial) == len(column.enum_values or []):
+        return
+    weights = (column.note or {}).get("weights") or {}
+    chances = [float(weights.get(member, 1)) for member in initial]
+    values = frame[column.name]
+    for index, value in values.items():
+        if not pd.isna(value) and str(value) not in initial:
+            frame.at[index, column.name] = random.choices(initial, weights=chances)[0]
 
 
 def _is_unique(column: ColumnDef) -> bool:
