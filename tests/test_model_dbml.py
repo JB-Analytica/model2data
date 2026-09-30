@@ -39,7 +39,6 @@ def _corpus(name: str):
 REFUSED = {
     "checks": "does not support check constraints",
     "records": "does not support Records blocks",
-    "ref_settings": "does not support a Ref's color",
     "table_partials": "does not support TablePartial",
     "ref_directions": "references both users.id and legacy schema.old users.id",
 }
@@ -74,6 +73,12 @@ def test_names_outside_ascii_need_no_quotes():
     model = _corpus("unicode_names")
     assert list(model.tables["café"].columns) == ["id", "crème"]
     assert model.tables["commandes"].columns["café_id"].references.to == "café.id"
+
+
+def test_a_ref_colour_is_read_and_dropped():
+    # How dbdiagram draws a line is no part of the model.
+    team = _corpus("ref_settings").tables["players"].columns["team_id"]
+    assert team.references.to == "teams.id"
 
 
 def test_the_corpus_is_all_here():

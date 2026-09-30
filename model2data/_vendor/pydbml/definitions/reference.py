@@ -3,6 +3,7 @@ import pyparsing as pp
 from .common import _
 from .common import _c
 from .common import c
+from .common import hex_color
 from .common import n
 from .generic import name
 from model2data._vendor.pydbml.parser.blueprints import ReferenceBlueprint
@@ -51,7 +52,12 @@ on_option = (
 update = pp.CaselessLiteral("update:").suppress() + _ + on_option
 delete = pp.CaselessLiteral("delete:").suppress() + _ + on_option
 
-ref_setting = _ + (update('update') | delete('delete')) + _
+# model2data: `color: #rrggbb` on a ref, as dbdiagram draws it. Read and
+# dropped -- a relationship's colour has no place in a model -- where 1.2.1
+# refused the whole file.
+ref_color = pp.CaselessLiteral("color:").suppress() + _ + pp.Combine(hex_color)
+
+ref_setting = _ + (update('update') | delete('delete') | ref_color('color')) + _
 
 ref_settings = (
     '['

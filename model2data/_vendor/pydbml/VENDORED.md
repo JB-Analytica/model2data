@@ -20,6 +20,8 @@ change is listed below, one commit each, so each can be offered upstream.
 3. **Names and types** (`definitions/generic.py`, `definitions/column.py`): a
    name is `\w+`, so unquoted non-ASCII names (`café`) read; a type may carry
    arguments and `[]` together (`numeric(10,2)[]`).
+4. **A ref's colour** (`definitions/reference.py`): `color: #rrggbb` among a
+   ref's settings is read and dropped, where 1.2.1 refused the file.
 
 ## Updating
 

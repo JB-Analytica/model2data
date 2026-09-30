@@ -107,10 +107,6 @@ _UNSUPPORTED = (
         re.compile(r"^\s*Table\s+`|ref:\s*[<>-]+\s*`|^\s*`[^`]*`\s+\w", re.IGNORECASE),
         'a DBML name is quoted with double quotes, "user accounts": backticks hold expressions',
     ),
-    (
-        re.compile(r"^\s*Ref\b.*\[[^\]]*\bcolor:", re.IGNORECASE),
-        "the DBML reader (pydbml) does not support a Ref's color: remove it",
-    ),
 )
 
 
