@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Your model writes your data tests.** The generated dbt project now tests what the model's
+  hints say valid data looks like: `generate.min`/`max` (`model2data_between`), `after`
+  (`model2data_not_before`), `null_rate` (`model2data_max_null_share`, with `--test-tolerance`,
+  default 0.1 absolute), `distinct` (`model2data_max_distinct`) and a table's `grain`
+  (`model2data_unique_combination`), as generic tests in a self-contained
+  `macros/model2data_hint_tests.sql` (no `dbt_expectations`, no `dbt deps`). `--hint-tests
+  {error,warn,off}` sets their severity (default `warn`); statistical hints (`true_rate`,
+  `weights`, `skew`, `distribution`, the temporal shape hints) write no test. A model with no such
+  hints generates the same YAML as before. `model2data.dbt.hint_tests.hint_tests_for` returns the
+  tests as data for other exporters. A table's `grain` is now in its `TableDef.note`.
 - **A model is one YAML document: `<name>.model2data.yml`, spec 0.2.0.** `model2data --file
   shop.model2data.yml` (or `.yaml`, or the same document as `.json`) generates from it, and the
   document's `run:` settings -- rows, rows per table, seed, table seeds, `as_of`, locale, shape --

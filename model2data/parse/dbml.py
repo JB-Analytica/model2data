@@ -35,7 +35,7 @@ class TableDef:
     columns: list[ColumnDef] = field(default_factory=list)
     description: Optional[str] = None
     composite_keys: list[dict] = field(default_factory=list)
-    # Table-level hints: `{"role": "fact"}` when the model sets a role.
+    # Table-level hints: `role` and `grain`, when the model sets them.
     note: Optional[dict] = None
 
 

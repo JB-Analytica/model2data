@@ -228,6 +228,28 @@ model2data --file examples/ecommerce.model2data.yml --rows 200 --seed 42 --unit-
 This targets dbt-core's native unit testing feature, which works out of the box with the base
 install — see [dbt-core versions](#dbt-core-versions) below.
 
+Your model's hints also write **data tests** for the dbt project, so the model that generates the
+fixtures guards the real pipeline too. Every hint that states a constraint becomes a generic test
+on the staging model, shipped as a self-contained macro in `macros/model2data_hint_tests.sql` (no
+dbt package, so `dbt build` still works offline):
+
+| In the model | dbt test | Tolerance |
+|---|---|---|
+| `generate: {min, max}` on a numeric column | `model2data_between` | none |
+| `generate: {after: other}` | `model2data_not_before` (where both are not null) | none |
+| `generate: {null_rate}` | `model2data_max_null_share`: nulls at most `null_rate` + tolerance | `--test-tolerance`, default 0.1 |
+| `generate: {distinct: n}` | `model2data_max_distinct`: at most `n` distinct values | none |
+| `grain` on a table | `model2data_unique_combination` | none |
+| an enum-typed column | `accepted_values` (always written) | none |
+
+`true_rate`, `weights`, `skew`, `distribution` and the temporal shape hints (`business_hours`,
+`growth`, `seasonality`) describe a statistical shape rather than a constraint a row can break, so
+they write no test. `--hint-tests {error,warn,off}` sets these tests' severity (default `warn`:
+they describe intent and should not break a first `dbt build` on real data); the structural tests
+(`not_null`, `unique`, `relationships`) are unaffected. A model with no such hints generates the
+same YAML as before. To call the mapping from Python, `model2data.dbt.hint_tests.hint_tests_for(model)`
+returns the tests as data.
+
 ---
 
 ### Generate the next days
@@ -281,7 +303,8 @@ dbt_{project_name}/
 ├── data-tests/
 │   └── unique_combination_stg_table1_col_a_col_b.sql  # only for composite pk/unique keys
 ├── macros/
-│   └── generate_schema_name.sql
+│   ├── generate_schema_name.sql
+│   └── model2data_hint_tests.sql  # only when the model's hints write tests
 ├── dbt_project.yml
 ├── profiles.yml  # DuckDB or Postgres config, depending on --adapter
 └── {project_name}_profile.duckdb  # DuckDB adapter only
@@ -294,7 +317,7 @@ dbt_{project_name}/
   declaring the seeds as dbt `sources` is what gives each model a real DAG edge to the seed
   behind it, so one `dbt build` orders seeds before models on a fresh database.
 - **Tests**: A YAML per staging model with column tests (`not_null`, `unique`, `relationships`,
-  and `accepted_values` for enum-typed columns). A column's `description` in the model becomes
+  and `accepted_values` for enum-typed columns), plus the hint tests above. A column's `description` in the model becomes
   its `description:` field.
 - **Composite key tests**: Composite primary/unique keys (`keys`, or several `pk: true` columns) get
   a singular SQL test under `data-tests/`, dbt's configured `test-paths`.
