@@ -65,6 +65,8 @@ column_setting = _ + (
     | note('note')
     | ref_inline('ref*')
     | default('default')
+    # model2data: a column check constraint, `check: `price > 0``.
+    | (pp.CaselessLiteral('check:').suppress() + _ - expression_literal)('check*')
 ) + _
 
 column_setting_with_property = column_setting | prop.set_results_name('property', list_all_matches=True)
@@ -93,6 +95,8 @@ def parse_column_settings(s, loc, tok):
         result['default'] = tok['default'][0]
     if 'ref' in tok:
         result['ref_blueprints'] = list(tok['ref'])
+    if 'check' in tok:
+        result['checks'] = [check[0].text for check in tok['check']]
     if 'comment' in tok:
         result['comment'] = tok['comment'][0]
     if 'property' in tok:

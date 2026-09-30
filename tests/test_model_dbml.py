@@ -37,7 +37,6 @@ def _corpus(name: str):
 
 
 REFUSED = {
-    "checks": "does not support check constraints",
     "records": "does not support Records blocks",
     "table_partials": "does not support TablePartial",
     "ref_directions": "references both users.id and legacy schema.old users.id",
@@ -79,6 +78,18 @@ def test_a_ref_colour_is_read_and_dropped():
     # How dbdiagram draws a line is no part of the model.
     team = _corpus("ref_settings").tables["players"].columns["team_id"]
     assert team.references.to == "teams.id"
+
+
+def test_check_constraints_are_kept_as_extensions():
+    products = _corpus("checks").tables["products"]
+    assert products.columns["price"].extensions == {"x-checks": ["price > 0"]}
+    assert products.extensions == {
+        "x-checks": [
+            {"expression": "discount < price", "name": "discount_below_price"},
+            {"expression": "price < 10000"},
+        ]
+    }
+    assert load(dump(_corpus("checks"))) == _corpus("checks")
 
 
 def test_the_corpus_is_all_here():

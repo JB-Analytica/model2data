@@ -24,10 +24,8 @@ neither are, on the column that declares an inline ref, or else on the left of
 a `Ref:` line. A ref onto a column that is not a key converts as written, and
 reading the model then warns about it (spec 0.2.0, "Warnings").
 
-pydbml 1.2 cannot read some newer or rarer DBML: `check` constraints,
-`Records`, `TablePartial`, unquoted non-ASCII names, signed or exponent number
-defaults, a parameterised array type such as `numeric(10,2)[]` unquoted, and a
-ref's `color`. Each is reported with its line and what to change, rather than
+pydbml 1.2 cannot read some newer or rarer DBML: `Records` and
+`TablePartial`. Each is reported with its line and what to change, rather than
 worked around. The one gap with a clean workaround, `default: null` arriving
 as the text `NULL`, is handled here.
 """
@@ -91,10 +89,6 @@ def _parse(text: str) -> Any:
 
 
 _UNSUPPORTED = (
-    (
-        re.compile(r"\bchecks?\b\s*[:{]", re.IGNORECASE),
-        "the DBML reader (pydbml) does not support check constraints: remove them",
-    ),
     (
         re.compile(r"^\s*Records\b"),
         "the DBML reader (pydbml) does not support Records blocks: remove them",
@@ -270,6 +264,10 @@ class _Converter:
                 keys.append({kind: names})
         if keys:
             out["keys"] = keys
+        # A check constraint has no 0.2.0 member; kept as an extension so a
+        # conversion loses nothing a later version could use.
+        if getattr(table, "checks", None):
+            out["x-checks"] = list(table.checks)
         return out
 
     def _column(self, column: Any) -> dict[str, Any]:
@@ -303,6 +301,8 @@ class _Converter:
                 out["generate"] = _generate(hints)
         elif note:
             out["description"] = note
+        if getattr(column, "checks", None):
+            out["x-checks"] = list(column.checks)
         return out
 
     # -- refs ----------------------------------------------------------

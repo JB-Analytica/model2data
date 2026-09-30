@@ -134,6 +134,7 @@ class ColumnBlueprint(Blueprint):
     ref_blueprints: Optional[List[ReferenceBlueprint]] = None
     comment: Optional[str] = None
     properties: Optional[Dict[str, str]] = None
+    checks: Optional[List[str]] = None  # model2data
 
     def build(self) -> 'Column':
         if isinstance(self.default, ExpressionBlueprint):
@@ -147,7 +148,7 @@ class ColumnBlueprint(Blueprint):
                 if (enum.schema, enum.name) == (schema, name):
                     self.type = enum
                     break
-        return Column(
+        column = Column(
             name=self.name,
             type=self.type,
             unique=self.unique,
@@ -159,6 +160,9 @@ class ColumnBlueprint(Blueprint):
             comment=self.comment,
             properties=self.properties,
         )
+        # model2data: the expressions of the column's `check:` settings.
+        column.checks = list(self.checks or [])
+        return column
 
 
 @dataclass
@@ -207,6 +211,7 @@ class TableBlueprint(Blueprint):
     header_color: Optional[str] = None
     comment: Optional[str] = None
     properties: Optional[Dict[str, str]] = None
+    checks: Optional[List[Dict[str, str]]] = None  # model2data
 
     def build(self) -> 'Table':
         result = Table(
@@ -218,6 +223,8 @@ class TableBlueprint(Blueprint):
             comment=self.comment,
             properties=self.properties
         )
+        # model2data: the table's `checks { }`, as {expression, name?}.
+        result.checks = list(self.checks or [])
         columns = self.columns or []
         indexes = self.indexes or []
         for col_bp in columns:

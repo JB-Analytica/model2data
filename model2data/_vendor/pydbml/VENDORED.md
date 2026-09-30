@@ -22,6 +22,10 @@ change is listed below, one commit each, so each can be offered upstream.
    arguments and `[]` together (`numeric(10,2)[]`).
 4. **A ref's colour** (`definitions/reference.py`): `color: #rrggbb` among a
    ref's settings is read and dropped, where 1.2.1 refused the file.
+5. **Check constraints** (`definitions/column.py`, `definitions/table.py`,
+   `parser/blueprints.py`): a column's `check: \`expr\`` and a table's
+   `checks { \`expr\` [name: '...'] }` parse; the built `Column.checks` holds
+   the expressions, `Table.checks` a list of `{expression, name?}`.
 
 ## Updating
 

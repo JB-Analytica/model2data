@@ -7,7 +7,7 @@ from .common import _c
 from .common import end
 from .common import note
 from .common import note_object
-from .generic import name, string_literal
+from .generic import expression_literal, name, string_literal
 from .index import indexes
 
 pp.ParserElement.set_default_whitespace_chars(' \t\r')
@@ -40,16 +40,30 @@ table_settings.set_parse_action(parse_table_settings)
 
 note_element = note | note_object
 
+# model2data: a `checks { }` block of check constraints, each an expression
+# with an optional `[name: '...']`, as in current DBML.
+check_name = '[' + _ + pp.CaselessLiteral('name:').suppress() + _ - string_literal('name') + _ + ']'
+check_item = _ + pp.Group(expression_literal('expression') + check_name[0, 1]) + _
+checks_block = pp.CaselessLiteral('checks').suppress() + _ + '{' - check_item[...]('items') + _ + '}'
+checks_block.set_parse_action(
+    lambda s, loc, tok: [[
+        {'expression': item['expression'].text, **({'name': item['name']} if 'name' in item else {})}
+        for item in tok.get('items', [])
+    ]]
+)
+
 prop = name + pp.Suppress(":") + string_literal
 
 table_element = _ + (
     table_column.set_results_name('columns', list_all_matches=True) |
     note_element('note') |
+    checks_block.set_results_name('checks', list_all_matches=True) |
     indexes.set_results_name('indexes', list_all_matches=True)
 ) + _
 table_element_with_property = _ + (
     table_column_with_properties.set_results_name('columns', list_all_matches=True) |
     note_element('note') |
+    checks_block.set_results_name('checks', list_all_matches=True) |
     indexes.set_results_name('indexes', list_all_matches=True) |
     prop.set_results_name('property', list_all_matches=True)
 ) + _
@@ -105,6 +119,8 @@ def parse_table(s, loc, tok):
         init_dict['indexes'] = tok['indexes'][0]
     if 'columns' in tok:
         init_dict['columns'] = tok['columns']
+    if 'checks' in tok:
+        init_dict['checks'] = [check for block in tok['checks'] for check in block]
     if 'comment_before' in tok:
         comment = '\n'.join(c[0] for c in tok['comment_before'])
         init_dict['comment'] = comment
