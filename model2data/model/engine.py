@@ -105,8 +105,22 @@ def _table_def(model: Model, key: str, table: Table) -> TableDef:
         columns=columns,
         description=table.description,
         composite_keys=composite_keys,
-        note={"role": table.role} if table.role is not None else None,
+        note=_table_hints(table),
     )
+
+
+def _table_hints(table: Table) -> Optional[dict]:
+    """The table's `role` and `grain` as its flat note, None when it has neither.
+
+    The generator reads neither; consumers of the engine's inputs (the dbt
+    export's grain test) do.
+    """
+    hints: dict[str, Any] = {}
+    if table.role is not None:
+        hints["role"] = table.role
+    if table.grain:
+        hints["grain"] = list(table.grain)
+    return hints or None
 
 
 def _column_def(model: Model, name: str, column: Column, pk: bool, one_to_one: bool) -> ColumnDef:

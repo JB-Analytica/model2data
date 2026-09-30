@@ -2,11 +2,12 @@ import datetime
 import re
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, Union
+from typing import Any, Optional, Union
 
 import pandas as pd
 import yaml
 
+from model2data.dbt.hint_tests import DEFAULT_TOLERANCE, HintTest, hint_tests_for, write_hint_macros
 from model2data.generate.faker import is_free_text_type
 from model2data.generate.relationships import classify_refs
 
@@ -34,13 +35,26 @@ def _dump_yaml(data: dict) -> str:
     return yaml.safe_dump(data, default_flow_style=False, sort_keys=False)
 
 
-def generate_dbt_yml(dest: Path, tables: dict, refs: list[dict], source_name: str = "hackernews"):
+def generate_dbt_yml(
+    dest: Path,
+    tables: dict,
+    refs: list[dict],
+    source_name: str = "hackernews",
+    *,
+    hint_tests: str = "off",
+    test_tolerance: float = DEFAULT_TOLERANCE,
+):
     """
     Generate:
       1) One .yml per staging model (stg_*) with tests
       2) One singular SQL test per composite key (indexes block pk/unique)
       3) A seeds properties YAML (descriptions + column-type overrides)
     Table and column names are used exactly as in DBML.
+
+    `hint_tests` (`error`, `warn` or `off`, the default) adds the tests the
+    model's generation hints imply (see `model2data.dbt.hint_tests`) at that
+    severity, and ships their macros; `test_tolerance` is the slack of the
+    statistical one. With `off`, the output is what it was before hint tests.
 
     `source_name` is accepted for backwards compatibility and is unused: the
     generated project has no dbt `sources:` block. Staging models `ref()` the
@@ -50,6 +64,15 @@ def generate_dbt_yml(dest: Path, tables: dict, refs: list[dict], source_name: st
 
     staging_path = dest / "models" / "staging"
     staging_path.mkdir(parents=True, exist_ok=True)
+
+    if hint_tests not in ("error", "warn", "off"):
+        raise ValueError(f"hint_tests must be error, warn or off, not {hint_tests!r}")
+    hinted: dict[tuple[str, Optional[str]], list[HintTest]] = defaultdict(list)
+    if hint_tests != "off":
+        for hint_test in hint_tests_for(tables, tolerance=test_tolerance):
+            hinted[(hint_test.table, hint_test.column)].append(hint_test)
+        if hinted:
+            write_hint_macros(dest)
 
     # -------------------------
     # Build foreign key map
@@ -103,6 +126,8 @@ def generate_dbt_yml(dest: Path, tables: dict, refs: list[dict], source_name: st
                     )
                 )
 
+            tests.extend(t.to_dbt(hint_tests) for t in hinted.get((table.name, col.name), []))
+
             col_doc: dict[str, Any] = {"name": _dbt_column_ref(col.name)}
             description = getattr(col, "description", None)
             if description:
@@ -111,10 +136,11 @@ def generate_dbt_yml(dest: Path, tables: dict, refs: list[dict], source_name: st
                 col_doc["tests"] = tests
             model_columns.append(col_doc)
 
-        model_doc = {
-            "version": 2,
-            "models": [{"name": stg_name, "columns": model_columns}],
-        }
+        model_entry: dict[str, Any] = {"name": stg_name, "columns": model_columns}
+        table_tests = [t.to_dbt(hint_tests) for t in hinted.get((table.name, None), [])]
+        if table_tests:
+            model_entry["tests"] = table_tests
+        model_doc = {"version": 2, "models": [model_entry]}
 
         # Write YAML to same folder as SQL model
         yml_file = staging_path / f"{stg_name}.yml"

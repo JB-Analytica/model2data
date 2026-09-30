@@ -12,6 +12,7 @@ from faker import Faker
 from typer.core import TyperGroup
 from typer.models import ParameterInfo
 
+from model2data.dbt.hint_tests import DEFAULT_TOLERANCE, SEVERITIES
 from model2data.dbt.project import (
     create_profiles_yml,
     create_project_scaffold,
@@ -371,6 +372,25 @@ def main(
         "-a",
         help=f"dbt warehouse adapter to target. One of: {', '.join(SUPPORTED_ADAPTERS)}.",
     ),
+    hint_tests: str = typer.Option(
+        "warn",
+        "--hint-tests",
+        help=(
+            "Write the model's generation hints as dbt tests (min/max range, after, "
+            "null_rate, distinct, grain) at this severity: error, warn or off. They "
+            "describe intent, so they warn by default rather than break a first dbt "
+            "build on real data."
+        ),
+    ),
+    test_tolerance: float = typer.Option(
+        DEFAULT_TOLERANCE,
+        "--test-tolerance",
+        min=0.0,
+        help=(
+            "Absolute slack of the null_rate test: the null share may be up to "
+            "null_rate + this. Range, after, distinct and grain tests have none."
+        ),
+    ),
     unit_tests: bool = typer.Option(
         False,
         "--unit-tests",
@@ -393,6 +413,14 @@ def main(
             f"❌ Unsupported adapter '{adapter}'. Choose one of: {', '.join(SUPPORTED_ADAPTERS)}."
         )
         raise typer.Exit(1)
+
+    hint_tests = (_given(hint_tests) or "warn").lower()
+    if hint_tests not in SEVERITIES:
+        typer.echo(f"❌ Unsupported --hint-tests '{hint_tests}'. Choose one of: error, warn, off.")
+        raise typer.Exit(1)
+
+    tolerance = _given(test_tolerance)
+    tolerance = DEFAULT_TOLERANCE if tolerance is None else float(tolerance)
 
     # -------------------------
     # Read the model (names untouched)
@@ -543,7 +571,14 @@ def main(
     create_staging_models(dest, project_name)
 
     typer.echo("🧪 Generating dbt yml with tests...")
-    generate_dbt_yml(dest, dbt_tables, dbt_refs, project_name)
+    generate_dbt_yml(
+        dest,
+        dbt_tables,
+        dbt_refs,
+        project_name,
+        hint_tests=hint_tests,
+        test_tolerance=tolerance,
+    )
 
     if _given(unit_tests):
         typer.echo("🔬 Generating dbt unit test fixtures (requires dbt-core >= 1.8)...")
