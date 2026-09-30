@@ -63,6 +63,7 @@ import random
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from datetime import date, timedelta
+from pathlib import Path
 from typing import Any, Optional, Union
 
 import numpy as np
@@ -764,3 +765,48 @@ def _assign(column: pd.Series, positions: list[int], values: pd.Series) -> pd.Se
     merged = column.copy()
     merged.iloc[positions] = pd.Series(new, dtype=object).to_numpy()
     return merged
+
+
+# -- delivering days as files --------------------------------------------------
+
+
+def write_batches(dest: Path, results: list[DayResult], names: dict[str, str]) -> None:
+    """`days/TABLE/day_NNN.csv`: day 0 whole, each later day the rows it inserted or updated.
+
+    Outside `seeds/` on purpose: dbt would load every CSV under it as a seed. A later
+    day's file holds the inserted rows, then the updated ones with their new values, so
+    loading it is an upsert on the key. Only tables with `incremental` get later days.
+    """
+    moving = {key for key in results[0].tables if _moves(results, key)}
+    for result in results:
+        for key, table_day in result.tables.items():
+            if result.day == 0:
+                frame = table_day.state
+            elif key in moving:
+                frame = pd.concat([table_day.inserted, table_day.updated], ignore_index=True)
+            else:
+                continue
+            path = dest / "days" / names[key] / f"day_{result.day:03d}.csv"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            frame.to_csv(path, index=False)
+
+
+def _moves(results: list[DayResult], key: str) -> bool:
+    """True when the table inserted or updated a row on some day."""
+    return any(len(r.tables[key].inserted) or len(r.tables[key].updated) for r in results[1:])
+
+
+def write_changelog(dest: Path, results: list[DayResult], names: dict[str, str]) -> None:
+    """`changelog/TABLE.csv`: every row ever inserted or updated, `_day` and `_op` first."""
+    for key in results[0].tables:
+        parts = []
+        for result in results:
+            table_day = result.tables[key]
+            for op, frame in (("insert", table_day.inserted), ("update", table_day.updated)):
+                if len(frame):
+                    parts.append(frame.assign(_day=result.day, _op=op))
+        log = pd.concat(parts, ignore_index=True)
+        log = log[["_day", "_op", *[c for c in log.columns if c not in ("_day", "_op")]]]
+        path = dest / "changelog" / f"{names[key]}.csv"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        log.to_csv(path, index=False)
