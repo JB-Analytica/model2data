@@ -76,6 +76,7 @@ include = ["model2data*"]
 model2data = [
     "dbt/templates/**/*",
     "examples/**/*",
+    "spec/**/*",
 ]
 
 # Ruff configuration (fast Python linter)

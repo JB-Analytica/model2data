@@ -1,0 +1,126 @@
+# yaml-language-server: $schema=https://www.jbanalytica.com/model2data/spec/0.2.0/model.schema.json
+model2data: 0.2.0
+name: coffee_webshop
+description: >
+  A Belgian specialty-coffee roaster's customers, catalogue, orders and reviews.
+
+enums:
+  order_status: [pending, paid, shipped, delivered, cancelled]
+  sales_channel: [web, mobile_app, marketplace, store]
+  product_category: [beans, ground, capsules, equipment]
+  roast_level: [light, medium, dark]
+  coffee_origin: [ethiopia, colombia, brazil, kenya, guatemala, honduras, peru, rwanda]
+
+tables:
+  customers:
+    description: One row per registered customer account
+    columns:
+      id: {type: bigint, pk: true}
+      email: {type: email, unique: true, not_null: true}
+      first_name: {type: first_name, not_null: true}
+      last_name: {type: last_name, not_null: true}
+      phone:
+        type: phone_number
+        generate: {null_rate: 0.4}
+      country: {type: country, not_null: true}
+      created_at:
+        type: timestamp
+        not_null: true
+        generate: {growth: 0.5}
+
+  products:
+    description: "The catalogue: one row per sellable product"
+    columns:
+      id: {type: bigint, pk: true}
+      name:
+        type: word
+        not_null: true
+        description: The blend or single-origin name printed on the bag
+      sku: {type: ean13, unique: true, not_null: true}
+      category:
+        type: product_category
+        not_null: true
+        generate:
+          weights: {beans: 6, ground: 3, capsules: 2, equipment: 1}
+      origin: {type: coffee_origin, not_null: true}
+      roast:
+        type: roast_level
+        not_null: true
+        generate:
+          weights: {medium: 3, light: 2, dark: 2}
+      weight_grams:
+        type: int
+        not_null: true
+        generate: {min: 250, max: 1000}
+      price:
+        type: numeric
+        not_null: true
+        generate: {min: 5.99, max: 999.99}
+      stock_quantity:
+        type: int
+        not_null: true
+        generate: {min: 0, max: 1000}
+      created_at: {type: timestamp, not_null: true}
+
+  orders:
+    description: One row per order; status moves pending -> paid -> shipped -> delivered, or cancelled
+    color: "#ea580c"
+    columns:
+      id: {type: bigint, pk: true}
+      customer_id:
+        type: bigint
+        not_null: true
+        references: customers.id
+        generate: {skew: 0.8}
+      channel:
+        type: sales_channel
+        not_null: true
+        generate:
+          weights: {web: 6, mobile_app: 3, marketplace: 2, store: 1}
+      order_date:
+        type: timestamp
+        not_null: true
+        generate: {business_hours: true, seasonality: 0.5}
+      shipped_at:
+        type: timestamp
+        generate: {after: order_date}
+      total_amount:
+        type: numeric
+        not_null: true
+        generate:
+          min: 10
+          max: 5000
+          distribution: {kind: lognormal, median: 120, spread: 0.7}
+      status:
+        type: order_status
+        not_null: true
+        generate:
+          weights: {delivered: 20, cancelled: 1}
+
+  order_items:
+    description: One row per product line on an order; unit price is the price at time of ordering
+    columns:
+      id: {type: bigint, pk: true}
+      order_id: {type: bigint, not_null: true, references: orders.id}
+      product_id: {type: bigint, not_null: true, references: products.id}
+      quantity:
+        type: int
+        not_null: true
+        generate: {min: 1, max: 10}
+      unit_price:
+        type: numeric
+        not_null: true
+        generate: {min: 5.99, max: 999.99}
+
+  product_reviews:
+    columns:
+      id: {type: bigint, pk: true}
+      product_id: {type: bigint, not_null: true, references: products.id}
+      customer_id: {type: bigint, not_null: true, references: customers.id}
+      rating:
+        type: int
+        not_null: true
+        generate: {min: 1, max: 5}
+      comment:
+        type: text
+        generate: {null_rate: 0.6}

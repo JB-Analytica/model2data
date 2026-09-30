@@ -1,0 +1,474 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://www.jbanalytica.com/model2data/spec/0.2.0/model.schema.json",
+  "title": "model2data model",
+  "description": "A data model: its tables, their columns and keys, the relationships between them, the enums a column can be typed as, and how each column's values are generated. Written as YAML (the `.model2data.yml` file) or as JSON; both are the same document. This schema is normative together with model2data/spec/README.md, which defines the YAML profile a reader must apply and the checks that depend on more than one part of the document.",
+  "type": "object",
+  "required": ["model2data", "tables"],
+  "properties": {
+    "model2data": {
+      "description": "The spec version the document is written against, `MAJOR.MINOR` or `MAJOR.MINOR.PATCH`. Write it as `0.2.0`. A reader that met the YAML number 0.2 reads it as `0.2`.",
+      "oneOf": [
+        { "type": "string", "pattern": "^0\\.2(\\.(0|[1-9][0-9]*))?$" },
+        { "const": 0.2 }
+      ],
+      "examples": ["0.2.0"]
+    },
+    "name": {
+      "description": "The model's name. Names the generated dbt project, normalised to `[a-z0-9_]`. Defaults to the file's name without `.model2data.yml`.",
+      "$ref": "#/$defs/name",
+      "examples": ["coffee_webshop"]
+    },
+    "description": {
+      "description": "What the model is, in prose.",
+      "type": "string"
+    },
+    "enums": {
+      "description": "The enums a column's `type` can name, keyed by enum name: `status` in the default schema, `billing.status` in another.",
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/qualifiedName" },
+      "additionalProperties": { "$ref": "#/$defs/enum" }
+    },
+    "tables": {
+      "description": "The tables, keyed by table key: `orders` in the default schema, `raw.orders` in another. Generation order follows the foreign keys, not the document; everything else that lists tables uses document order.",
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "$ref": "#/$defs/qualifiedName" },
+      "additionalProperties": { "$ref": "#/$defs/table" }
+    },
+    "relationships": {
+      "description": "Relationships that belong to no single column. Only many-to-many ones: a foreign key is written on its column (`references`) or its table (`foreign_keys`).",
+      "type": "array",
+      "items": { "$ref": "#/$defs/relationship" }
+    },
+    "groups": {
+      "description": "Named groups of tables, for reading a large model: drawn as one box on a diagram. No effect on generation.",
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/name" },
+      "additionalProperties": { "$ref": "#/$defs/group" }
+    },
+    "run": {
+      "description": "Generation settings saved with the model, so that a seed and a day are part of the file rather than a command line. Every setting is optional; a reader's own options (CLI flags, the studio's settings) override them.",
+      "$ref": "#/$defs/run"
+    }
+  },
+  "patternProperties": { "^x-": true },
+  "additionalProperties": false,
+
+  "$defs": {
+    "name": {
+      "description": "A name: at least one character, no `.`, no path separator, no control character, at most 200 characters.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": "^[^./\\\\\\u0000-\\u001f\\u007f]+$"
+    },
+    "qualifiedName": {
+      "description": "`name` or `schema.name`: one or two names joined by a single `.`.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 401,
+      "pattern": "^[^./\\\\\\u0000-\\u001f\\u007f]+(\\.[^./\\\\\\u0000-\\u001f\\u007f]+)?$"
+    },
+    "columnPath": {
+      "description": "A column of a table: `table.column` or `schema.table.column`. The last `.` separates the column from the table key.",
+      "type": "string",
+      "pattern": "^[^./\\\\\\u0000-\\u001f\\u007f]+(\\.[^./\\\\\\u0000-\\u001f\\u007f]+){1,2}$",
+      "examples": ["customers.id", "raw.users.id"]
+    },
+    "color": {
+      "description": "A hex colour literal: `#rgb`, `#rgba`, `#rrggbb` or `#rrggbbaa`. Quote it in YAML, where `#` starts a comment.",
+      "type": "string",
+      "pattern": "^#([0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$",
+      "examples": ["#ea580c"]
+    },
+    "fraction": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+
+    "enum": {
+      "description": "An enum's members, in order: a list of values, or a mapping of value to a description of it (null for none).",
+      "oneOf": [
+        {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/enumValue" }
+        },
+        {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": { "type": ["string", "null"] }
+        }
+      ],
+      "examples": [["pending", "paid", "shipped"], { "active": "Live and billed", "closed": null }]
+    },
+    "enumValue": {
+      "description": "An enum member. An integer member is the member whose text is its decimal form.",
+      "type": ["string", "integer"]
+    },
+
+    "table": {
+      "description": "A table.",
+      "type": "object",
+      "required": ["columns"],
+      "properties": {
+        "description": {
+          "description": "What one row of the table is, in prose. Becomes the dbt model's description.",
+          "type": "string"
+        },
+        "color": {
+          "description": "The table's header colour on a diagram; lines into the table take it too.",
+          "$ref": "#/$defs/color"
+        },
+        "role": {
+          "description": "The table's role when a star schema or a Data Vault is derived from the model, overriding the inferred one. `fact`: events or measurements. `dimension`: an entity described. A bridge is only ever inferred.",
+          "enum": ["fact", "dimension"]
+        },
+        "columns": {
+          "description": "The table's columns, keyed by name, in the order they are generated and exported. A column written as a plain string is a column of that type and nothing else: `country: country`.",
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": { "$ref": "#/$defs/name" },
+          "additionalProperties": {
+            "oneOf": [
+              { "$ref": "#/$defs/type" },
+              { "$ref": "#/$defs/column" }
+            ]
+          }
+        },
+        "keys": {
+          "description": "Keys over more than one column. A key on one column is written on the column (`pk`, `unique`).",
+          "type": "array",
+          "items": { "$ref": "#/$defs/key" }
+        },
+        "foreign_keys": {
+          "description": "Foreign keys over more than one column. A foreign key of one column is written on the column (`references`).",
+          "type": "array",
+          "items": { "$ref": "#/$defs/foreignKey" }
+        }
+      },
+      "patternProperties": { "^x-": true },
+      "additionalProperties": false
+    },
+
+    "type": {
+      "description": "The column's type. An SQL type (`bigint`, `numeric(10,2)`, `timestamp`, `text[]`), the name of an enum in the model, or the name of a generator (`email`, `first_name`, `ean13`): a generator type exports as the SQL type the generator's values have. Matched case-insensitively.",
+      "type": "string",
+      "minLength": 1,
+      "examples": ["bigint", "order_status", "email"]
+    },
+
+    "column": {
+      "description": "A column.",
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "$ref": "#/$defs/type" },
+        "pk": {
+          "description": "The column is the table's primary key. Implies `not_null` and `unique`. More than one `pk` column in a table form one composite primary key, as if listed under `keys`.",
+          "type": "boolean"
+        },
+        "unique": {
+          "description": "No two rows hold the same value.",
+          "type": "boolean"
+        },
+        "not_null": {
+          "description": "No row holds null. Without it a column is nullable, and some of its rows are generated null: see `generate.null_rate`.",
+          "type": "boolean"
+        },
+        "increment": {
+          "description": "The column is auto-incremented by the database. Documentation for the exported DDL; the generator does not read it.",
+          "type": "boolean"
+        },
+        "default": {
+          "description": "The column's static default value. A row generated null holds this value instead. An expression default (`now()`) is not a static value and is written as `x-default-expression`.",
+          "type": ["string", "number", "boolean", "null"]
+        },
+        "description": {
+          "description": "What the column holds, in prose. Becomes the dbt column's description.",
+          "type": "string"
+        },
+        "references": {
+          "description": "The column is a foreign key onto this column of another (or the same) table, which must be the parent's primary key or unique. Many-to-one unless `one_to_one` is set.",
+          "oneOf": [
+            { "$ref": "#/$defs/columnPath" },
+            {
+              "type": "object",
+              "required": ["to"],
+              "properties": {
+                "to": { "$ref": "#/$defs/columnPath" },
+                "one_to_one": {
+                  "description": "At most one child row per parent row.",
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": false
+            }
+          ],
+          "examples": ["customers.id", { "to": "users.id", "one_to_one": true }]
+        },
+        "measure": {
+          "description": "Whether the column is a measure (a value to sum or average) when a star schema or a Data Vault is derived from the model, overriding the inferred answer.",
+          "type": "boolean"
+        },
+        "generate": { "$ref": "#/$defs/generate" },
+        "x-default-expression": {
+          "description": "An SQL expression default, kept for the exported DDL. Not generated.",
+          "type": "string"
+        }
+      },
+      "patternProperties": { "^x-": true },
+      "additionalProperties": false
+    },
+
+    "key": {
+      "description": "A key over several columns of the table: `{pk: [a, b]}` or `{unique: [a, b]}`. Each member of a `pk` key is not null.",
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 1,
+      "properties": {
+        "pk": { "$ref": "#/$defs/keyColumns" },
+        "unique": { "$ref": "#/$defs/keyColumns" }
+      },
+      "additionalProperties": false,
+      "examples": [{ "pk": ["post_id", "tag_id"] }]
+    },
+    "keyColumns": {
+      "type": "array",
+      "minItems": 2,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/name" }
+    },
+
+    "foreignKey": {
+      "description": "A foreign key over several columns: `columns` of this table reference `to_columns` of `references`, pairwise.",
+      "type": "object",
+      "required": ["columns", "references", "to_columns"],
+      "properties": {
+        "columns": { "$ref": "#/$defs/keyColumns" },
+        "references": { "$ref": "#/$defs/qualifiedName" },
+        "to_columns": { "$ref": "#/$defs/keyColumns" },
+        "one_to_one": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+
+    "relationship": {
+      "description": "A many-to-many relationship between two columns. Drawn and documented; generates nothing, since no table holds its key. Model a join table to generate one.",
+      "type": "object",
+      "required": ["many_to_many"],
+      "properties": {
+        "many_to_many": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": { "$ref": "#/$defs/columnPath" }
+        },
+        "description": { "type": "string" }
+      },
+      "additionalProperties": false,
+      "examples": [{ "many_to_many": ["posts.id", "tags.id"] }]
+    },
+
+    "group": {
+      "type": "object",
+      "required": ["tables"],
+      "properties": {
+        "tables": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/qualifiedName" }
+        },
+        "color": { "$ref": "#/$defs/color" },
+        "description": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+
+    "distributionKind": {
+      "enum": ["uniform", "normal", "lognormal", "exponential"]
+    },
+
+    "generate": {
+      "description": "How the column's values are generated. Every hint is optional; one left out means the generator's default for the column. Which hints a column may carry depends on its kind: see `x-model2data-applies-to` on each, and the kinds in the spec README.",
+      "type": "object",
+      "properties": {
+        "min": {
+          "description": "The lowest value generated. Without a `distribution` (or with `uniform`), values are drawn evenly between `min` and `max`, both inclusive; with any other distribution, draws below `min` are redrawn up to 20 times and then clamped to it. A bound left out takes the column's default range: 0 to 100 on an integer column, 0 to 10,000 on a decimal one. On an integer column it must be an integer, and with the other bound resolved it must not exceed `max`. Decimal values are rounded to 2 places, integer ones to the nearest integer.",
+          "type": "number",
+          "x-model2data-applies-to": ["numeric"]
+        },
+        "max": {
+          "description": "The highest value generated; the mirror of `min`, with the same default range, rounding and clamping.",
+          "type": "number",
+          "x-model2data-applies-to": ["numeric"]
+        },
+        "distribution": {
+          "description": "The shape numeric values are drawn from: a kind alone (`lognormal`), whose parameters are then derived from the range, or the kind with its parameters. A parameter left out is derived from the range (explicit `min`/`max`, else the column's default range): normal `mean` is its midpoint and `stddev` a sixth of its width; lognormal `median` is its midpoint and `spread` 0.5; exponential `mean` is its midpoint. Only an explicit `min`/`max` clips the draws.",
+          "x-model2data-applies-to": ["numeric"],
+          "oneOf": [
+            { "$ref": "#/$defs/distributionKind" },
+            {
+              "type": "object",
+              "required": ["kind"],
+              "oneOf": [
+                {
+                  "properties": { "kind": { "const": "uniform" } },
+                  "additionalProperties": false
+                },
+                {
+                  "properties": {
+                    "kind": { "const": "normal" },
+                    "mean": {
+                      "description": "The centre of the bell curve.",
+                      "type": "number"
+                    },
+                    "stddev": {
+                      "description": "The standard deviation.",
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                {
+                  "properties": {
+                    "kind": { "const": "lognormal" },
+                    "median": {
+                      "description": "The typical value, exp(μ) of the underlying normal.",
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    },
+                    "spread": {
+                      "description": "σ of the underlying normal: how heavy the tail is (0.3 mild, 1.0 heavy).",
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                {
+                  "properties": {
+                    "kind": { "const": "exponential" },
+                    "mean": {
+                      "description": "The average value (the scale, 1/λ).",
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              ]
+            }
+          ],
+          "examples": ["lognormal", { "kind": "lognormal", "median": 120, "spread": 0.7 }]
+        },
+        "null_rate": {
+          "description": "The fraction of rows generated null (or the column's `default`, when it has one): exactly ⌊n × null_rate⌋ of n rows. Replaces the default rate, which is min(0.2, 1 − n / (n + 50)).",
+          "$ref": "#/$defs/fraction",
+          "x-model2data-applies-to": ["nullable"]
+        },
+        "weights": {
+          "description": "The relative weight of each enum member, drawn in proportion. A member left out weighs 1. Every key must be a member of the column's enum.",
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": { "type": "number", "exclusiveMinimum": 0 },
+          "x-model2data-applies-to": ["enum"],
+          "examples": [{ "delivered": 20, "cancelled": 1 }]
+        },
+        "true_rate": {
+          "description": "The probability each generated value is true. Without it, a fair coin. Nulls are applied afterwards, so this is the share of true among non-null values.",
+          "$ref": "#/$defs/fraction",
+          "x-model2data-applies-to": ["boolean"]
+        },
+        "distinct": {
+          "description": "Generate a pool of this many values, by the column's own type and its other hints, then draw every row from the pool with replacement, so the column behaves like a category.",
+          "type": "integer",
+          "minimum": 1,
+          "x-model2data-applies-to": ["non-key"]
+        },
+        "skew": {
+          "description": "How unevenly the foreign key's values spread over the parent rows, replacing the run's skew for this column. 0: every parent equally likely. Above 0: the parents, in a seeded random order, are weighted exp(−8 · skew² · i / n) by rank i of n; at 0.8 the top fifth of parents hold roughly 65–75% of the rows, at 1.0 roughly 80%.",
+          "$ref": "#/$defs/fraction",
+          "x-model2data-applies-to": ["foreign-key"]
+        },
+        "after": {
+          "description": "Another temporal column of the same table. In every row, this column's value is not earlier than that column's. The `after` hints of one table must not form a cycle.",
+          "$ref": "#/$defs/name",
+          "x-model2data-applies-to": ["temporal"]
+        },
+        "business_hours": {
+          "description": "Replaces the run's business-hours setting for this column. When true, weekend days weigh 0.3 against a weekday's 1, and a timestamp's hour is drawn from a working-day profile (busiest 08:00–17:59, a lunch dip, rare at night) rather than evenly.",
+          "type": "boolean",
+          "x-model2data-applies-to": ["temporal"]
+        },
+        "growth": {
+          "description": "Replaces the run's growth for this column. A day at fraction t through the generated window (0 at its start, 1 at its end) weighs 1 + growth · t: 0 is flat, 1 makes the end twice as busy as the start, −1 tails off to nothing.",
+          "type": "number",
+          "minimum": -1,
+          "x-model2data-applies-to": ["temporal"]
+        },
+        "seasonality": {
+          "description": "Replaces the run's seasonality for this column. A day weighs 1 + seasonality · cos(2π (d − 320) / 365.25), d its day of the year: an annual peak on 16 November. 0 is no seasonal pattern; 1 the strongest.",
+          "$ref": "#/$defs/fraction",
+          "x-model2data-applies-to": ["temporal"]
+        }
+      },
+      "patternProperties": { "^x-": true },
+      "additionalProperties": false
+    },
+
+    "run": {
+      "type": "object",
+      "properties": {
+        "rows": {
+          "description": "Rows generated per table.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "rows_per_table": {
+          "description": "Row counts for individual tables, keyed by table key, overriding `rows`.",
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/qualifiedName" },
+          "additionalProperties": { "type": "integer", "minimum": 0 }
+        },
+        "seed": {
+          "description": "Makes the run reproducible: the same seed, model, settings, `as_of` and engine version produce the same bytes.",
+          "type": "integer"
+        },
+        "table_seeds": {
+          "description": "Re-rolls single tables, keyed by table key: a table's values change with its entry, every other table's stay byte-identical. Needs `seed`.",
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/qualifiedName" },
+          "additionalProperties": { "type": "integer" }
+        },
+        "as_of": {
+          "description": "The day every generated date and timestamp is placed relative to: dates fall in the two years up to it, timestamps in the year up to it. An ISO 8601 date. Without it, today.",
+          "type": "string",
+          "format": "date"
+        },
+        "locale": {
+          "description": "The locale people and addresses are drawn from, as `ll_CC`: `en_US`, `nl_BE`.",
+          "type": "string",
+          "pattern": "^[a-z]{2,3}(_[A-Z]{2})?$"
+        },
+        "shape": {
+          "description": "The run's defaults for the temporal and foreign-key hints of the same names, applied to every column that does not set its own.",
+          "type": "object",
+          "properties": {
+            "business_hours": { "type": "boolean" },
+            "growth": { "type": "number", "minimum": -1 },
+            "seasonality": { "$ref": "#/$defs/fraction" },
+            "skew": { "$ref": "#/$defs/fraction" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}
