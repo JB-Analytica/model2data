@@ -19,6 +19,8 @@ from model2data._vendor.pydbml.parser.blueprints import ColumnBlueprint
 
 pp.ParserElement.set_default_whitespace_chars(' \t\r')
 
+NULL_DEFAULT = object()
+
 type_args = ("(" + pp.original_text_for(expression) + ")")
 
 # column type is parsed as a single string, it will be split by blueprint
@@ -28,14 +30,19 @@ default = pp.CaselessLiteral('default:').suppress() + _ - (
     string_literal
     | expression_literal
     | boolean_literal.set_parse_action(
+        # model2data: `null` becomes NULL_DEFAULT, not None. A parse action
+        # returning None leaves the token alone, so 1.2.1 handed `default:
+        # null` on as the text 'NULL'. parse_column_settings drops it: a null
+        # default is no static default.
         lambda s, loc, tok: {
             'true': True,
             'false': False,
-            'NULL': None
+            'NULL': NULL_DEFAULT
         }[tok[0]]
     )
     | number_literal.set_parse_action(
-        lambda s, loc, tok: float(''.join(tok[0])) if '.' in tok[0] else int(tok[0])
+        # model2data: an exponent makes a float too (`1e3` is 1000.0).
+        lambda s, loc, tok: float(tok[0]) if any(ch in tok[0] for ch in '.eE') else int(tok[0])
     )
 )
 
@@ -79,7 +86,7 @@ def parse_column_settings(s, loc, tok):
         result['autoinc'] = True
     if 'note' in tok:
         result['note'] = tok['note']
-    if 'default' in tok:
+    if 'default' in tok and tok['default'][0] is not NULL_DEFAULT:
         result['default'] = tok['default'][0]
     if 'ref' in tok:
         result['ref_blueprints'] = list(tok['ref'])

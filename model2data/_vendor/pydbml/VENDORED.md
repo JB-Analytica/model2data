@@ -13,6 +13,10 @@ change is listed below, one commit each, so each can be offered upstream.
 
 1. `from pydbml` / `import pydbml` rewritten to `model2data._vendor.pydbml`.
    Nothing else in the first commit differs from the release.
+2. **Number and null literals** (`definitions/generic.py`, `definitions/column.py`):
+   numbers take a sign and an exponent (`-5`, `1e3`); `default: null` is no
+   default, where 1.2.1 returned the text `NULL` (a parse action returning
+   None leaves the token in place).
 
 ## Updating
 

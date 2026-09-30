@@ -38,7 +38,6 @@ def _corpus(name: str):
 
 REFUSED = {
     "checks": "does not support check constraints",
-    "defaults": "does not support a signed or exponent number default",
     "parameterised_types": 'needs an array of a parameterised type quoted: "numeric(10,2)[]"',
     "records": "does not support Records blocks",
     "ref_settings": "does not support a Ref's color",
@@ -46,6 +45,24 @@ REFUSED = {
     "unicode_names": "needs a non-ASCII name quoted",
     "ref_directions": "references both users.id and legacy schema.old users.id",
 }
+
+
+def test_every_kind_of_default_literal():
+    columns = _corpus("defaults").tables["settings"].columns
+    assert {name: column.default for name, column in columns.items()} == {
+        "id": None,
+        "retries": 3,
+        "offset_hours": -5,
+        "ratio": 0.25,
+        "budget": 1000.0,
+        "whole": 2.0,
+        "enabled": True,
+        "label": "it's quoted",
+        # A null default is no static default, not the text "NULL".
+        "parent_id": None,
+        "created_at": None,
+    }
+    assert columns["created_at"].extensions == {"x-default-expression": "now()"}
 
 
 def test_the_corpus_is_all_here():

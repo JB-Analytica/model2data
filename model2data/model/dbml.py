@@ -104,10 +104,6 @@ _UNSUPPORTED = (
         "the DBML reader (pydbml) does not support TablePartial: write the columns out",
     ),
     (
-        re.compile(r"default:\s*[-+]|default:\s*[0-9.]+[eE]"),
-        "the DBML reader (pydbml) does not support a signed or exponent number default (-5, 1e3)",
-    ),
-    (
         re.compile(r"\)\[\]"),
         'the DBML reader (pydbml) needs an array of a parameterised type quoted: "numeric(10,2)[]"',
     ),
@@ -305,11 +301,7 @@ class _Converter:
         default = column.default
         if isinstance(default, Expression):
             out["x-default-expression"] = default.text
-        # pydbml 1.2.1 means `default: null` to be None, but its parse action's
-        # None leaves the token alone, so the keyword arrives as the text
-        # "NULL". Read as no default: `default: 'NULL'`, the one case this
-        # misreads, is far the rarer of the two.
-        elif default is not None and default != "NULL":
+        elif default is not None:
             out["default"] = default
         note = _note_text(column.note)
         hints = _hints(note)

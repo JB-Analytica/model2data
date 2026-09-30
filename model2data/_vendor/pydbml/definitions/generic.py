@@ -24,12 +24,9 @@ boolean_literal = (
     | pp.CaselessLiteral('false')
     | pp.CaselessLiteral('NULL')
 )
-number_literal = (
-    pp.Word(pp.nums)
-    ^ pp.Combine(
-        pp.Word(pp.nums) + '.' + pp.Word(pp.nums)
-    )
-)
+# model2data: an optional sign and an exponent, as DBML allows (`-5`, `1e3`,
+# `-2.5E-3`). 1.2.1 read only unsigned `12` and `1.5`.
+number_literal = pp.Regex(r'[-+]?\d+(\.\d+)?([eE][-+]?\d+)?')
 
 # Expression
 
