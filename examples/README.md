@@ -1,6 +1,9 @@
 # Examples
 
-This directory contains example DBML files that showcase different use cases and features of `model2data`.
+Each example is a model in two forms: a `.model2data.yml` document ([spec 0.2.0](../model2data/spec/README.md)),
+which is the format `model2data` reads, and the `.dbml` file it was converted from with
+`model2data convert`. DBML is supported input: it is converted to the same model, so both files
+generate the same data under the same seed and `--as-of`.
 
 Each example demonstrates best practices and different aspects of data modeling and synthetic data generation.
 
@@ -10,7 +13,7 @@ Each example demonstrates best practices and different aspects of data modeling 
 
 ```bash
 # Generate data from an example
-model2data --file examples/{filename}.dbml --rows 100 --seed 42
+model2data --file examples/{filename}.model2data.yml --rows 100 --seed 42
 
 # This creates a `dbt_{project_name}/` directory with:
 # - Synthetic data (seeds/ folder with CSV files)
@@ -27,7 +30,7 @@ dbt run
 
 ## Examples Overview
 
-### 1. **hackernews.dbml** — Data Lake / DLT Pipeline Pattern
+### 1. **hackernews** (`.model2data.yml` / `.dbml`) — Data Lake / DLT Pipeline Pattern
 - **Domain**: News aggregation platform (HackerNews-like)
 - **Focus**: DLT (Data Load Tool) tracking tables, nested relationships
 - **Features Showcased**:
@@ -35,19 +38,22 @@ dbt run
   - Nested data structures (`stories__kids` array children)
   - Complex reference types (UUID PKs, many-to-many patterns)
   - DLT-specific schema patterns
+  - A reference onto a column that is not a key (`_dlt_loads.schema_version_hash` onto
+    `_dlt_version.version_hash`): allowed with a warning, and every hash a load names is one a
+    version holds
 
 **Use case**: If you're building data lakes or using DLT-like pipelines, this shows how `model2data` handles metadata and nested structures.
 
 **Try it**:
 ```bash
-model2data --file examples/hackernews.dbml --rows 200 --seed 42
+model2data --file examples/hackernews.model2data.yml --rows 200 --seed 42
 cd dbt_hackernews
 dbt seed && dbt run
 ```
 
 ---
 
-### 2. **ecommerce.dbml** — E-Commerce / Retail Platform
+### 2. **ecommerce** (`.model2data.yml` / `.dbml`) — E-Commerce / Retail Platform
 - **Domain**: Online retail store
 - **Focus**: Transactional data, multi-table relationships, Faker data types, min/max constraints
 - **Features Showcased**:
@@ -57,7 +63,7 @@ dbt seed && dbt run
   - Order-to-fulfillment workflows (orders → order_items)
   - Customer reviews and ratings with min/max constraints
   - Business constraints: unique emails, foreign key relationships
-  - **Inline note constraints**: Price ranges, stock levels, quantities, ratings
+  - **Generation hints** (`generate`): Price ranges, stock levels, quantities, ratings
 
 **Tables**: 5 tables with 5 relationships
 - `customers` — Customer directory with realistic names, emails, phone numbers
@@ -68,7 +74,7 @@ dbt seed && dbt run
 
 **Advanced Features**:
 - **Faker data types**: Uses `email`, `first_name`, `last_name`, `phone_number`, `country`, `word`, `ean13`
-- **Inline note constraints**: `price numeric [not null, note: '{"min": 5.99, "max": 999.99}']`
+- **Generation hints**: `price: {type: numeric, not_null: true, generate: {min: 5.99, max: 999.99}}`
 - **Foreign keys**: Transactional relationships between customers, orders, and products
 - **Unique constraints**: Email uniqueness per customer
 - **Realistic data generation**: Names, emails, phone numbers generated via Faker library
@@ -77,7 +83,7 @@ dbt seed && dbt run
 
 **Try it**:
 ```bash
-model2data --file examples/ecommerce.dbml --rows 500 --seed 42
+model2data --file examples/ecommerce.model2data.yml --rows 500 --seed 42
 cd dbt_ecommerce
 
 # Explore the generated data
@@ -94,7 +100,7 @@ dbt run-operation select_from_seed --args '{"table": "customers"}'
 
 ---
 
-### 3. **saas_platform.dbml** — SaaS / Multi-Tenant Application
+### 3. **saas_platform** (`.model2data.yml` / `.dbml`) — SaaS / Multi-Tenant Application
 - **Domain**: Multi-tenant SaaS platform
 - **Focus**: Multi-tenancy patterns, Faker data types, audit trails, min/max constraints
 - **Features Showcased**:
@@ -104,7 +110,7 @@ dbt run-operation select_from_seed --args '{"table": "customers"}'
   - Subscription and billing tracking with price constraints
   - API usage monitoring with realistic limits and constraints
   - Audit logging of events
-  - **Inline note constraints**: Pricing, feature limits, usage tracking
+  - **Generation hints** (`generate`): Pricing, feature limits, usage tracking
 
 **Tables**: 7 tables with 8 relationships
 - `organizations` — Tenant root entity (using `company` type for realistic names)
@@ -118,7 +124,7 @@ dbt run-operation select_from_seed --args '{"table": "customers"}'
 **Advanced Features**:
 - **Faker data types**: `company`, `slug`, `email`, `first_name`, `last_name`, `word`
 - **Multi-tenancy**: Every table references `organization_id` for isolation
-- **Inline note constraints**: `month int [not null, note: '{"min": 1, "max": 12}']`
+- **Generation hints**: `month: {type: int, not_null: true, generate: {min: 1, max: 12}}`
 - **Foreign keys**: Nested relationships (organizations → users, subscriptions, audit_events)
 - **Status tracking**: Subscription and invoice status enumeration
 - **Realistic SaaS metrics**: API limits, storage quotas, user caps per plan tier
@@ -127,7 +133,7 @@ dbt run-operation select_from_seed --args '{"table": "customers"}'
 
 **Try it**:
 ```bash
-model2data --file examples/saas_platform.dbml --rows 100 --seed 42
+model2data --file examples/saas_platform.model2data.yml --rows 100 --seed 42
 cd dbt_saas_platform
 
 # Explore multi-tenant structure
@@ -150,13 +156,13 @@ dbt run
 
 ---
 
-### 4. **advanced_features.dbml** — HR / Project Management System
+### 4. **advanced_features** (`.model2data.yml` / `.dbml`) — HR / Project Management System
 - **Domain**: Employee management and project allocation
 - **Focus**: Self-referential relationships, min/max constraints, diverse Faker data types
 - **Features Showcased**:
   - Faker provider data types (first_name, last_name, email, word)
   - Self-referential foreign keys (employees.manager_id → employees.id)
-  - **Inline note constraints** for realistic data bounds across all numeric fields
+  - **Generation hints** (`generate`) for realistic data bounds across all numeric fields
   - Multiple numeric types (bigint, int, numeric) with constraints
   - Complex multi-table relationships (employees → projects → time entries)
 
@@ -172,7 +178,7 @@ dbt run
 **Advanced Features**:
 - **Self-referential FK**: `employees.manager_id → employees.id` (builds org hierarchies)
 - **Faker data types**: `first_name`, `last_name`, `email` for realistic employee data, `word` for project/department names
-- **Inline note constraints**:
+- **Generation hints**:
   - Budget amounts: Department (100K-5M), Project (50K-2M), Salary (30K-200K)
   - Priority: 1-5
   - Allocation: 0-100%
@@ -186,7 +192,7 @@ dbt run
 
 **Try it**:
 ```bash
-model2data --file examples/advanced_features.dbml --rows 50 --seed 123
+model2data --file examples/advanced_features.model2data.yml --rows 50 --seed 123
 cd dbt_advanced_features
 
 # Explore hierarchical data
@@ -211,31 +217,32 @@ dbt run
 
 ---
 
-### 5. **tagging_m2m.dbml** — Many-to-Many Bridge Table
+### 5. **tagging_m2m** (`.model2data.yml` / `.dbml`) — Many-to-Many Bridge Table
 
 - **Domain**: Simple blogging platform (posts ↔ tags)
 - **Focus**: A many-to-many bridge/join table (`post_tags`) with a composite
-  primary key on both foreign-key columns, plus DBML's `Project { }` and
-  `TableGroup { }` blocks (harmlessly ignored by model2data).
+  primary key on both foreign-key columns (`keys: [{pk: [post_id, tag_id]}]`), plus DBML's
+  `Project { }` block, which becomes the model's `name` and `description` (so the project is
+  `dbt_blog_platform`), and `TableGroup { }`, which becomes `groups`.
 
 **Try it**:
 ```bash
-model2data --file examples/tagging_m2m.dbml --rows 50 --seed 42
-cd dbt_tagging_m2m
+model2data --file examples/tagging_m2m.model2data.yml --rows 50 --seed 42
+cd dbt_blog_platform
 dbt seed && dbt run
 ```
 
-### 6. **mixed_quotes_crlf.dbml** — Quoting & Line-Ending Edge Cases
+### 6. **mixed_quotes_crlf** (`.model2data.yml` / `.dbml`) — Quoting & Line-Ending Edge Cases
 
 - **Domain**: Minimal user accounts / orders schema
-- **Focus**: Mixed quote styles for identifiers (backtick, double-quote) in
-  the same file, an identifier containing a space, inline comments placed
-  after a column definition and on their own line, and Windows-style CRLF
-  line endings.
+- **Focus**: Bare and double-quoted identifiers in the same DBML file, names
+  containing a space (`user accounts`, kept as written in the model and made
+  `user_accounts` for dbt), inline comments placed after a column definition
+  and on their own line, and Windows-style CRLF line endings.
 
 **Try it**:
 ```bash
-model2data --file examples/mixed_quotes_crlf.dbml --rows 50 --seed 42
+model2data --file examples/mixed_quotes_crlf.model2data.yml --rows 50 --seed 42
 cd dbt_mixed_quotes_crlf
 dbt seed && dbt run
 ```
@@ -249,7 +256,7 @@ dbt seed && dbt run
 | **Foreign Keys** | ✓ | ✓ | ✓ | ✓ |
 | **Self-referential FKs** | - | - | - | ✓ (manager hierarchy) |
 | **Unique Constraints** | ✓ | ✓ | ✓ | - |
-| **Inline Note Constraints** | - | ✓ | ✓ | ✓ |
+| **Generation Hints** | - | ✓ | ✓ | ✓ |
 | **Faker Data Types** | - | ✓ | ✓ | ✓ |
 | **Multi-tenancy** | - | - | ✓ | - |
 | **Nested Tables** | ✓ | - | - | - |
@@ -258,9 +265,30 @@ dbt seed && dbt run
 
 ---
 
-## Understanding Inline Note Constraints
+## Understanding Generation Hints
 
-The examples showcase **inline note constraints** for controlling generated data ranges. This is done using JSON in the column definition:
+The examples use **generation hints** to control generated data ranges. In the model, a column's
+hints are its `generate` mapping:
+
+```yaml
+products:
+  columns:
+    id: {type: bigint, pk: true}
+    price:
+      type: numeric
+      not_null: true
+      generate: {min: 5.99, max: 999.99}
+    stock_quantity:
+      type: int
+      not_null: true
+      generate: {min: 0, max: 1000}
+    rating:
+      type: int
+      generate: {min: 1, max: 5}
+```
+
+In the DBML files the same hints are a JSON object in the column's note, which `model2data`
+converts into `generate`:
 
 ```dbml
 Table products {
@@ -274,18 +302,23 @@ Table products {
 ### Supported Constraint Types
 
 **Integer constraints:**
-```dbml
-age int [note: '{"min": 18, "max": 65}']
-priority int [note: '{"min": 1, "max": 5}']
-quantity int [note: '{"min": 1, "max": 100}']
+```yaml
+age: {type: int, generate: {min: 18, max: 65}}
+priority: {type: int, generate: {min: 1, max: 5}}
+quantity: {type: int, generate: {min: 1, max: 100}}
 ```
 
 **Numeric/Decimal constraints:**
-```dbml
-price numeric [note: '{"min": 9.99, "max": 999.99}']
-percentage numeric [note: '{"min": 0, "max": 100}']
-allocation numeric [note: '{"min": 0.5, "max": 8}']
+```yaml
+price: {type: numeric, generate: {min: 9.99, max: 999.99}}
+percentage: {type: numeric, generate: {min: 0, max: 100}}
+allocation: {type: numeric, generate: {min: 0.5, max: 8}}
 ```
+
+(A column with `generate` is usually written as a block mapping, as above; the one-line form is
+the same YAML.) Every other hint -- `null_rate`, `weights`, `true_rate`, `distinct`, `skew`,
+`after`, `business_hours`, `growth`, `seasonality`, `distribution` -- is documented in the
+[spec's schema](../model2data/spec/model.schema.json).
 
 ### When to Use Constraints
 
@@ -298,9 +331,9 @@ allocation numeric [note: '{"min": 0.5, "max": 8}']
 
 ### Examples from This Directory
 
-- **ecommerce.dbml**: Price (5.99-999.99), stock (0-1000), quantity (1-10), rating (1-5)
-- **saas_platform.dbml**: Monthly price (0-999), API calls (1K-1M), storage (5-1000 GB), month (1-12)
-- **advanced_features.dbml**: Budget (100K-5M), salary (30K-200K), priority (1-5), allocation (0-100%), hours (0.5-8)
+- **ecommerce**: Price (5.99-999.99), stock (0-1000), quantity (1-10), rating (1-5)
+- **saas_platform**: Monthly price (0-999), API calls (1K-1M), storage (5-1000 GB), month (1-12)
+- **advanced_features**: Budget (100K-5M), salary (30K-200K), priority (1-5), allocation (0-100%), hours (0.5-8)
 
 ---
 
@@ -344,9 +377,21 @@ md5             # 5d41402abc4b2a76b9719d911017c592
 sha1            # 356a192b7913b04c54574d18c28d46e6395428ab
 ```
 
-### How to Use Faker Types in Your DBML
+### How to Use Faker Types in Your Model
 
-In your DBML file, simply set the column's `data_type` to a Faker provider name:
+In your model, simply set the column's `type` to a Faker provider name:
+
+```yaml
+users:
+  columns:
+    id: {type: bigint, pk: true}
+    email: {type: email, unique: true, not_null: true}   # Faker's email()
+    first_name: {type: first_name, not_null: true}      # Faker's first_name()
+    phone_number: phone_number                          # Faker's phone_number()
+    company: company                                    # Faker's company()
+```
+
+The same in DBML:
 
 ```dbml
 Table users {
@@ -374,40 +419,40 @@ Table organizations {
 }
 ```
 
-When you run `model2data --file your_schema.dbml --rows 100`, it will:
+When you run `model2data --file your_schema.model2data.yml --rows 100`, it will:
 1. Use Faker to generate realistic values for each column type
-2. Respect min/max constraints from inline notes
+2. Respect min/max and every other hint in `generate`
 3. Preserve all foreign key relationships (parent IDs before child IDs)
 4. Handle nullability properly (~20% null for optional columns)
 
 ### Examples from This Directory
 
-- **ecommerce.dbml**: Uses `email`, `first_name`, `last_name`, `phone_number`, `country`, `word`, `ean13` with price/quantity constraints
-- **saas_platform.dbml**: Uses `company`, `slug`, `email`, `first_name`, `last_name`, `word` with subscription/billing constraints
-- **advanced_features.dbml**: Uses `first_name`, `last_name`, `email`, `word` with budget/salary/time constraints
+- **ecommerce**: Uses `email`, `first_name`, `last_name`, `phone_number`, `country`, `word`, `ean13` with price/quantity constraints
+- **saas_platform**: Uses `company`, `slug`, `email`, `first_name`, `last_name`, `word` with subscription/billing constraints
+- **advanced_features**: Uses `first_name`, `last_name`, `email`, `word` with budget/salary/time constraints
 
 ---
 
 ## Tips for Using These Examples
 
 ### 1. **Learn by Doing**
-Start with `ecommerce.dbml` — it's the most straightforward and covers common patterns.
+Start with `ecommerce.model2data.yml` — it's the most straightforward and covers common patterns.
 
 ### 2. **Run with Different Seed Values**
 ```bash
 # Generate different data distributions
-model2data --file examples/ecommerce.dbml --rows 100 --seed 1
-model2data --file examples/ecommerce.dbml --rows 100 --seed 2
-model2data --file examples/ecommerce.dbml --rows 100 --seed 3
+model2data --file examples/ecommerce.model2data.yml --rows 100 --seed 1
+model2data --file examples/ecommerce.model2data.yml --rows 100 --seed 2
+model2data --file examples/ecommerce.model2data.yml --rows 100 --seed 3
 ```
 
 ### 3. **Vary Row Counts**
 ```bash
 # Small dataset for quick testing
-model2data --file examples/saas_platform.dbml --rows 10 --seed 42
+model2data --file examples/saas_platform.model2data.yml --rows 10 --seed 42
 
 # Large dataset for performance testing
-model2data --file examples/saas_platform.dbml --rows 10000 --seed 42
+model2data --file examples/saas_platform.model2data.yml --rows 10000 --seed 42
 ```
 
 ### 4. **Inspect Generated Files**
@@ -425,16 +470,17 @@ head -5 dbt_ecommerce/seeds/ecommerce/customers.csv
 ### 5. **Modify Examples**
 Copy an example and customize it for your own use case:
 ```bash
-cp examples/ecommerce.dbml examples/my_store.dbml
-# Edit my_store.dbml with your custom tables and constraints...
-model2data --file examples/my_store.dbml --rows 100 --seed 42
+cp examples/ecommerce.model2data.yml examples/my_store.model2data.yml
+# Edit my_store.model2data.yml with your custom tables and hints, then check it:
+model2data validate examples/my_store.model2data.yml
+model2data --file examples/my_store.model2data.yml --rows 100 --seed 42
 ```
 
 ### 6. **Experiment with Constraints**
 ```bash
 # Try different constraint ranges to see their effect
-# Edit the note constraints in the DBML file, then regenerate
-model2data --file examples/ecommerce.dbml --rows 100 --seed 42
+# Edit the generate hints in the model, then regenerate
+model2data --file examples/ecommerce.model2data.yml --rows 100 --seed 42
 ```
 
 ---
@@ -453,14 +499,14 @@ model2data --file examples/ecommerce.dbml --rows 100 --seed 42
 
 ## Contributing New Examples
 
-Have a domain or pattern you'd like to showcase? Create a new `.dbml` file and submit a PR!
+Have a domain or pattern you'd like to showcase? Create a new `.model2data.yml` model and submit a PR!
 
 Examples should:
 - ✓ Showcase a clear use case or domain
 - ✓ Include meaningful relationships (2+ tables)
 - ✓ Demonstrate one or more advanced features (Faker types, constraints, etc.)
-- ✓ Have helpful comments at the top explaining the purpose
-- ✓ Use inline note constraints where appropriate for realistic data ranges
+- ✓ Have a `description` explaining the purpose
+- ✓ Use `generate` hints where appropriate for realistic data ranges
 - ✓ Include a variety of Faker data types for realistic generation
 
 ---

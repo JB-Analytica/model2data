@@ -1,0 +1,18 @@
+# yaml-language-server: $schema=https://www.jbanalytica.com/model2data/spec/0.2.0/model.schema.json
+model2data: 0.2.0
+description: >
+  Names with spaces in them, from a DBML file with mixed identifier quoting and CRLF line endings.
+
+tables:
+  user accounts:
+    columns:
+      id: {type: integer, pk: true}
+      display name: {type: varchar, not_null: true}
+      email address: {type: varchar, unique: true}
+      status: {type: varchar, default: active}
+
+  orders:
+    columns:
+      id: {type: integer, pk: true}
+      account_id: {type: integer, references: user accounts.id}
+      amount: {type: decimal, default: 0}

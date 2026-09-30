@@ -1,0 +1,60 @@
+# yaml-language-server: $schema=https://www.jbanalytica.com/model2data/spec/0.2.0/model.schema.json
+model2data: 0.2.0
+description: >
+  Hacker News stories loaded by a dlt pipeline, with dlt's own load, version and pipeline-state tables.
+
+tables:
+  stories:
+    columns:
+      id: {type: bigint, pk: true, not_null: true}
+      by: text
+      title: text
+      url: text
+      score: bigint
+      time: bigint
+      descendants: bigint
+      type: text
+      text: text
+      _dlt_load_id: {type: uuid, not_null: true, references: _dlt_loads.load_id}
+      _dlt_id: {type: uuid, pk: true, unique: true, not_null: true}
+
+  stories__kids:
+    columns:
+      value: bigint
+      _dlt_root_id: {type: text, not_null: true, references: stories._dlt_id}
+      _dlt_parent_id: {type: text, not_null: true, references: stories._dlt_id}
+      _dlt_list_idx: {type: bigint, not_null: true}
+      _dlt_id: {type: uuid, pk: true, unique: true, not_null: true}
+
+  _dlt_version:
+    description: Tracks schema versions for DLT pipelines
+    columns:
+      version: {type: bigint, not_null: true}
+      engine_version: {type: bigint, not_null: true}
+      inserted_at: {type: timestamp, not_null: true}
+      schema_name: {type: text, not_null: true}
+      version_hash: {type: text, not_null: true}
+      schema: {type: text, not_null: true}
+
+  _dlt_loads:
+    description: Tracks completed DLT loads
+    columns:
+      load_id: {type: uuid, pk: true, not_null: true}
+      schema_name: text
+      status: {type: bigint, not_null: true}
+      inserted_at: {type: timestamp, not_null: true}
+      schema_version_hash: {type: text, references: _dlt_version.version_hash}
+
+  _dlt_pipeline_state:
+    columns:
+      version: {type: bigint, not_null: true}
+      engine_version: {type: bigint, not_null: true}
+      pipeline_name: {type: text, not_null: true}
+      state: {type: text, not_null: true}
+      created_at: {type: timestamp, not_null: true}
+      version_hash: text
+      _dlt_load_id: {type: uuid, not_null: true, references: _dlt_loads.load_id}
+      _dlt_id: {type: uuid, pk: true, unique: true, not_null: true}
+
+relationships:
+  - {many_to_many: [_dlt_version.schema_name, _dlt_loads.schema_name]}

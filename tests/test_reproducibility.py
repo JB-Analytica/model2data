@@ -37,8 +37,9 @@ _GENERATE = """
 import datetime as dt, sys
 from pathlib import Path
 from model2data.generate.core import generate_data_from_dbml
-from model2data.parse.dbml import parse_dbml
-tables, refs = parse_dbml(Path(sys.argv[1]))
+from model2data.model import load, to_engine
+inputs = to_engine(load(Path(sys.argv[1])))
+tables, refs = inputs.tables, inputs.refs
 frames = generate_data_from_dbml(
     tables, refs, base_rows=40, seed=7, as_of=dt.datetime(2026, 1, 1)
 )
@@ -70,6 +71,10 @@ def test_uuid_and_hash_columns_follow_the_seed(uuid_schema: Path):
     assert first == second
 
 
-@pytest.mark.parametrize("example", sorted(EXAMPLES.glob("*.dbml")), ids=lambda p: p.stem)
+@pytest.mark.parametrize(
+    "example",
+    sorted([*EXAMPLES.glob("*.dbml"), *EXAMPLES.glob("*.model2data.yml")]),
+    ids=lambda p: p.name,
+)
 def test_every_example_reproduces_across_processes(example: Path):
     assert _generate_in_fresh_process(example, "1") == _generate_in_fresh_process(example, "2")

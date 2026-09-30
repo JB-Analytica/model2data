@@ -1,0 +1,91 @@
+# yaml-language-server: $schema=https://www.jbanalytica.com/model2data/spec/0.2.0/model.schema.json
+model2data: 0.2.0
+description: >
+  HR and project management: departments, employees with a self-referencing manager hierarchy, projects, assignments, time entries, expenses and performance reviews.
+
+enums:
+  expense_status_enum: [pending, approved, rejected]
+
+tables:
+  departments:
+    columns:
+      id: {type: bigint, pk: true, not_null: true}
+      name: {type: word, not_null: true}
+      budget_cents:
+        type: bigint
+        not_null: true
+        generate: {min: 100000, max: 5000000}
+
+  employees:
+    columns:
+      id: {type: bigint, pk: true, not_null: true}
+      department_id: {type: bigint, not_null: true, references: departments.id}
+      first_name: {type: first_name, not_null: true}
+      last_name: {type: last_name, not_null: true}
+      email: {type: email, not_null: true}
+      salary_cents:
+        type: bigint
+        not_null: true
+        generate: {min: 30000, max: 200000}
+      hire_date: {type: date, not_null: true}
+      manager_id: {type: bigint, references: employees.id}
+
+  projects:
+    columns:
+      id: {type: bigint, pk: true, not_null: true}
+      name: {type: word, not_null: true}
+      budget_cents:
+        type: bigint
+        not_null: true
+        generate: {min: 50000, max: 2000000}
+      priority:
+        type: int
+        not_null: true
+        generate: {min: 1, max: 5}
+
+  project_assignments:
+    columns:
+      id: {type: bigint, pk: true, not_null: true}
+      project_id: {type: bigint, not_null: true, references: projects.id}
+      employee_id: {type: bigint, not_null: true, references: employees.id}
+      allocation_percent:
+        type: numeric
+        not_null: true
+        generate: {min: 0, max: 100}
+    keys:
+      - {unique: [project_id, employee_id]}
+
+  time_entries:
+    columns:
+      id: {type: bigint, pk: true, not_null: true}
+      project_id: {type: bigint, not_null: true, references: projects.id}
+      employee_id: {type: bigint, not_null: true, references: employees.id}
+      entry_date: {type: date, not_null: true}
+      hours_worked:
+        type: numeric
+        not_null: true
+        generate: {min: 0.5, max: 8}
+      billable: boolean
+
+  expenses:
+    columns:
+      id: {type: bigint, pk: true, not_null: true}
+      project_id: {type: bigint, not_null: true, references: projects.id}
+      employee_id: {type: bigint, not_null: true, references: employees.id}
+      amount_cents:
+        type: bigint
+        not_null: true
+        generate: {min: 100, max: 50000}
+      description: text
+      status: expense_status_enum
+      approved_by: {type: bigint, references: employees.id}
+
+  performance_ratings:
+    columns:
+      id: {type: bigint, pk: true, not_null: true}
+      employee_id: {type: bigint, not_null: true, references: employees.id}
+      reviewer_id: {type: bigint, not_null: true, references: employees.id}
+      rating:
+        type: int
+        not_null: true
+        generate: {min: 1, max: 5}
