@@ -5,6 +5,18 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+- **A seed now reproduces `uuid` and `hash` columns.** They were drawn with `uuid.uuid4()`, which
+  reads the operating system's randomness rather than the seeded generator, so the same `--seed`
+  and `--as-of` gave different keys on every run -- and so did every table with a foreign key onto
+  one, and every unique text column the de-duplicator fell back to UUIDs for. Committed fixtures of
+  such a schema could never be verified, and `examples/hackernews.dbml` and
+  `examples/tagging_m2m.dbml` did not reproduce at all. UUIDs are now version-4 values drawn from
+  the seeded stream; `tests/test_reproducibility.py` generates every example in two fresh
+  interpreters and requires identical bytes.
+
 ## [1.7.3] - 2026-09-25
 
 ### Fixed

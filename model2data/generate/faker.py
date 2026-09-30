@@ -762,9 +762,9 @@ def generate_column_values(
     # UUIDs / hashes
     # -----------------------------------------------------
     elif "uuid" in base_type or "hash" in base_type:
-        values = [str(uuid.uuid4()) for _ in range(row_count)]
+        values = [_seeded_uuid() for _ in range(row_count)]
         if ensure_unique:
-            values = _deduplicate(values, lambda: str(uuid.uuid4()), column_name=unique_label)
+            values = _deduplicate(values, _seeded_uuid, column_name=unique_label)
 
     # -----------------------------------------------------
     # Integers
@@ -901,7 +901,7 @@ def generate_column_values(
                 values = [fake.format(base_type) for _ in range(row_count)]
             except (AttributeError, TypeError):
                 if column.name.lower().endswith("_id") or ensure_unique:
-                    values = [str(uuid.uuid4()) for _ in range(row_count)]
+                    values = [_seeded_uuid() for _ in range(row_count)]
                 else:
                     _stats_state["unmapped"].append((column.name, column.data_type))
                     values = [fake.sentence(nb_words=3) for _ in range(row_count)]
@@ -1015,6 +1015,16 @@ def _null_out(values: list, fraction: float, default: object, row_count: int) ->
     if sample_size:
         for idx in random.sample(range(row_count), k=sample_size):
             values[idx] = default
+
+
+def _seeded_uuid() -> str:
+    """A random version-4 UUID drawn from the seeded `random` stream.
+
+    `uuid.uuid4()` reads `os.urandom`, which no seed reaches, so every `uuid`
+    column -- and every table referencing one -- came out different on each run
+    of the same seed. Same format, same 122 random bits, but reproducible.
+    """
+    return str(uuid.UUID(int=random.getrandbits(128), version=4))
 
 
 def _deduplicate(
