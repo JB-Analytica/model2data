@@ -141,3 +141,32 @@ def test_count_measures_apply_to_any_column():
         "tables": {"t": {"columns": {"code": {"type": "text", "measure": "count_distinct"}}}},
     }
     assert from_dict(document).tables["t"].columns["code"].measure == "count_distinct"
+
+
+def _grain_warnings(table: dict) -> list[str]:
+    model = from_dict({"model2data": "0.2.0", "tables": {"t": table}})
+    return [issue.message for issue in model.warnings if issue.path.startswith("tables.t.grain")]
+
+
+def test_a_grain_that_holds_no_key_warns_with_the_fix():
+    warnings = _grain_warnings(
+        {"grain": ["a", "b"], "columns": {"a": {"type": "int"}, "b": {"type": "int"}}}
+    )
+    assert len(warnings) == 1
+    assert "keys: [{unique: [a, b]}]" in warnings[0]
+
+
+def test_a_grain_holding_a_key_does_not_warn():
+    assert not _grain_warnings(
+        {
+            "grain": ["id", "line"],
+            "columns": {"id": {"type": "int", "pk": True}, "line": {"type": "int"}},
+        }
+    )
+    assert not _grain_warnings(
+        {
+            "grain": ["a", "b"],
+            "keys": [{"unique": ["a", "b"]}],
+            "columns": {"a": {"type": "int"}, "b": {"type": "int"}},
+        }
+    )

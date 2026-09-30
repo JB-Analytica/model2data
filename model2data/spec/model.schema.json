@@ -441,7 +441,7 @@
           "x-model2data-applies-to": ["foreign-key"]
         },
         "after": {
-          "description": "Another temporal column of the same table. In every row, this column's value is not earlier than that column's. The `after` hints of one table must not form a cycle.",
+          "description": "Another temporal column of the same table. In every row, this column's value is not earlier than that column's. A date column that follows a timestamp compares by day: it is not before the timestamp's date. The `after` hints of one table must not form a cycle.",
           "$ref": "#/$defs/name",
           "x-model2data-applies-to": ["temporal"]
         },

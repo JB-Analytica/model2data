@@ -300,6 +300,9 @@ conforms.
 1. A referenced parent column is not a primary key, a one-column key, or unique; or the
    `to_columns` of a foreign key are not together the parent's primary key, one of its `keys`, or
    a unique column. The reference is generated as [References](#references) describes.
+2. A `grain` contains no key of its table (its primary key, a `keys` entry, or a `unique`
+   column). The generator does not read `grain`, so generated rows may repeat it; declaring it
+   as a key too makes them unique.
 
 ## From 0.1
 

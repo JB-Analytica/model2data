@@ -507,11 +507,25 @@ class _Checks:
 
     def _grain_and_incremental(self, key: str, table: Mapping, columns: dict[str, dict]) -> None:
         base = ["tables", key]
+        grain = [m for m in _list(table.get("grain")) if isinstance(m, str)]
         for position, member in enumerate(_list(table.get("grain"))):
             if isinstance(member, str) and member not in columns:
                 self.add(
                     [*base, "grain", position],
                     f"names {_show(member)}, which is not a column of {key}",
+                )
+        if grain and all(m in columns for m in grain):
+            if not any(keyset and keyset <= set(grain) for keyset in self.key_sets(key)):
+                self.add(
+                    [*base, "grain"],
+                    f"is not a key of {key}: the generator does not read `grain`, so generated "
+                    f"rows may repeat it and its uniqueness test fail. Declare it as a key too: "
+                    f"keys: [{{unique: [{', '.join(grain)}]}}]"
+                    if len(grain) > 1
+                    else f"is not a key of {key}: the generator does not read `grain`, so "
+                    f"generated rows may repeat it and its uniqueness test fail. Mark "
+                    f"{grain[0]} unique: true",
+                    warning=True,
                 )
         incremental = table.get("incremental")
         if not isinstance(incremental, Mapping):
