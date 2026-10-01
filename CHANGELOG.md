@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-10-01
+
 ### Added
 - **Your model writes your data tests.** The generated dbt project now tests what the model's
   hints say valid data looks like: `generate.min`/`max` (`model2data_between`), `after`
