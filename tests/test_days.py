@@ -313,6 +313,29 @@ def test_changes_naming_a_key_is_invalid():
         generate_days(inputs, 1, base_rows=20, seed=1, as_of=AS_OF)
 
 
+@pytest.mark.parametrize(
+    ("incremental", "message"),
+    [
+        (Incremental(changes=["colour"]), "names 'colour', not a column"),
+        (Incremental(updated_at="nowhere"), "names 'nowhere', not a column"),
+        (Incremental(updated_at="total_amount"), "'total_amount' is not temporal"),
+    ],
+)
+def test_hand_built_incremental_inputs_are_checked(incremental, message):
+    inputs = to_engine(load(DAILY))
+    inputs.incremental["orders"] = incremental
+    with pytest.raises(ValueError, match=message):
+        generate_days(inputs, 1, base_rows=20, seed=1, as_of=AS_OF)
+
+
+def test_as_of_defaults_to_the_models_run():
+    data = to_dict(load(DAILY))
+    data["run"] = {**data.get("run", {}), "as_of": AS_OF.isoformat()}
+    from_run = generate_days(from_dict(data), 2, base_rows=30, seed=7)
+    given = generate_days(load(DAILY), 2, base_rows=30, seed=7, as_of=AS_OF)
+    assert [_csv(d.state) for d in from_run] == [_csv(d.state) for d in given]
+
+
 def test_a_unique_foreign_key_runs_out_of_parents_and_says_so():
     data = {
         "model2data": "0.2.0",

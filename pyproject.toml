@@ -114,6 +114,11 @@ known-first-party = ["model2data"]
 [tool.ty.src]
 exclude = ["model2data/_vendor"]
 
+# Coverage: the vendored parser is upstream's code and is measured upstream;
+# most of it (the SQL and DBML renderers) is never called by model2data.
+[tool.coverage.run]
+omit = ["model2data/_vendor/*"]
+
 # Poe the Poet task runner
 [tool.poe.tasks]
 lint = "ruff check ."
