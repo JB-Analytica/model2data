@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 from typing import Literal, Optional, Union
 
-from model2data.model._yaml import parse_yaml
+from model2data.model._yaml import locate_issues, parse_yaml
 from model2data.model.document import from_dict
 from model2data.model.errors import Issue, ModelError
 from model2data.model.types import Model
@@ -78,9 +78,16 @@ def load(source: Source, *, format: Optional[Format] = None) -> Model:
         from model2data.model.dbml import from_dbml
 
         return from_dbml(text)
-    if format == "json":
-        return from_dict(_parse_json(text))
-    return from_dict(parse_yaml(text))
+    document = _parse_json(text) if format == "json" else parse_yaml(text)
+    try:
+        model = from_dict(document)
+    except ModelError as error:
+        # One composition of the text, however many issues: each gets its line.
+        raise ModelError(
+            locate_issues(text, error.issues), locate_issues(text, error.warnings)
+        ) from None
+    model.warnings = locate_issues(text, model.warnings)
+    return model
 
 
 def _parse_json(text: str):

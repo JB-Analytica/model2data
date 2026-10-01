@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.10.1] - 2026-10-01
+
+### Fixed
+- **Line numbers on validation issues, and on GitHub annotations.** An issue found in a YAML or
+  JSON model now carries the line of the key its path points at (an unknown key, a bad value; a
+  missing key takes the line of the nearest enclosing key), where before only YAML syntax errors
+  did. `model2data validate --format github` therefore prints `::error file=...,line=N::...`, so a
+  pull request shows the annotation on the line rather than on the file. This is a visible change
+  to the text output too: issues now read `path (line N): message`. DBML models are unchanged.
+- **Summary grammar.** `model2data validate` over several files said "1 of 1 model file do not
+  conform"; it now agrees: "1 of 1 model file does not conform." / "2 of 3 model files do not
+  conform.", and "1 model file conforms."
+- **The GitHub Action runs on Node 24.** It uses `actions/setup-python@v6`, which silences GitHub's
+  Node.js 20 deprecation warning; the README's workflow uses `actions/checkout@v5`.
+
 ## [1.10.0] - 2026-10-01
 
 ### Added

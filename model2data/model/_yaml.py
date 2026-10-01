@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import math
 import re
+from dataclasses import replace
 from typing import Any
 
 import yaml
@@ -158,6 +159,71 @@ def _check_mappings(node: Node, path: list[PathPart], issues: list[Issue]) -> No
     elif isinstance(node, SequenceNode):
         for index, item in enumerate(node.value):
             _check_mappings(item, [*path, index], issues)
+
+
+def locate_issues(text: str, issues: list[Issue]) -> list[Issue]:
+    """`issues` with a `line` on each one that has none, from where its path sits in `text`.
+
+    `text` is a YAML (or JSON) document; it is composed once, with the profile's
+    own loader so the node tree is the one `parse_yaml` read, and each issue's
+    dotted path is walked down it. A path that stops resolving (a key that is
+    missing, say) takes the line of the deepest node that did. Text that does
+    not compose leaves the issues as they are.
+    """
+    if not any(issue.line is None and issue.path for issue in issues):
+        return issues
+    loader = _CoreLoader(text)
+    try:
+        root = loader.get_single_node()
+    except Exception:
+        return issues
+    finally:
+        loader.dispose()
+    if root is None:
+        return issues
+    located = []
+    for issue in issues:
+        if issue.line is None and issue.path:
+            line = _line_of_path(root, issue.path)
+            if line is not None:
+                issue = replace(issue, line=line)
+        located.append(issue)
+    return located
+
+
+def _line_of_path(root: Node, path: str) -> int | None:
+    """The line of the deepest node `path` reaches, or None if it reaches only the root."""
+    node = root
+    rest = path
+    line: int | None = None
+    while rest:
+        if isinstance(node, MappingNode):
+            best: tuple[Node, Node] | None = None
+            best_len = 0
+            for key_node, value_node in node.value:
+                key = _key_text(key_node)
+                if not isinstance(key, str) or not key or len(key) <= best_len:
+                    continue
+                if rest == key or rest.startswith(key + "."):
+                    best, best_len = (key_node, value_node), len(key)
+            if best is None:
+                break
+            line = best[0].start_mark.line + 1
+            node = best[1]
+            rest = rest[best_len + 1 :]
+        elif isinstance(node, SequenceNode):
+            match = re.match(r"^(?:\[(\d+)\]|(\d+))(?:\.|$)", rest)
+            if match is None:
+                break
+            index = int(match.group(1) or match.group(2))
+            if index >= len(node.value):
+                break
+            node = node.value[index]
+            line = node.start_mark.line + 1
+            rest = rest[match.end() :]
+        else:
+            break
+    return line
 
 
 def parse_yaml(text: str) -> Any:

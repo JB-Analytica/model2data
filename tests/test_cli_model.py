@@ -187,8 +187,8 @@ def test_validate_prints_every_issue_with_its_path_and_exits_1(tmp_path):
     result = runner.invoke(app, ["validate", str(model)])
     assert result.exit_code == 1
     assert "❌ m.model2data.yml: 2 errors" in result.output
-    assert "  - tables.orders.columns.customer_id.nul: unknown key" in result.output
-    assert "  - run.rows: must be 1 or more (got 0)" in result.output
+    assert "  - tables.orders.columns.customer_id.nul (line 16): unknown key" in result.output
+    assert "  - run.rows (line 21): must be 1 or more (got 0)" in result.output
 
 
 def test_validate_exits_0_on_warnings_alone(tmp_path):
@@ -270,8 +270,8 @@ def test_validate_several_files_one_invalid_exits_1_with_path_prefixed_issues(tm
     result = runner.invoke(app, ["validate", str(good), str(bad)])
     assert result.exit_code == 1
     assert f"❌ {bad}: 1 error" in result.output
-    assert "  - run.rows: must be 1 or more (got 0)" in result.output
-    assert "❌ 1 of 2 model files do not conform." in result.output
+    assert "  - run.rows (line 21): must be 1 or more (got 0)" in result.output
+    assert "❌ 1 of 2 model files does not conform." in result.output
 
 
 def test_validate_glob_matches_nested_files(tmp_path, monkeypatch):
@@ -304,7 +304,10 @@ def test_validate_format_github_prints_annotations(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     result = runner.invoke(app, ["validate", "bad.model2data.yml", "--format", "github"])
     assert result.exit_code == 1
-    assert "::error file=bad.model2data.yml::run.rows: must be 1 or more (got 0)" in result.output
+    assert (
+        "::error file=bad.model2data.yml,line=21::run.rows: must be 1 or more (got 0)"
+        in result.output
+    )
     yaml_error = _write(tmp_path, "dup.model2data.yml", MODEL + "name: again\n")
     result = runner.invoke(app, ["validate", yaml_error.name, "--format", "github"])
     assert "::error file=dup.model2data.yml,line=25::" in result.output
@@ -338,3 +341,40 @@ def test_ci_integration_files_run_the_validate_command():
     assert hooks[0]["entry"] == "model2data validate"
     assert hooks[0]["language"] == "python"
     assert hooks[0]["pass_filenames"] is True
+
+
+def test_validate_format_github_puts_the_line_on_a_value_issue(tmp_path, monkeypatch):
+    _write(
+        tmp_path,
+        "m.model2data.yml",
+        MODEL.replace("pk: true}\n      email", "pk: maybe}\n      email"),
+    )
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(app, ["validate", "m.model2data.yml", "--format", "github"])
+    assert result.exit_code == 1
+    assert (
+        "::error file=m.model2data.yml,line=10::tables.customers.columns.id.pk: "
+        'must be true or false, not the string "maybe"'
+    ) in result.output
+
+
+def test_validate_summary_agrees_with_its_count(tmp_path):
+    good = _write(tmp_path, "good.model2data.yml", MODEL)
+    bad = _broken(tmp_path)
+    one_good = runner.invoke(app, ["validate", str(good), "--format", "github"])
+    assert "✅ 1 model file conforms." in one_good.output
+    one_bad = runner.invoke(app, ["validate", str(bad), "--format", "github"])
+    assert "❌ 1 of 1 model file does not conform." in one_bad.output
+    mixed = runner.invoke(app, ["validate", str(good), str(bad)])
+    assert "❌ 1 of 2 model files does not conform." in mixed.output
+    both = runner.invoke(app, ["validate", str(bad), str(_broken(tmp_path, "b2.model2data.yml"))])
+    assert "❌ 2 of 2 model files do not conform." in both.output
+
+
+def test_action_uses_setup_python_v6():
+    import yaml
+
+    root = Path(__file__).resolve().parent.parent
+    action = yaml.safe_load((root / "action.yml").read_text())
+    uses = [step.get("uses") for step in action["runs"]["steps"]]
+    assert "actions/setup-python@v6" in uses

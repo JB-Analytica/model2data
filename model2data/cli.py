@@ -843,10 +843,13 @@ def validate_command(
                 f"✅ {file if len(targets) > 1 else file.name} conforms to spec {_spec_of(file)}."
             )
     if len(targets) > 1 or output_format == "github":
-        checked = f"{len(targets)} model file{'s' if len(targets) != 1 else ''}"
-        typer.echo(
-            f"❌ {failed} of {checked} do not conform." if failed else f"✅ {checked} conform."
-        )
+        count = len(targets)
+        checked = f"{count} model file{'s' if count != 1 else ''}"
+        if failed:
+            verb = "does" if failed == 1 else "do"
+            typer.echo(f"❌ {failed} of {checked} {verb} not conform.")
+        else:
+            typer.echo(f"✅ {checked} {'conforms' if count == 1 else 'conform'}.")
     if failed:
         raise typer.Exit(1)
 
