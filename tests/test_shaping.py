@@ -39,7 +39,11 @@ def _users_orders_schema(parent_id_note=None):
                 ColumnDef(
                     "status",
                     "order_status",
-                    set(),
+                    # `not null` since 1.8: a nullable enum column now takes
+                    # the default null rate like every other nullable column
+                    # (spec 0.2.0), which would move every value drawn after
+                    # it. Not null keeps this the 1.4.0 stream it pins.
+                    {"not null"},
                     enum_values=["pending", "shipped", "delivered", "cancelled"],
                 ),
                 ColumnDef("is_paid", "boolean"),
@@ -58,6 +62,22 @@ _USERS_ORDERS_REFS = [
         "target_column": "id",
     }
 ]
+
+
+def test_a_nullable_enum_column_takes_the_default_null_rate():
+    """Spec 0.2.0: a column without `not_null` is nullable, enum or not."""
+    tables = {
+        "t": TableDef(
+            name="t",
+            columns=[
+                ColumnDef("id", "int", {"pk"}),
+                ColumnDef("status", "status", set(), enum_values=["a", "b"]),
+            ],
+        )
+    }
+    data = generate_data_from_dbml(tables, [], base_rows=200, seed=1)
+    # min(0.2, 1 - 200 / 250) = 0.2 of 200 rows.
+    assert data["t"]["status"].isna().sum() == 40
 
 
 def test_uniform_generation_reproduces_pre_1_5_frames():
@@ -490,4 +510,5 @@ def test_cli_prints_a_readable_error_on_a_bad_hint(tmp_path):
     result = _run(tmp_path, "bad_hint", BAD_HINT_SCHEMA)
     assert result.exit_code == 1
     assert "❌" in result.output
-    assert "t.label" in result.output
+    # Reported at its document path (spec 0.2.0), no longer as `t.label`.
+    assert "tables.t.columns.label.generate.weights" in result.output

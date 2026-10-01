@@ -1,0 +1,94 @@
+# yaml-language-server: $schema=https://www.jbanalytica.com/model2data/spec/0.2.0/model.schema.json
+model2data: 0.2.0
+description: >
+  A multi-tenant SaaS platform: organizations, their users, subscriptions, invoices, plan limits, API usage and an audit log.
+
+enums:
+  user_role: [admin, member, viewer]
+  plan_tier_type: [free, starter, pro, enterprise]
+  subscription_status: [trialing, active, past_due, canceled]
+  invoice_status: [draft, open, paid, void]
+  audit_event_type: [login, logout, create, update, delete]
+
+tables:
+  organizations:
+    columns:
+      id: {type: bigint, pk: true, not_null: true}
+      name: {type: company, not_null: true}
+      slug: {type: slug, unique: true, not_null: true}
+      is_active: {type: boolean, default: true}
+      created_at: {type: timestamp, not_null: true}
+
+  users:
+    columns:
+      id: {type: bigint, pk: true, not_null: true}
+      organization_id: {type: bigint, not_null: true, references: organizations.id}
+      email: {type: email, not_null: true}
+      first_name: {type: first_name, not_null: true}
+      last_name: {type: last_name, not_null: true}
+      role: user_role
+
+  subscriptions:
+    columns:
+      id: {type: bigint, pk: true, not_null: true}
+      organization_id: {type: bigint, not_null: true, references: organizations.id}
+      plan_tier: {type: plan_tier_type, not_null: true}
+      monthly_price:
+        type: numeric
+        not_null: true
+        generate: {min: 0, max: 999}
+      status: subscription_status
+      current_period_start: {type: timestamp, not_null: true}
+      current_period_end: timestamp
+
+  invoices:
+    columns:
+      id: {type: bigint, pk: true, not_null: true}
+      organization_id: {type: bigint, not_null: true, references: organizations.id}
+      subscription_id: {type: bigint, not_null: true, references: subscriptions.id}
+      amount:
+        type: numeric
+        not_null: true
+        generate: {min: 0, max: 999}
+      status: invoice_status
+      created_at: {type: timestamp, not_null: true}
+
+  feature_limits:
+    columns:
+      id: {type: bigint, pk: true, not_null: true}
+      organization_id: {type: bigint, not_null: true, references: organizations.id}
+      api_calls_monthly:
+        type: int
+        not_null: true
+        generate: {min: 1000, max: 1000000}
+      storage_gb:
+        type: int
+        not_null: true
+        generate: {min: 5, max: 1000}
+      users_allowed:
+        type: int
+        not_null: true
+        generate: {min: 1, max: 500}
+
+  api_usage:
+    columns:
+      id: {type: bigint, pk: true, not_null: true}
+      organization_id: {type: bigint, not_null: true, references: organizations.id}
+      month:
+        type: int
+        not_null: true
+        generate: {min: 1, max: 12}
+      api_calls_used:
+        type: int
+        not_null: true
+        generate: {min: 0, max: 1000000}
+
+  audit_events:
+    columns:
+      id: {type: bigint, pk: true, not_null: true}
+      organization_id: {type: bigint, not_null: true, references: organizations.id}
+      user_id: {type: bigint, references: users.id}
+      event_type: {type: audit_event_type, not_null: true}
+      resource_id: text
+      resource_type: text
+      created_at: {type: timestamp, not_null: true}

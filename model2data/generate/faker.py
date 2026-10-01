@@ -12,6 +12,12 @@ from typing import Callable, Optional, Union
 import pandas as pd
 from faker import Faker
 
+from model2data.generate.kinds import (
+    is_boolean_type,
+    is_decimal_type,
+    is_integer_type,
+    temporal_kind,
+)
 from model2data.generate.options import UNIFORM, TimeProfile
 from model2data.generate.timeline import weighted_dates, weighted_timestamps
 from model2data.parse.dbml import ColumnDef
@@ -383,6 +389,7 @@ _STRUCTURED_TYPE_KEYS = (
     "numeric",
     "float",
     "double",
+    "real",
     "boolean",
     "bool",
     "date",
@@ -405,6 +412,8 @@ def is_free_text_type(data_type: str) -> bool:
     silently strip meaningful leading zeros.
     """
     base_type = data_type.lower().split("(")[0].strip()
+    if is_decimal_type(base_type):
+        return False
     return not any(key in base_type for key in _STRUCTURED_TYPE_KEYS)
 
 
@@ -686,10 +695,6 @@ def generate_column_values(
     if column.enum_values:
         note = column.note or {}
         weights = note.get("weights")
-        null_rate_hint = "null_rate" in note
-        if weights is None and not null_rate_hint:
-            return [random.choice(column.enum_values) for _ in range(row_count)]
-
         if weights is not None:
             # Values the hint doesn't mention default to weight 1, so naming
             # only the ones that matter (`{"delivered": 20}`) doesn't silently
@@ -699,8 +704,12 @@ def generate_column_values(
         else:
             values = [random.choice(column.enum_values) for _ in range(row_count)]
 
-        if null_rate_hint and not force_not_null:
-            _null_out(values, note["null_rate"], column.default, row_count)
+        # A nullable enum column is nullable like any other: the default rate
+        # when it has no `null_rate`, as spec 0.2.0 says of every column
+        # without `not_null`. Before 1.8 an enum column came back null only
+        # when it carried an explicit `null_rate`.
+        if not force_not_null and "not null" not in column.settings and "pk" not in column.settings:
+            _null_out(values, _null_fraction_for(column, row_count), column.default, row_count)
         return values
 
     dtype = column.data_type.lower()
@@ -721,19 +730,27 @@ def generate_column_values(
     explicit_min, explicit_max = min_val, max_val
     distribution = column_note.get("distribution", "uniform")
 
-    if fk_series is not None and not fk_series.empty:
+    if fk_series is not None and bool(fk_series.notna().any()):
         # A plain branch of the same if/elif chain (rather than an early
         # return) so a nullable FK column can actually come back null for
         # some rows -- e.g. an optional `manager_id` on a top-level
         # employee, or an order with no customer -- matching how every
         # other branch here already respects `not null`/`pk` via the
         # nullability pass below.
-        fk_values = fk_series.tolist()
+        # A parent that is not a key can hold nulls; a child draws only the
+        # values it actually holds (a null child comes from the null pass).
+        fk_values = [value for value in fk_series.tolist() if not pd.isna(value)]
         effective_skew = column.note.get("skew") if column.note else None
         if effective_skew is None:
             effective_skew = skew
 
-        if effective_skew == 0.0:
+        if ensure_unique:
+            # A unique foreign key (a one-to-one, or a child whose own key is
+            # its parent's) takes each parent at most once, so it is drawn
+            # without replacement. Skew has nothing to act on here: every
+            # parent is used once or not at all.
+            values = _distinct_parent_values(fk_values, row_count, unique_label)
+        elif effective_skew == 0.0:
             # Unchanged from every release before skew existed.
             values = [random.choice(fk_values) for _ in range(row_count)]
         else:
@@ -762,14 +779,14 @@ def generate_column_values(
     # UUIDs / hashes
     # -----------------------------------------------------
     elif "uuid" in base_type or "hash" in base_type:
-        values = [str(uuid.uuid4()) for _ in range(row_count)]
+        values = [_seeded_uuid() for _ in range(row_count)]
         if ensure_unique:
-            values = _deduplicate(values, lambda: str(uuid.uuid4()), column_name=unique_label)
+            values = _deduplicate(values, _seeded_uuid, column_name=unique_label)
 
     # -----------------------------------------------------
     # Integers
     # -----------------------------------------------------
-    elif any(key in base_type for key in ["int", "integer", "bigint", "smallint"]):
+    elif is_integer_type(base_type):
         # Use note values if present, otherwise defaults
         had_explicit_range = min_val is not None or max_val is not None
         if min_val is None:
@@ -818,7 +835,7 @@ def generate_column_values(
     # -----------------------------------------------------
     # Floats / decimals
     # -----------------------------------------------------
-    elif any(key in base_type for key in ["decimal", "numeric", "float", "double"]):
+    elif is_decimal_type(base_type):
         if min_val is None:
             min_val = 0
         if max_val is None:
@@ -848,7 +865,7 @@ def generate_column_values(
     # -----------------------------------------------------
     # Booleans
     # -----------------------------------------------------
-    elif "boolean" in base_type or "bool" in base_type:
+    elif is_boolean_type(base_type):
         true_rate = column.note.get("true_rate") if column.note else None
         if true_rate is None:
             values = [random.choice([True, False]) for _ in range(row_count)]
@@ -858,14 +875,17 @@ def generate_column_values(
     # -----------------------------------------------------
     # Dates
     # -----------------------------------------------------
-    elif "date" in base_type and "time" not in base_type:
+    # `datetime` is a timestamp, not a time: the spec's temporal kinds (see
+    # generate.kinds) put anything naming a date and a time on the timestamp
+    # branch, and only `time` alone on the time-of-day one.
+    elif temporal_kind(base_type) == "date":
         values = _generate_dates(row_count, as_of, _column_time_profile(column, time_profile))
 
-    elif "time" in base_type and "stamp" not in base_type:
-        values = [fake.time() for _ in range(row_count)]
-
-    elif any(key in base_type for key in ["timestamp", "datetime"]):
+    elif temporal_kind(base_type) == "timestamp":
         values = _generate_timestamps(row_count, as_of, _column_time_profile(column, time_profile))
+
+    elif "time" in base_type:
+        values = [fake.time() for _ in range(row_count)]
 
     # -----------------------------------------------------
     # Untyped / generic string columns: honour a type that names
@@ -901,7 +921,7 @@ def generate_column_values(
                 values = [fake.format(base_type) for _ in range(row_count)]
             except (AttributeError, TypeError):
                 if column.name.lower().endswith("_id") or ensure_unique:
-                    values = [str(uuid.uuid4()) for _ in range(row_count)]
+                    values = [_seeded_uuid() for _ in range(row_count)]
                 else:
                     _stats_state["unmapped"].append((column.name, column.data_type))
                     values = [fake.sentence(nb_words=3) for _ in range(row_count)]
@@ -1001,7 +1021,9 @@ def _null_fraction_for(column: ColumnDef, row_count: int) -> float:
     note_null_rate = column.note.get("null_rate") if column.note else None
     if note_null_rate is not None:
         return note_null_rate
-    return max(0, min(0.2, 1 - (row_count / (row_count + 50))))
+    # 50 / (n + 50) is 1 - n / (n + 50) without the rounding error of the
+    # subtraction, which made 200 rows null 39 rather than the spec's 40.
+    return max(0, min(0.2, 50 / (row_count + 50)))
 
 
 def _null_out(values: list, fraction: float, default: object, row_count: int) -> None:
@@ -1011,10 +1033,42 @@ def _null_out(values: list, fraction: float, default: object, row_count: int) ->
     flip, so the null count is exactly `round(row_count * fraction)` instead
     of only approximately so.
     """
-    sample_size = int(row_count * fraction)
+    # floor(n * fraction), as the spec defines it, with a nudge so a product
+    # like 100 * 0.29 = 28.999999999999996 floors to 29 rather than 28.
+    sample_size = int(row_count * fraction + 1e-9)
     if sample_size:
         for idx in random.sample(range(row_count), k=sample_size):
             values[idx] = default
+
+
+def _distinct_parent_values(fk_values: list, row_count: int, unique_label: str) -> list:
+    """`row_count` parent values, each parent used at most once while any is left.
+
+    With fewer parents than rows the rest have to repeat one, and the column is
+    reported the way `_deduplicate` reports a unique column it could not keep
+    unique, since its generated dbt `unique` test will fail.
+    """
+    parents = list(dict.fromkeys(value for value in fk_values if value is not None))
+    if row_count <= len(parents):
+        return random.sample(parents, row_count)
+    values: list = random.sample(parents, len(parents))
+    values += [random.choice(parents) for _ in range(row_count - len(parents))] if parents else []
+    if len(values) < row_count:
+        values += [None] * (row_count - len(values))
+    _duplicate_unique_columns.append(
+        f"{unique_label}: {row_count - len(parents)} duplicate value(s)"
+    )
+    return values
+
+
+def _seeded_uuid() -> str:
+    """A random version-4 UUID drawn from the seeded `random` stream.
+
+    `uuid.uuid4()` reads `os.urandom`, which no seed reaches, so every `uuid`
+    column -- and every table referencing one -- came out different on each run
+    of the same seed. Same format, same 122 random bits, but reproducible.
+    """
+    return str(uuid.UUID(int=random.getrandbits(128), version=4))
 
 
 def _deduplicate(

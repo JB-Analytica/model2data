@@ -1,0 +1,158 @@
+import pyparsing as pp
+
+from .common import _
+from .common import _c
+from .common import c
+from .common import n
+from .common import note
+from .common import pk
+from .common import unique
+from .generic import boolean_literal
+from .generic import expression
+from .generic import expression_literal
+from .generic import name
+from .generic import number_literal
+from .generic import string_literal
+from .reference import ref_inline
+from model2data._vendor.pydbml.parser.blueprints import ColumnBlueprint
+
+
+pp.ParserElement.set_default_whitespace_chars(' \t\r')
+
+NULL_DEFAULT = object()
+
+type_args = ("(" + pp.original_text_for(expression) + ")")
+
+# column type is parsed as a single string, it will be split by blueprint
+# model2data: a type is an optionally schema-qualified name, optional
+# arguments, then an optional `[]`, so `numeric(10,2)[]` and `varchar(40)[]`
+# read; 1.2.1 allowed `[]` only straight after a bare name.
+column_type = pp.Combine(name + ('.' + name)[0, 1] + type_args[0, 1] + pp.Literal('[]')[0, 1])
+
+default = pp.CaselessLiteral('default:').suppress() + _ - (
+    string_literal
+    | expression_literal
+    | boolean_literal.set_parse_action(
+        # model2data: `null` becomes NULL_DEFAULT, not None. A parse action
+        # returning None leaves the token alone, so 1.2.1 handed `default:
+        # null` on as the text 'NULL'. parse_column_settings drops it: a null
+        # default is no static default.
+        lambda s, loc, tok: {
+            'true': True,
+            'false': False,
+            'NULL': NULL_DEFAULT
+        }[tok[0]]
+    )
+    | number_literal.set_parse_action(
+        # model2data: an exponent makes a float too (`1e3` is 1000.0).
+        lambda s, loc, tok: float(tok[0]) if any(ch in tok[0] for ch in '.eE') else int(tok[0])
+    )
+)
+
+prop = name + pp.Suppress(":") + string_literal
+
+column_setting = _ + (
+    pp.CaselessLiteral("not null").set_parse_action(
+        lambda s, loc, tok: True
+    )('notnull')
+    | pp.CaselessLiteral("null").set_parse_action(
+        lambda s, loc, tok: False
+    )('notnull')
+    | pp.CaselessLiteral("primary key")('pk')
+    | pk('pk')
+    | unique('unique')
+    | pp.CaselessLiteral("increment")('increment')
+    | note('note')
+    | ref_inline('ref*')
+    | default('default')
+    # model2data: a column check constraint, `check: `price > 0``.
+    | (pp.CaselessLiteral('check:').suppress() + _ - expression_literal)('check*')
+) + _
+
+column_setting_with_property = column_setting | prop.set_results_name('property', list_all_matches=True)
+
+column_settings = '[' - column_setting + ("," + column_setting)[...] + ']' + c
+
+column_settings_with_properties = '[' - (_ + column_setting_with_property + _) + ("," + column_setting_with_property)[...] + ']' + c
+
+
+def parse_column_settings(s, loc, tok):
+    '''
+    [ NOT NULL, increment, default: `now()`]
+    '''
+    result = {}
+    if tok.get('notnull'):
+        result['not_null'] = True
+    if 'pk' in tok:
+        result['pk'] = True
+    if 'unique' in tok:
+        result['unique'] = True
+    if 'increment' in tok:
+        result['autoinc'] = True
+    if 'note' in tok:
+        result['note'] = tok['note']
+    if 'default' in tok and tok['default'][0] is not NULL_DEFAULT:
+        result['default'] = tok['default'][0]
+    if 'ref' in tok:
+        result['ref_blueprints'] = list(tok['ref'])
+    if 'check' in tok:
+        result['checks'] = [check[0].text for check in tok['check']]
+    if 'comment' in tok:
+        result['comment'] = tok['comment'][0]
+    if 'property' in tok:
+        result['properties'] = {k: v for k, v in tok['property']}
+    return result
+
+
+column_settings.set_parse_action(parse_column_settings)
+column_settings_with_properties.set_parse_action(parse_column_settings)
+
+
+constraint = pp.CaselessLiteral("unique") | pp.CaselessLiteral("pk")
+
+table_column = _c + (
+    name('name')
+    + column_type('type')
+    + constraint[...]('constraints') + c
+    + column_settings('settings')[0, 1]
+) + n
+
+
+table_column_with_properties = _c + (
+    name('name')
+    + column_type('type')
+    + constraint[...]('constraints') + c
+    + column_settings_with_properties('settings')[0, 1]
+) + n
+
+
+def parse_column(s, loc, tok):
+    '''
+    address varchar(255) [unique, not null, note: 'to include unit number']
+    '''
+    init_dict = {
+        'name': tok['name'],
+        'type': tok['type'],
+    }
+    # deprecated
+    for constraint in tok.get('constraints', []):
+        if constraint == 'pk':
+            init_dict['pk'] = True
+        elif constraint == 'unique':
+            init_dict['unique'] = True
+
+    if 'settings' in tok:
+        init_dict.update(tok['settings'])
+
+    # comments after column definition have priority
+    if 'comment' in tok:
+        init_dict['comment'] = tok['comment'][0]
+    if 'comment' not in init_dict and 'comment_before' in tok:
+        comment = '\n'.join(c[0] for c in tok['comment_before'])
+        init_dict['comment'] = comment
+
+    return ColumnBlueprint(**init_dict)
+
+
+table_column.set_parse_action(parse_column)
+table_column_with_properties.set_parse_action(parse_column)

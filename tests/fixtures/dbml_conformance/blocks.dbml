@@ -1,0 +1,26 @@
+// Project, TableGroup, multi-line notes, sticky notes and aliases.
+Project shop {
+  database_type: 'PostgreSQL'
+  Note: '''
+    A project note with { braces } and a } on its own.
+  '''
+}
+Table customers as C [headercolor: #3498DB] {
+  id int [pk]
+  name varchar [note: 'plain prose note']
+  Note: '''
+    Customers.
+    Spans lines.
+  '''
+}
+Table orders {
+  id int [pk]
+  customer_id int [ref: > C.id]
+}
+TableGroup sales {
+  customers
+  orders
+}
+Note overview {
+  'A sticky note'
+}

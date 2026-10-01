@@ -7,15 +7,16 @@
 
 **Turn a data model into a running analytics stack in one command.**
 
-Give `model2data` a [DBML](https://dbml.dbdiagram.io/docs/) schema — hand-written or exported
-from an existing database — and it generates realistic, relationship-preserving synthetic data
+Give `model2data` a data model — a `.model2data.yml` file, or a [DBML](https://dbml.dbdiagram.io/docs/)
+schema hand-written or exported from an existing database — and it generates realistic,
+relationship-preserving synthetic data
 *and* a complete, runnable dbt project around it: seeds, staging models, tests, and a
 DuckDB or Postgres profile. No sample data to hunt down, no dbt boilerplate to hand-write, no
 production data to risk exposing.
 
 ```bash
 pip install model2data
-model2data --file examples/ecommerce.dbml --rows 200 --seed 42
+model2data --file examples/ecommerce.model2data.yml --rows 200 --seed 42
 cd dbt_ecommerce && dbt build
 ```
 
@@ -67,15 +68,72 @@ access required.
 
 ## How it works
 
-1. **Parse.** Reads tables, columns, types, and `Ref` relationships from a DBML file.
+1. **Read.** Reads the model — its tables, columns, keys, references and generation hints — from
+   a `.model2data.yml` document, checking it against [the spec](https://github.com/JB-Analytica/model2data/blob/main/model2data/spec/README.md), or
+   from DBML, which it converts to the same model first.
 2. **Generate.** Produces synthetic values per column — typed generation for known SQL types
    (int, date, timestamp, ...), name-aware inference for everything else (`email`, `phone`,
    `city`, ...), foreign keys resolved against already-generated parent rows.
 3. **Scaffold.** Writes a complete dbt project around that data: CSV seeds, staging models that
    `ref()` those seeds, `not_null`/`unique`/`relationships` tests, `accepted_values` tests for
-   DBML `Enum`-typed columns, singular SQL tests for composite primary/unique keys, table and
-   column `description:` fields pulled from DBML notes, and a profile for DuckDB (zero-config,
-   file-based) or Postgres.
+   enum-typed columns, singular SQL tests for composite primary/unique keys, table and column
+   `description:` fields from the model, and a profile for DuckDB (zero-config, file-based) or
+   Postgres.
+
+---
+
+## The model file
+
+A model is one YAML document, `<name>.model2data.yml` — or the same document as JSON. Its format
+is [spec 0.2.0](https://github.com/JB-Analytica/model2data/blob/main/model2data/spec/README.md), with a JSON Schema your editor can autocomplete and
+check against:
+
+```yaml
+# yaml-language-server: $schema=https://www.jbanalytica.com/model2data/spec/0.2.0/model.schema.json
+model2data: 0.2.0
+name: coffee_webshop
+
+enums:
+  order_status: [pending, paid, shipped, delivered, cancelled]
+
+tables:
+  customers:
+    columns:
+      id: {type: bigint, pk: true}
+      email: {type: email, unique: true, not_null: true}
+
+  orders:
+    columns:
+      id: {type: bigint, pk: true}
+      customer_id:
+        type: bigint
+        not_null: true
+        references: customers.id
+        generate: {skew: 0.8}
+      total_amount:
+        type: numeric
+        generate:
+          min: 10
+          max: 5000
+          distribution: {kind: lognormal, median: 120, spread: 0.7}
+      status:
+        type: order_status
+        generate:
+          weights: {delivered: 20, cancelled: 1}
+
+run:
+  seed: 1
+  as_of: 2026-01-01
+```
+
+`generate` holds a column's hints; `run` saves the generation settings with the model, and every
+CLI option overrides the one it names. `model2data validate FILE` checks a model and prints every
+issue with its path in the document.
+
+**DBML is supported input.** `--file` also takes a `.dbml` file, converted to the same model
+before generating; a JSON note on a column (`[note: '{"min": 1}']`) becomes its `generate`, any
+other note its description. `model2data convert schema.dbml -o schema.model2data.yml` writes the
+model a DBML file converts to.
 
 ---
 
@@ -113,12 +171,12 @@ pip install model2data
 ## Quick start
 
 We bundle several example schemas in `examples/` — this walkthrough uses the e-commerce one
-(`examples/ecommerce.dbml`: customers, products, orders, order items, and reviews).
+(`examples/ecommerce.model2data.yml`: customers, products, orders, order items, and reviews).
 
 Generate a project with synthetic data:
 
 ```bash
-model2data --file examples/ecommerce.dbml --rows 200 --seed 42
+model2data --file examples/ecommerce.model2data.yml --rows 200 --seed 42
 ```
 
 This creates a `dbt_ecommerce/` folder with your data and dbt setup.
@@ -131,7 +189,7 @@ re-rolls just that table, leaving every other table's seed CSV byte-identical. `
 the country every generated person and address comes from:
 
 ```bash
-model2data --file examples/ecommerce.dbml --rows 200 --seed 42 \
+model2data --file examples/ecommerce.model2data.yml --rows 200 --seed 42 \
   --as-of 2026-01-31 --table-seed orders=7 --locale nl_BE
 ```
 
@@ -154,23 +212,76 @@ To target Postgres instead, install the extra and pass `--adapter postgres`:
 
 ```bash
 pip install "model2data[postgres]"
-model2data --file examples/ecommerce.dbml --rows 200 --seed 42 --adapter postgres
+model2data --file examples/ecommerce.model2data.yml --rows 200 --seed 42 --adapter postgres
 ```
 
 Connection details are read from environment variables (`MODEL2DATA_PG_HOST`, `MODEL2DATA_PG_PORT`, `MODEL2DATA_PG_USER`, `MODEL2DATA_PG_PASSWORD`, `MODEL2DATA_PG_DATABASE`), defaulting to `localhost:5432` with a `postgres`/`postgres` user for local development.
 
-After generation, the CLI prints a short summary — tables and rows generated, relationships found in the DBML, and any columns that fell back to generic placeholder text because neither their type nor name could be matched.
+After generation, the CLI prints a short summary — tables and rows generated, relationships found in the model, and any columns that fell back to generic placeholder text because neither their type nor name could be matched.
 
 Pass `--unit-tests` to also generate deterministic dbt unit test fixtures (`models/staging/ut_stg_<table>.yml`) from the actually-generated seed rows:
 
 ```bash
-model2data --file examples/ecommerce.dbml --rows 200 --seed 42 --unit-tests
+model2data --file examples/ecommerce.model2data.yml --rows 200 --seed 42 --unit-tests
 ```
 
 This targets dbt-core's native unit testing feature, which works out of the box with the base
 install — see [dbt-core versions](#dbt-core-versions) below.
 
+Your model's hints also write **data tests** for the dbt project, so the model that generates the
+fixtures guards the real pipeline too. Every hint that states a constraint becomes a generic test
+on the staging model, shipped as a self-contained macro in `macros/model2data_hint_tests.sql` (no
+dbt package, so `dbt build` still works offline):
+
+| In the model | dbt test | Tolerance |
+|---|---|---|
+| `generate: {min, max}` on a numeric column | `model2data_between` | none |
+| `generate: {after: other}` | `model2data_not_before` (where both are not null) | none |
+| `generate: {null_rate}` | `model2data_max_null_share`: nulls at most `null_rate` + tolerance | `--test-tolerance`, default 0.1 |
+| `generate: {distinct: n}` | `model2data_max_distinct`: at most `n` distinct values | none |
+| `grain` on a table | `model2data_unique_combination` | none |
+| an enum-typed column | `accepted_values` (always written) | none |
+
+`true_rate`, `weights`, `skew`, `distribution` and the temporal shape hints (`business_hours`,
+`growth`, `seasonality`) describe a statistical shape rather than a constraint a row can break, so
+they write no test. `--hint-tests {error,warn,off}` sets these tests' severity (default `warn`:
+they describe intent and should not break a first `dbt build` on real data); the structural tests
+(`not_null`, `unique`, `relationships`) are unaffected. A model with no such hints generates the
+same YAML as before. To call the mapping from Python, `model2data.dbt.hint_tests.hint_tests_for(model)`
+returns the tests as data.
+
 ---
+
+### Generate the next days
+
+A table with `incremental` in the model moves on day by day: each day adds `new_per_day` rows
+(their dates and timestamps falling on that day) and updates `update_rate` of the rows it already
+holds, and an enum column with `transitions` moves from a state to one of the states allowed to
+follow it. See `examples/ecommerce_daily.model2data.yml` and "Days after the first" in the
+[spec](https://github.com/JB-Analytica/model2data/blob/main/model2data/spec/README.md).
+
+```bash
+model2data --file examples/ecommerce_daily.model2data.yml --seed 42 --as-of 2026-01-31 --days 7
+model2data --file examples/ecommerce_daily.model2data.yml --seed 42 --as-of 2026-01-31 --next
+```
+
+`--days N` generates day 0, the run you would get without it, and N days after it (`--next` is
+`--days 1`). The dbt seeds hold the state after the last day. `--days-format` picks what else is
+written beside the project, outside `seeds/` so dbt does not load it: `batches` (the default),
+`days/<table>/day_000.csv` whole and then one file per day with the rows inserted and updated that
+day; `changelog`, `changelog/<table>.csv` with a `_day` and an `_op` (`insert` or `update`) column
+on every row; or `final`, nothing more. A day depends only on the seed, `--as-of`, the day and the
+model, so day *n* never changes when you generate more days or add an unrelated table. From Python:
+
+```python
+from model2data.generate.days import generate_days
+from model2data.model import load
+
+days = generate_days(load("examples/ecommerce_daily.model2data.yml"), 7, seed=42)
+days[3].tables["orders"].inserted   # rows day 3 added
+days[3].tables["orders"].updated    # rows day 3 changed, with their new values
+days[3].tables["orders"].state      # the table after day 3
+```
 
 ## Generated dbt project structure
 
@@ -192,22 +303,23 @@ dbt_{project_name}/
 ├── data-tests/
 │   └── unique_combination_stg_table1_col_a_col_b.sql  # only for composite pk/unique keys
 ├── macros/
-│   └── generate_schema_name.sql
+│   ├── generate_schema_name.sql
+│   └── model2data_hint_tests.sql  # only when the model's hints write tests
 ├── dbt_project.yml
 ├── profiles.yml  # DuckDB or Postgres config, depending on --adapter
 └── {project_name}_profile.duckdb  # DuckDB adapter only
 ```
 
 - **Seeds**: CSV files with generated synthetic data, plus `__seed_config.yml` — each seed's
-  `description:` (from the table's DBML `Note`) and the column-type overrides that keep
+  `description:` (the table's `description` in the model) and the column-type overrides that keep
   all-digit text columns (barcodes, zero-padded postcodes, ...) from being loaded as integers.
 - **Staging Models**: Basic dbt models that `ref()` their seed. Using `ref()` rather than
   declaring the seeds as dbt `sources` is what gives each model a real DAG edge to the seed
   behind it, so one `dbt build` orders seeds before models on a fresh database.
 - **Tests**: A YAML per staging model with column tests (`not_null`, `unique`, `relationships`,
-  and `accepted_values` for DBML `Enum`-typed columns). Column `Note` text from the DBML becomes
-  `description:` fields.
-- **Composite key tests**: Composite primary/unique keys declared in an `indexes { }` block get
+  and `accepted_values` for enum-typed columns), plus the hint tests above. A column's `description` in the model becomes
+  its `description:` field.
+- **Composite key tests**: Composite primary/unique keys (`keys`, or several `pk: true` columns) get
   a singular SQL test under `data-tests/`, dbt's configured `test-paths`.
 - **Profiles**: Pre-configured for DuckDB (file-based) or Postgres (via env vars), with schema handling.
 - **Unit tests** (opt-in via `--unit-tests`): `models/staging/ut_stg_<table>.yml` fixtures built
@@ -220,8 +332,8 @@ dbt_{project_name}/
 
 If you want to go from a plain-English description of a data model straight to a running,
 demo-ready dbt project, [LLMS.md](https://github.com/JB-Analytica/model2data/blob/main/LLMS.md) is written for an LLM/agent to read: it covers the
-full DBML feature set model2data understands (enums, notes, defaults, composite keys, both
-relationship syntaxes, self-references) and the exact command sequence to run. Point an
+DBML feature set model2data understands (enums, notes, defaults, composite keys, both
+relationship syntaxes, self-references), which it converts to a spec 0.2.0 model and the exact command sequence to run. Point an
 LLM-backed coding assistant at it and describe your data model — it can author the DBML and run
 model2data for you.
 
@@ -253,15 +365,15 @@ If you're pinned to an older dbt-core, use model2data 0.5.x, which supported dow
 - Synthetic data generation is heuristic-based (typed generation, name-aware inference, enum/default awareness) and may not perfectly mimic real-world distributions or edge cases.
 - DuckDB and Postgres are supported today; other databases require manual profile adjustments.
 - No support for incremental models or advanced dbt features in generated projects.
-- Composite foreign keys (across a bridge/join table) are generated as independent single-column FKs — each column's values are individually valid, but the *combination* isn't guaranteed to match a real parent composite key unless that key is separately enforced via `indexes { }`.
-- Any DBML the parser can't fully make sense of (a malformed line, a ref pointing at an unknown table, an unrecognized column definition) is reported as a warning in the CLI's summary rather than silently dropped — check that summary after generating from a schema you didn't author yourself.
+- Composite foreign keys (across a bridge/join table) are generated as independent single-column FKs — each column's values are individually valid, but the *combination* isn't guaranteed to match a real parent composite key unless that key is separately enforced as a key of the child (`keys`).
+- A model that doesn't conform to the spec — or DBML that can't be read, or converts to such a model — is refused with every issue and where it is, rather than generated from in part. A reference onto a column that is not a key is allowed with a warning: its values are drawn from the ones the parent column holds.
 
 ---
 
 ## Project status
 
 As of `1.0.0`, model2data is considered **feature-complete for its intended use case**: turning a
-DBML schema into realistic synthetic data and a runnable dbt project, reliably. There's no active
+data model into realistic synthetic data and a runnable dbt project, reliably. There's no active
 roadmap of new capabilities planned — the focus from here is maintenance: bug fixes, keeping pace
 with new dbt-core releases, and reviewing community contributions.
 
@@ -283,7 +395,7 @@ See [CONTRIBUTING.md](https://github.com/JB-Analytica/model2data/blob/main/CONTR
 We welcome contributions!
 
 - Open issues for bugs or feature requests.
-- Submit PRs to add new DBML examples, custom data generators, or improvements.
+- Submit PRs to add new example models, custom data generators, or improvements.
 - Ensure all new features include tests if possible.
 
 See [CONTRIBUTING.md](https://github.com/JB-Analytica/model2data/blob/main/CONTRIBUTING.md) for detailed guidelines, and [DEVELOPMENT.md](https://github.com/JB-Analytica/model2data/blob/main/DEVELOPMENT.md) for the local dev setup and release process.

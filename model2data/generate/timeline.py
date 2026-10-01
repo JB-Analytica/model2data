@@ -30,6 +30,7 @@ from collections import deque
 from datetime import date, datetime, timedelta
 from typing import Optional, Union
 
+from model2data.generate.kinds import temporal_kind
 from model2data.generate.options import TimeProfile
 from model2data.parse.dbml import ColumnDef, TableDef
 
@@ -250,16 +251,11 @@ def _infer_stage(column_name: str) -> Optional[int]:
 def _column_kind(data_type: str) -> Optional[str]:
     """`"timestamp"`, `"date"`, or None for anything else -- including plain `time`.
 
-    Matches the same two conditions generate.faker's date/timestamp branches
-    already use, so a column this module treats as temporal is exactly a
-    column those branches treat as temporal.
+    The spec's temporal kinds (see generate.kinds), which generate.faker's date
+    and timestamp branches use too, so a column this module treats as temporal
+    is exactly a column those branches treat as temporal.
     """
-    base_type = data_type.lower().split("(")[0].strip()
-    if "timestamp" in base_type or "datetime" in base_type:
-        return "timestamp"
-    if "date" in base_type and "time" not in base_type:
-        return "date"
-    return None
+    return temporal_kind(data_type)
 
 
 def _parse_value(value: object, kind: str) -> Optional[datetime]:

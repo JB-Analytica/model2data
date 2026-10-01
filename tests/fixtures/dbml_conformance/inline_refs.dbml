@@ -1,0 +1,17 @@
+// Inline refs on the column, every operator and quoting style.
+Table users {
+  id int [pk]
+}
+Table posts {
+  id int [pk]
+  author_id int [ref: > users.id]
+  "editor id" int [ref: > "users"."id"]
+}
+Table profiles {
+  id int [pk]
+  user_id int [unique, ref: - users.id]
+}
+Table follows {
+  follower_id int [ref: > users.id]
+  followed_id int [ref: > users.id]
+}

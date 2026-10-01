@@ -1,0 +1,11 @@
+// Settings in odd orders and cases, notes with brackets, commas and JSON.
+Table t {
+  id INT [PK, INCREMENT]
+  a varchar [NOT NULL, UNIQUE]
+  b varchar [null]
+  c text [note: 'has, a comma [and brackets]']
+  d text [note: "double-quoted note"]
+  e int [note: '{"null_rate": 0.2}', default: 5]
+  f boolean [default: false, note: '{"true_rate": 0.9}']
+  g numeric [note: '{"distribution": "normal", "mean": 10, "stddev": 2}']
+}

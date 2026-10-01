@@ -1,0 +1,13 @@
+// Schema-qualified tables, including two with one name.
+Table raw.users {
+  id int [pk]
+  email varchar
+}
+Table analytics.users {
+  id int [pk]
+  raw_id int [ref: > raw.users.id]
+}
+Table public.events {
+  id int [pk]
+  user_id int [ref: > analytics.users.id]
+}

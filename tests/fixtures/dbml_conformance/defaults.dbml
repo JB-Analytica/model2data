@@ -1,0 +1,13 @@
+// Default literals of every kind: signed and fractional numbers, null, booleans, quoted strings.
+Table settings {
+  id int [pk]
+  retries int [default: 3]
+  offset_hours int [default: -5]
+  ratio float [default: 0.25]
+  budget float [default: 1e3]
+  whole float [default: 2.0]
+  enabled boolean [default: TRUE]
+  label varchar [default: "it's quoted"]
+  parent_id int [default: null]
+  created_at timestamp [default: `now()`]
+}

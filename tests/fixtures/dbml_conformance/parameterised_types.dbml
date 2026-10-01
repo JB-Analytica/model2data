@@ -1,0 +1,8 @@
+// Types with arguments, arrays of them, and precision on time types.
+Table measurements {
+  id bigint [pk]
+  taken_at timestamp(6) [not null]
+  amount numeric(12, 4)
+  samples numeric(10,2)[]
+  labels varchar(40)[]
+}

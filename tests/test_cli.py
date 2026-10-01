@@ -111,8 +111,10 @@ def test_cli_no_tables_found(tmp_path):
     finally:
         os.chdir(original_cwd)
 
+    # A model has at least one table (spec 0.2.0).
     assert result.exit_code == 1
-    assert "❌ No tables found in the provided DBML file." in result.stdout
+    assert "❌ empty.dbml: 1 error" in result.stdout
+    assert "tables: must not be empty" in result.stdout
 
 
 def test_cli_rejects_unsupported_adapter(tmp_path):
@@ -237,9 +239,10 @@ def test_cli_summary_warns_about_fk_cycle(tmp_path):
     assert "a" in result.stdout and "b" in result.stdout
 
 
-def test_cli_summary_warns_about_unparsed_dbml_lines(tmp_path):
-    """A Ref pointing at a table that doesn't exist should be surfaced in the
-    post-run summary, not silently dropped."""
+def test_cli_refuses_a_ref_to_a_missing_table(tmp_path):
+    """A Ref pointing at a table that doesn't exist is refused, naming it. (The
+    line parser before 1.8 generated anyway and listed the ref in the summary
+    as a line it could not fully parse.)"""
     dbml_file = tmp_path / "dangling.dbml"
     dbml_file.write_text(
         """
@@ -261,8 +264,7 @@ def test_cli_summary_warns_about_unparsed_dbml_lines(tmp_path):
     finally:
         os.chdir(original_cwd)
 
-    assert result.exit_code == 0
-    assert "could not fully parse" in result.stdout
+    assert result.exit_code == 1
     assert "users" in result.stdout
 
 
@@ -636,7 +638,7 @@ def test_cli_all_output_messages_present(tmp_path):
     # Verify all progress messages
     expected_messages = [
         "📦 Creating dbt project scaffold",
-        "🧮 Generating synthetic datasets from DBML definitions",
+        "🧮 Generating synthetic datasets from the model",
         "🗂️ Building staging models for generated seeds",
         "🧪 Generating dbt yml with tests",
         "🪪 Ensuring dbt profile exists",

@@ -1,0 +1,27 @@
+# yaml-language-server: $schema=https://www.jbanalytica.com/model2data/spec/0.2.0/model.schema.json
+model2data: 0.2.0
+name: blog_platform
+description: A simple blogging platform used to test many-to-many bridge tables.
+
+tables:
+  posts:
+    columns:
+      id: {type: integer, pk: true}
+      title: {type: varchar, not_null: true}
+      body: text
+      published_at: timestamp
+
+  tags:
+    columns:
+      id: {type: integer, pk: true}
+      name: {type: varchar, unique: true, not_null: true}
+
+  post_tags:
+    columns:
+      post_id: {type: integer, references: posts.id}
+      tag_id: {type: integer, references: tags.id}
+    keys:
+      - {pk: [post_id, tag_id]}
+
+groups:
+  content: {tables: [posts, tags, post_tags]}

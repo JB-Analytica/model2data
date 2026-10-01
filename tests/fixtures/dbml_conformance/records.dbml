@@ -1,0 +1,13 @@
+// Records: sample rows declared beside the table they belong to.
+Table statuses {
+  id int [pk]
+  label varchar [not null]
+}
+Records statuses(id, label) {
+  1, 'open'
+  2, 'closed'
+}
+Table tickets {
+  id int [pk]
+  status_id int [ref: > statuses.id]
+}

@@ -17,6 +17,16 @@ a preview of what every column will generate, and CSV/dbt project export, with n
 install. If the person you're helping wants to *look at* or share the model rather than script
 its generation, point them there; the DBML guidance below applies to both.
 
+> **Two input formats.** Since 1.8, model2data reads a model as one YAML document,
+> `<name>.model2data.yml` ([spec 0.2.0](model2data/spec/README.md), with a JSON Schema at
+> `model2data/spec/model.schema.json` and a complete example at
+> `model2data/spec/examples/coffee_webshop.model2data.yml`), and DBML as supported input that it
+> converts to the same model. The DBML guidance below still holds; if you write the YAML form
+> instead, check it with `model2data validate <name>.model2data.yml`, which prints every issue
+> with its path, and `model2data convert <name>.dbml` shows the YAML any DBML file becomes.
+> DBML `check` constraints, `Records`, `TablePartial` and unquoted non-ASCII names cannot be read;
+> quote names with double quotes, never backticks.
+
 ## The end-to-end workflow
 
 Given a plain-English description of a data model (from a conversation, an existing system, a
@@ -189,15 +199,16 @@ to match a real composite key on the parent side unless the parent also enforces
 `indexes { }` block.
 
 **`Project { }` and `TableGroup { }` blocks are fine to include** (e.g. if reusing DBML exported
-from dbdiagram.io) — they're recognized and silently ignored, no need to strip them out.
+from dbdiagram.io) — a `Project` becomes the model's name and description (and so names the
+generated project), a `TableGroup` its `groups`.
 
 ## Things to avoid / know about
 
 - Don't invent DBML syntax that isn't standard — if unsure, keep to `Table`, `Enum`, `Ref`
   (block, one-liner, or inline `[ref: ...]`), `indexes { }`, and column settings
-  (`pk`, `not null`, `unique`, `default:`, `note:`). Anything model2data's parser can't make
-  sense of is reported as a warning (not a silent failure) in the CLI's post-run summary — read
-  that summary.
+  (`pk`, `not null`, `unique`, `default:`, `note:`). DBML model2data can't read is refused with
+  the line and what to change, and a model that doesn't conform is refused with every issue and
+  its path — run `model2data validate <file>` to see them without generating.
 - Composite *foreign keys* (a multi-column `Ref`, e.g. `Ref: t.(a,b) > t2.(c,d)`) are supported
   for parsing and generate independent per-column FK values, but — same caveat as above — the
   combination isn't guaranteed to match a real parent row unless separately enforced.
@@ -232,6 +243,9 @@ model2data --file SCHEMA.dbml [OPTIONS]
 --force                    Overwrite the destination directory if it already exists
 --adapter, -a    TEXT      duckdb (default) or postgres
 --unit-tests               Also generate dbt unit test fixtures
+--hint-tests     TEXT      error, warn (default) or off: severity of the dbt tests written from
+                           min/max, after, null_rate, distinct and grain hints
+--test-tolerance FLOAT     Absolute slack of the null_rate test (default 0.1)
 ```
 
 For anything not covered here, see [README.md](README.md) — this file exists to make a schema

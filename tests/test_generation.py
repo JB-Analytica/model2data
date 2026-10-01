@@ -1099,10 +1099,10 @@ def test_mirroring_is_skipped_when_the_fk_column_is_not_in_the_child_table():
     assert not orders["customer_name"].isin(data["customers"]["name"]).all()
 
 
-def test_attribute_ref_without_fk_is_skipped_when_the_parent_is_generated_first():
-    # Tables with no FK between them are generated in name order, so here the
-    # parent ("accounts") already exists when the child's mirror pass runs and
-    # it is the missing FK, not the missing parent, that skips the mirror.
+def test_a_ref_onto_a_plain_column_with_no_fk_to_mirror_through_draws_from_the_parent():
+    # Spec 0.2.0, "References": a reference onto a column that is not a key is
+    # generated like a foreign key, every child value drawn from the values the
+    # parent column holds. Before 1.8 it was skipped and drawn as unrelated data.
     tables = {
         "accounts": TableDef(
             name="accounts",
@@ -1122,4 +1122,5 @@ def test_attribute_ref_without_fk_is_skipped_when_the_parent_is_generated_first(
         }
     ]
     data = generate_data_from_dbml(tables, refs, base_rows=20, seed=2)
-    assert not data["orders"]["account_name"].isin(data["accounts"]["name"]).all()
+    names = data["orders"]["account_name"].dropna()
+    assert len(names) and names.isin(data["accounts"]["name"].dropna()).all()

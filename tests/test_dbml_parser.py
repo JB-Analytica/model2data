@@ -2,12 +2,9 @@ from pathlib import Path
 
 import pytest
 
+from model2data.model import ModelError
 from model2data.parse.dbml import (
-    _parse_column_settings,
-    _sanitize_table_name,
-    _strip_quotes,
     get_many_to_many_refs,
-    get_parse_warnings,
     parse_dbml,
 )
 from model2data.utils import normalize_identifier
@@ -169,95 +166,6 @@ def test_indexes_blocks_ignored():
             assert "indexes" not in col.name.lower()
 
 
-def test_strip_quotes_helper():
-    """Test the _strip_quotes helper function."""
-    assert _strip_quotes('"table_name"') == "table_name"
-    assert _strip_quotes("'table_name'") == "table_name"
-    assert _strip_quotes('  "table_name"  ') == "table_name"
-    assert _strip_quotes("table_name") == "table_name"
-    assert _strip_quotes("  table_name  ") == "table_name"
-
-
-def test_parse_column_settings_helper():
-    """Test the _parse_column_settings helper function."""
-    # Single setting
-    settings, note, description, default, inline_ref = _parse_column_settings("pk")
-    assert "pk" in settings
-    assert note is None
-    assert description is None
-    assert default is None
-    assert inline_ref is None
-
-    # Inline ref setting
-    settings, note, description, default, inline_ref = _parse_column_settings(
-        "not null, ref: > users.id"
-    )
-    assert "not null" in settings
-    assert inline_ref == {"operator": ">", "target_table": "users", "target_column": "id"}
-
-    # Multiple settings
-    settings, note, description, default, inline_ref = _parse_column_settings(
-        "pk, not null, unique"
-    )
-    assert "pk" in settings
-    assert "not null" in settings
-    assert "unique" in settings
-    assert note is None
-
-    # Settings with JSON min/max note
-    settings, note, description, default, inline_ref = _parse_column_settings(
-        'pk, not null, note: \'{"min": 1, "max": 5}\''
-    )
-    assert "pk" in settings
-    assert "not null" in settings
-    assert note is not None
-    assert note["min"] == 1
-    assert note["max"] == 5
-    assert description is None
-
-    # Just a note
-    settings, note, description, default, inline_ref = _parse_column_settings(
-        'note: \'{"min": 0, "max": 100}\''
-    )
-    assert len(settings) == 0
-    assert note is not None
-    assert note["min"] == 0
-    assert note["max"] == 100
-
-    # Plain-text note becomes a description, not a discarded value
-    settings, note, description, default, inline_ref = _parse_column_settings(
-        "note: 'the user's primary email address'"
-    )
-    assert note is None
-    assert description == "the user's primary email address"
-
-    # default: values
-    settings, note, description, default, inline_ref = _parse_column_settings("default: 'active'")
-    assert default == "active"
-
-    settings, note, description, default, inline_ref = _parse_column_settings("default: 0")
-    assert default == 0 and isinstance(default, int)
-
-    settings, note, description, default, inline_ref = _parse_column_settings("default: 3.14")
-    assert default == 3.14
-
-    settings, note, description, default, inline_ref = _parse_column_settings("default: true")
-    assert default is True
-
-    settings, note, description, default, inline_ref = _parse_column_settings("default: `now()`")
-    assert default is None
-
-    # Empty
-    settings, note, description, default, inline_ref = _parse_column_settings("")
-    assert len(settings) == 0
-    assert note is None
-
-    # None
-    settings, note, description, default, inline_ref = _parse_column_settings(None)
-    assert len(settings) == 0
-    assert note is None
-
-
 def test_normalize_identifier_helper():
     """Test the normalize_identifier helper function."""
     # Basic normalization
@@ -374,9 +282,6 @@ Table users [headercolor: #3498db] {
 
     tables, refs = parse_dbml(dbml_file)
 
-    # Line 47: table_name_section split by '['
-    # Line 48: strip the part before '['
-    # Line 49: _strip_quotes on table_name
     assert "users" in tables
 
 
@@ -397,7 +302,6 @@ Table second {
 
     tables, refs = parse_dbml(dbml_file)
 
-    # Line 70: tables[current_table.name] = current_table
     # This happens when we hit the closing }
     assert "first" in tables
     assert "second" in tables
@@ -419,8 +323,6 @@ Table users {
 
     tables, refs = parse_dbml(dbml_file)
 
-    # Line 75: if cleaned.startswith("Note:")
-    # Line 76: continue
     # Should skip Note: and only get 2 columns
     assert len(tables["users"].columns) == 2
 
@@ -438,8 +340,6 @@ Table test {
 
     tables, refs = parse_dbml(dbml_file)
 
-    # Line 78-82: col_match = re.match(...)
-    # Line 83: if not col_match: continue
     # This should match and NOT continue
     assert len(tables["test"].columns) == 1
 
@@ -465,7 +365,6 @@ Ref {
 
     tables, refs = parse_dbml(dbml_file)
 
-    # Line 93-94: detect "Ref" and set in_ref_block = True
     assert len(refs) == 1
 
 
@@ -483,18 +382,17 @@ Table t2 {
 }
 
 Ref {
-    t1.id > t2.fk
+    t2.fk > t1.id
 }
 
 Ref {
-    t1.id > t2.id
+    t2.id > t1.id
 }
 """
     )
 
     tables, refs = parse_dbml(dbml_file)
 
-    # Line 96-98: closing } sets in_ref_block = False
     # Multiple Ref blocks test this
     assert len(refs) == 2
 
@@ -520,8 +418,6 @@ Ref {
 
     tables, refs = parse_dbml(dbml_file)
 
-    # Line 100-105: ref_match = re.match(...)
-    # Line 106: if not ref_match: continue
     assert len(refs) == 1
     assert refs[0]["source_table"] == "t1"
 
@@ -547,7 +443,6 @@ Ref {
 
     tables, refs = parse_dbml(dbml_file)
 
-    # Line 116-125: refs.append({...})
     assert len(refs) == 1
     ref = refs[0]
     assert "source_table" in ref
@@ -567,7 +462,6 @@ Table t1 {
 
     result = parse_dbml(dbml_file)
 
-    # Line 152: return tables, refs
     assert isinstance(result, tuple)
     assert len(result) == 2
 
@@ -602,13 +496,6 @@ Ref {
     tables, refs = parse_dbml(dbml_file)
 
     # This should hit:
-    # - Line 44-49: table with settings [note: ...]
-    # - Line 70: multiple table closing braces
-    # - Line 74-76: Note: lines
-    # - Line 78: column regex matching
-    # - Line 93-98: Ref block start and close
-    # - Line 111: ref append
-    # - Line 152: return
 
     assert len(tables) == 2
     assert "users" in tables
@@ -719,7 +606,7 @@ email varchar
     assert "email" in col_names
 
 
-def test_column_that_doesnt_match_regex(tmp_path):
+def test_column_that_doesnt_parse_is_refused(tmp_path):
     """Test that invalid column lines don't break parsing."""
     dbml_file = tmp_path / "invalid_col.dbml"
     dbml_file.write_text(
@@ -730,12 +617,13 @@ name varchar
 }
 """
     )
-    tables, refs = parse_dbml(dbml_file)
-    # Should only get 2 valid columns
-    assert len(tables["t"].columns) == 2
+    # Refused with the line it stopped at (ModelError) rather than read in
+    # part, as the line parser before 1.8 did.
+    with pytest.raises(ModelError):
+        parse_dbml(dbml_file)
 
 
-def test_ref_that_doesnt_match_regex(tmp_path):
+def test_ref_that_doesnt_parse_is_refused(tmp_path):
     """Test that invalid ref lines don't break parsing."""
     dbml_file = tmp_path / "invalid_ref.dbml"
     dbml_file.write_text(
@@ -752,9 +640,10 @@ t1.id > t2.fk
 }
 """
     )
-    tables, refs = parse_dbml(dbml_file)
-    # Should only get 1 valid ref
-    assert len(refs) == 1
+    # Refused with the line it stopped at (ModelError) rather than read in
+    # part, as the line parser before 1.8 did.
+    with pytest.raises(ModelError):
+        parse_dbml(dbml_file)
 
 
 def test_comprehensive_all_paths(tmp_path):
@@ -790,7 +679,6 @@ Table tags {
 }
 
 Ref {
-    invalid line here
     users.id > posts.user_id
 }
 
@@ -835,7 +723,7 @@ def test_absolute_minimal_coverage(tmp_path):
     # Write the simplest possible DBML that exercises all code paths
     content = "Table a {\n"
     content += "b int\n"
-    content += "Note: test\n"
+    content += "Note: 'test'\n"
     content += "}\n"
     content += "Ref {\n"
     content += "a.b > a.b\n"
@@ -847,12 +735,6 @@ def test_absolute_minimal_coverage(tmp_path):
     tables, refs = result
 
     # This MUST hit:
-    # Line 70: } closes table
-    # Line 74-76: Note: inside table
-    # Line 78: col_match for "b int"
-    # Line 93-94: Ref starts ref block
-    # Line 96-98: } closes ref block
-    # Line 152: return statement
 
     assert len(tables) == 1
     assert len(refs) == 1
@@ -863,7 +745,7 @@ def test_direct_execution(tmp_path):
     from model2data.parse.dbml import parse_dbml as direct_parse
 
     dbml_file = tmp_path / "direct.dbml"
-    dbml_file.write_text("Table t {\nc int\nNote: x\n}\nRef {\nt.c > t.c\n}\n")
+    dbml_file.write_text("Table t {\nc int\nNote: 'x'\n}\nRef {\nt.c > t.c\n}\n")
 
     t, r = direct_parse(dbml_file)
     assert len(t) == 1
@@ -908,20 +790,14 @@ users.id > posts.user_id
 
     tables, refs = parse_dbml(dbml_file)
 
-    # Line 70: closing brace (when we finish users and posts tables)
     assert len(tables) == 2
 
-    # Line 74-76: Note: line inside table
     assert len(tables["users"].columns) == 2  # id and name, Note excluded
 
-    # Line 78: column regex match (matches id, name, etc)
     assert any(c.name == "id" for c in tables["users"].columns)
 
-    # Line 93-94: Ref keyword starts ref block
-    # Line 96-98: closing brace in ref block and ref regex match
     assert len(refs) == 1
 
-    # Line 152: return statement
     assert isinstance(tables, dict)
     assert isinstance(refs, list)
 
@@ -1117,7 +993,7 @@ def test_inline_ref_with_quoted_identifiers(tmp_path):
     assert ref["target_column"] == "id"
 
 
-def test_inline_ref_malformed_value_is_ignored(tmp_path):
+def test_inline_ref_malformed_value_is_refused(tmp_path):
     """A `ref:` setting that doesn't match `<op> table.column` is dropped,
     not crashed on -- same tolerant handling as an unparseable standalone Ref."""
     dbml_file = tmp_path / "test.dbml"
@@ -1130,13 +1006,10 @@ def test_inline_ref_malformed_value_is_ignored(tmp_path):
     """
     )
 
-    tables, refs = parse_dbml(dbml_file)
-
-    assert refs == []
-    assert get_many_to_many_refs() == []
-    orders = tables["orders"]
-    user_id_col = next(c for c in orders.columns if c.name == "user_id")
-    assert user_id_col is not None
+    # Refused with the line it stopped at (ModelError) rather than read in
+    # part, as the line parser before 1.8 did.
+    with pytest.raises(ModelError):
+        parse_dbml(dbml_file)
 
 
 def test_inline_ref_combined_with_other_settings(tmp_path):
@@ -1347,7 +1220,7 @@ def test_composite_unique_from_indexes_block(tmp_path):
     assert keys[0]["type"] == "unique"
 
 
-def test_single_column_index_entry_still_captured(tmp_path):
+def test_single_column_index_entry_is_the_columns_own_key(tmp_path):
     dbml_file = tmp_path / "composite.dbml"
     dbml_file.write_text(
         """
@@ -1361,10 +1234,9 @@ def test_single_column_index_entry_still_captured(tmp_path):
     """
     )
     tables, refs = parse_dbml(dbml_file)
-    keys = tables["users"].composite_keys
-    assert len(keys) == 1
-    assert keys[0]["columns"] == ["email"]
-    assert keys[0]["type"] == "unique"
+    # A one-column key is written on the column in spec 0.2.0: `unique: true`.
+    assert tables["users"].composite_keys == []
+    assert tables["users"].columns[0].settings == {"unique"}
 
 
 def test_indexes_block_without_pk_or_unique_is_ignored(tmp_path):
@@ -1412,14 +1284,6 @@ def test_default_values_parsed_by_type(tmp_path):
     assert cols["created_at"].default is None
 
 
-def test_default_value_helper_edge_cases():
-    from model2data.parse.dbml import _parse_default_value
-
-    assert _parse_default_value("") is None
-    assert _parse_default_value("false") is False
-    assert _parse_default_value("not_a_number") is None
-
-
 def test_composite_key_pk_and_close_brace_on_same_line(tmp_path):
     dbml_file = tmp_path / "composite.dbml"
     dbml_file.write_text(
@@ -1438,13 +1302,6 @@ def test_composite_key_pk_and_close_brace_on_same_line(tmp_path):
     assert len(keys) == 1
     assert keys[0]["columns"] == ["order_id", "product_id"]
     assert keys[0]["type"] == "pk"
-
-
-def test_indexes_block_malformed_entry_is_skipped():
-    from model2data.parse.dbml import _parse_composite_key_line
-
-    assert _parse_composite_key_line("(,) [pk]") is None
-    assert _parse_composite_key_line("not an index line") is None
 
 
 def test_table_single_line_inline_triple_quote_note(tmp_path):
@@ -1472,7 +1329,7 @@ def test_advanced_features_example_has_enum_and_composite_key():
     assert {"columns": ["project_id", "employee_id"], "type": "unique"} in keys
 
 
-def test_malformed_column_line_inside_table_is_skipped(tmp_path):
+def test_malformed_column_line_inside_table_is_refused(tmp_path):
     dbml_file = tmp_path / "malformed.dbml"
     dbml_file.write_text(
         """
@@ -1483,12 +1340,13 @@ def test_malformed_column_line_inside_table_is_skipped(tmp_path):
     }
     """
     )
-    tables, refs = parse_dbml(dbml_file)
-    column_names = {c.name for c in tables["users"].columns}
-    assert column_names == {"id", "name"}
+    # Refused with the line it stopped at (ModelError) rather than read in
+    # part, as the line parser before 1.8 did.
+    with pytest.raises(ModelError):
+        parse_dbml(dbml_file)
 
 
-def test_malformed_column_line_is_reported_as_parse_warning(tmp_path):
+def test_malformed_column_line_is_refused(tmp_path):
     dbml_file = tmp_path / "malformed.dbml"
     dbml_file.write_text(
         """
@@ -1499,14 +1357,13 @@ def test_malformed_column_line_is_reported_as_parse_warning(tmp_path):
     }
     """
     )
-    tables, refs = parse_dbml(dbml_file)
-    warnings = get_parse_warnings()
-    assert any("users" in w and "!!!" in w for w in warnings)
-    # Rest of the table still parses fine (partial-failure tolerance).
-    assert {c.name for c in tables["users"].columns} == {"id", "name"}
+    # Refused with the line it stopped at (ModelError) rather than read in
+    # part and warned about, as the line parser before 1.8 did.
+    with pytest.raises(ModelError):
+        parse_dbml(dbml_file)
 
 
-def test_sentence_like_column_definition_is_reported_as_parse_warning(tmp_path):
+def test_sentence_like_column_definition_is_refused(tmp_path):
     dbml_file = tmp_path / "sentence.dbml"
     dbml_file.write_text(
         """
@@ -1517,13 +1374,13 @@ def test_sentence_like_column_definition_is_reported_as_parse_warning(tmp_path):
     }
     """
     )
-    tables, refs = parse_dbml(dbml_file)
-    warnings = get_parse_warnings()
-    assert any("Sentence-like" in w for w in warnings)
-    assert {c.name for c in tables["users"].columns} == {"id", "name"}
+    # Refused with the line it stopped at (ModelError) rather than read in
+    # part and warned about, as the line parser before 1.8 did.
+    with pytest.raises(ModelError):
+        parse_dbml(dbml_file)
 
 
-def test_malformed_ref_line_is_reported_as_parse_warning(tmp_path):
+def test_malformed_ref_line_is_refused(tmp_path):
     dbml_file = tmp_path / "malformed_ref.dbml"
     dbml_file.write_text(
         """
@@ -1542,11 +1399,10 @@ def test_malformed_ref_line_is_reported_as_parse_warning(tmp_path):
     }
     """
     )
-    tables, refs = parse_dbml(dbml_file)
-    warnings = get_parse_warnings()
-    assert any("Unrecognized line in Ref block" in w for w in warnings)
-    # The well-formed ref line right after it still parses.
-    assert any(r["source_table"] == "posts" and r["target_table"] == "users" for r in refs)
+    # Refused with the line it stopped at (ModelError) rather than read in
+    # part and warned about, as the line parser before 1.8 did.
+    with pytest.raises(ModelError):
+        parse_dbml(dbml_file)
 
 
 def test_one_liner_ref_statement_is_parsed(tmp_path):
@@ -1578,7 +1434,6 @@ def test_one_liner_ref_statement_is_parsed(tmp_path):
             "target_column": "id",
         }
     ]
-    assert get_parse_warnings() == []
 
 
 def test_one_liner_ref_statement_with_less_than_operator(tmp_path):
@@ -1634,10 +1489,9 @@ def test_multiple_one_liner_refs_all_parse(tmp_path):
     )
     tables, refs = parse_dbml(dbml_file)
     assert {(r["source_table"], r["target_table"]) for r in refs} == {("b", "a"), ("c", "b")}
-    assert get_parse_warnings() == []
 
 
-def test_malformed_one_liner_ref_is_reported_as_parse_warning(tmp_path):
+def test_malformed_one_liner_ref_is_refused(tmp_path):
     dbml_file = tmp_path / "malformed_one_liner_ref.dbml"
     dbml_file.write_text(
         """
@@ -1648,13 +1502,13 @@ def test_malformed_one_liner_ref_is_reported_as_parse_warning(tmp_path):
     Ref: this is not a valid relationship expression
     """
     )
-    tables, refs = parse_dbml(dbml_file)
-    warnings = get_parse_warnings()
-    assert any("Unrecognized Ref statement" in w for w in warnings)
-    assert refs == []
+    # Refused with the line it stopped at (ModelError) rather than read in
+    # part and warned about, as the line parser before 1.8 did.
+    with pytest.raises(ModelError):
+        parse_dbml(dbml_file)
 
 
-def test_ref_pointing_at_nonexistent_table_is_reported_as_parse_warning(tmp_path):
+def test_ref_pointing_at_nonexistent_table_is_refused(tmp_path):
     dbml_file = tmp_path / "dangling_ref.dbml"
     dbml_file.write_text(
         """
@@ -1668,26 +1522,17 @@ def test_ref_pointing_at_nonexistent_table_is_reported_as_parse_warning(tmp_path
     }
     """
     )
-    tables, refs = parse_dbml(dbml_file)
-    warnings = get_parse_warnings()
-    assert any("users" in w and "not found among parsed tables" in w for w in warnings)
-    # The ref itself is still captured (visibility, not rejection).
-    assert refs == [
-        {
-            "source_table": "posts",
-            "source_column": "user_id",
-            "target_table": "users",
-            "target_column": "id",
-        }
-    ]
+    # Refused with the line it stopped at (ModelError) rather than read in
+    # part and warned about, as the line parser before 1.8 did.
+    with pytest.raises(ModelError):
+        parse_dbml(dbml_file)
 
 
 def test_valid_dbml_produces_no_parse_warnings():
     tables, refs = parse_dbml(Path("examples/hackernews.dbml"))
-    assert get_parse_warnings() == []
 
 
-def test_malformed_indexes_line_is_reported_as_parse_warning(tmp_path):
+def test_malformed_indexes_line_is_refused(tmp_path):
     dbml_file = tmp_path / "bad_index.dbml"
     dbml_file.write_text(
         """
@@ -1700,13 +1545,13 @@ def test_malformed_indexes_line_is_reported_as_parse_warning(tmp_path):
     }
     """
     )
-    tables, refs = parse_dbml(dbml_file)
-    warnings = get_parse_warnings()
-    assert any("Unrecognized indexes{} line" in w for w in warnings)
-    assert tables["order_items"].composite_keys == []
+    # Refused with the line it stopped at (ModelError) rather than read in
+    # part and warned about, as the line parser before 1.8 did.
+    with pytest.raises(ModelError):
+        parse_dbml(dbml_file)
 
 
-def test_malformed_indexes_line_on_closing_brace_line_is_reported(tmp_path):
+def test_malformed_indexes_line_on_closing_brace_line_is_refused(tmp_path):
     dbml_file = tmp_path / "bad_index_closing.dbml"
     dbml_file.write_text(
         """
@@ -1717,13 +1562,13 @@ def test_malformed_indexes_line_on_closing_brace_line_is_reported(tmp_path):
     }
     """
     )
-    tables, refs = parse_dbml(dbml_file)
-    warnings = get_parse_warnings()
-    assert any("Unrecognized indexes{} line" in w for w in warnings)
-    assert tables["order_items"].composite_keys == []
+    # Refused with the line it stopped at (ModelError) rather than read in
+    # part and warned about, as the line parser before 1.8 did.
+    with pytest.raises(ModelError):
+        parse_dbml(dbml_file)
 
 
-def test_composite_ref_with_mismatched_column_counts_is_reported(tmp_path):
+def test_composite_ref_with_mismatched_column_counts_is_refused(tmp_path):
     dbml_file = tmp_path / "mismatched_composite_ref.dbml"
     dbml_file.write_text(
         """
@@ -1743,10 +1588,10 @@ def test_composite_ref_with_mismatched_column_counts_is_reported(tmp_path):
     }
     """
     )
-    tables, refs = parse_dbml(dbml_file)
-    warnings = get_parse_warnings()
-    assert any("Composite Ref column count mismatch" in w for w in warnings)
-    assert refs == []
+    # Refused with the line it stopped at (ModelError) rather than read in
+    # part and warned about, as the line parser before 1.8 did.
+    with pytest.raises(ModelError):
+        parse_dbml(dbml_file)
 
 
 def test_composite_ref_block_expands_to_single_column_refs(tmp_path):
@@ -1772,7 +1617,6 @@ def test_composite_ref_block_expands_to_single_column_refs(tmp_path):
     """
     )
     tables, refs = parse_dbml(dbml_file)
-    assert get_parse_warnings() == []
     assert len(refs) == 2
     assert {
         "source_table": "order_items",
@@ -1788,49 +1632,10 @@ def test_composite_ref_block_expands_to_single_column_refs(tmp_path):
     } in refs
 
 
-def test_strip_quotes_handles_backticks():
-    """Regression test: `_strip_quotes` stripped '"' and "'" but never a
-    backtick, even though backtick-quoted identifiers are explicitly
-    documented as supported (see `_INLINE_REF_RE`'s docstring). A backtick-
-    quoted table name like `` `user accounts` `` came out of parsing still
-    wrapped in literal backticks, which then leaked into generated dbt
-    model filenames/ref() calls dbt could not even parse.
-    """
-    assert _strip_quotes("`user accounts`") == "user accounts"
-    assert _strip_quotes('"user accounts"') == "user accounts"
-    assert _strip_quotes("'user accounts'") == "user accounts"
-    assert _strip_quotes("bare_name") == "bare_name"
-
-
-def test_sanitize_table_name_preserves_valid_identifiers():
-    """`_sanitize_table_name` must round-trip an already-valid identifier
-    unchanged -- including one with a leading underscore (e.g. dlt's
-    `_dlt_version`) -- since generated seeds/models are keyed off the exact
-    DBML table name (see test_dbt_naming.py's documented naming boundary).
-    Unlike `normalize_identifier` (used only for the CLI's own --name
-    option), it must not lowercase or strip leading/trailing underscores.
-    """
-    assert _sanitize_table_name("_dlt_version") == "_dlt_version"
-    assert _sanitize_table_name("stories__kids") == "stories__kids"
-    assert _sanitize_table_name("Users") == "Users"
-
-
-def test_sanitize_table_name_makes_quoted_identifier_dbt_safe():
-    """A quoted DBML table name may legally contain spaces or punctuation;
-    `_sanitize_table_name` must turn that into something safe to use as a
-    dbt model name and filesystem path component.
-    """
-    assert _sanitize_table_name("user accounts") == "user_accounts"
-    assert _sanitize_table_name("123abc") == "t_123abc"
-    assert _sanitize_table_name("!!!") == "table"
-
-
-def test_backtick_quoted_table_name_is_sanitized_end_to_end(tmp_path):
-    """Regression test for the bug found by a genuinely new hand-authored
-    schema: a backtick-quoted table name with a space produced literal
-    backticks and a space in `tables`, which downstream turned into a dbt
-    model filename/ref() call (`stg_`user accounts`.sql`) that a real
-    `dbt build` could not parse at all.
+def test_backtick_quoted_table_name_is_refused_with_a_hint(tmp_path):
+    """DBML quotes a name with double quotes; backticks hold expressions. The
+    line parser read backtick names anyway; pydbml refuses them, and the
+    error says what to write instead.
     """
     dbml_file = tmp_path / "backtick_table.dbml"
     dbml_file.write_text(
@@ -1839,32 +1644,16 @@ def test_backtick_quoted_table_name_is_sanitized_end_to_end(tmp_path):
         id integer [pk]
         name varchar
     }
-
-    Table orders {
-        id integer [pk]
-        account_id integer [ref: > `user accounts`.id]
-    }
     """
     )
-    tables, refs = parse_dbml(dbml_file)
-    assert get_parse_warnings() == []
-    assert "user_accounts" in tables
-    assert "`" not in "".join(tables.keys())
-    assert refs == [
-        {
-            "source_table": "orders",
-            "source_column": "account_id",
-            "target_table": "user_accounts",
-            "target_column": "id",
-        }
-    ]
+    with pytest.raises(ModelError, match="double quotes"):
+        parse_dbml(dbml_file)
 
 
-def test_table_name_with_space_normalized_consistently_across_refs(tmp_path):
-    """A double-quoted table name with a space must be sanitized the same
-    way at every point it's referenced -- table definition, standalone Ref
-    block, and inline `[ref: ...]` -- so refs still resolve against the
-    tables dict (which is keyed by the sanitized name).
+def test_table_name_with_space_is_kept_consistently_across_refs(tmp_path):
+    """A quoted table name with a space is the table's key everywhere it is
+    referenced. Making it a dbt-safe identifier happens where it becomes a
+    file or a model name (the CLI), not in the model.
     """
     dbml_file = tmp_path / "quoted_space.dbml"
     dbml_file.write_text(
@@ -1882,13 +1671,12 @@ def test_table_name_with_space_normalized_consistently_across_refs(tmp_path):
     """
     )
     tables, refs = parse_dbml(dbml_file)
-    assert get_parse_warnings() == []
-    assert set(tables.keys()) == {"order_items", "shipping_info"}
+    assert set(tables.keys()) == {"order items", "shipping info"}
     assert refs == [
         {
-            "source_table": "shipping_info",
+            "source_table": "shipping info",
             "source_column": "item_id",
-            "target_table": "order_items",
+            "target_table": "order items",
             "target_column": "id",
         }
     ]
@@ -1927,12 +1715,11 @@ def test_project_and_tablegroup_blocks_are_silently_ignored(tmp_path):
     """
     )
     tables, refs = parse_dbml(dbml_file)
-    assert get_parse_warnings() == []
     assert set(tables.keys()) == {"posts", "tags"}
     assert refs == []
 
 
-def test_unrecognized_top_level_line_is_reported_as_parse_warning(tmp_path):
+def test_unrecognized_top_level_line_is_refused(tmp_path):
     """Regression test: a stray character (e.g. a control character from a
     corrupted file) landing right before a `Table ...{` line used to make
     that `.lower().startswith("table ")` check fail silently -- the line
@@ -1957,10 +1744,10 @@ def test_unrecognized_top_level_line_is_reported_as_parse_warning(tmp_path):
     }
     """
     )
-    tables, refs = parse_dbml(dbml_file)
-    assert set(tables.keys()) == {"customers", "orders"}
-    warnings = get_parse_warnings()
-    assert any("this is not a real dbml construct" in w for w in warnings)
+    # Refused with the line it stopped at (ModelError) rather than read in
+    # part, as the line parser before 1.8 did.
+    with pytest.raises(ModelError):
+        parse_dbml(dbml_file)
 
 
 def test_tagging_m2m_example_bridge_table_and_project_blocks():
@@ -1969,7 +1756,6 @@ def test_tagging_m2m_example_bridge_table_and_project_blocks():
     which must parse cleanly with zero warnings.
     """
     tables, refs = parse_dbml(Path("examples/tagging_m2m.dbml"))
-    assert get_parse_warnings() == []
     assert set(tables.keys()) == {"posts", "tags", "post_tags"}
     post_tags = tables["post_tags"]
     assert post_tags.composite_keys == [{"columns": ["post_id", "tag_id"], "type": "pk"}]
@@ -1977,20 +1763,17 @@ def test_tagging_m2m_example_bridge_table_and_project_blocks():
 
 
 def test_mixed_quotes_crlf_example_parses_cleanly():
-    """examples/mixed_quotes_crlf.dbml: backtick- and double-quoted
-    identifiers (including one with a space), an inline `[ref: ...]`, and
-    CRLF line endings all parse cleanly with a single sanitized table name
-    across the board.
+    """examples/mixed_quotes_crlf.dbml: bare and double-quoted identifiers
+    (including one with a space), an inline `[ref: ...]`, comments, and CRLF
+    line endings.
     """
     tables, refs = parse_dbml(Path("examples/mixed_quotes_crlf.dbml"))
-    assert get_parse_warnings() == []
-    assert set(tables.keys()) == {"user_accounts", "orders"}
-    assert "`" not in "".join(tables.keys())
+    assert set(tables.keys()) == {"user accounts", "orders"}
     assert refs == [
         {
             "source_table": "orders",
             "source_column": "account_id",
-            "target_table": "user_accounts",
+            "target_table": "user accounts",
             "target_column": "id",
         }
     ]
@@ -2008,11 +1791,10 @@ def test_fixture_dbml_files_parse_without_warnings(fixture_name):
     single-table schema with no refs at all. All must parse cleanly.
     """
     tables, refs = parse_dbml(Path(f"tests/fixtures/{fixture_name}.dbml"))
-    assert get_parse_warnings() == []
     assert tables
 
 
-def test_unclosed_table_at_eof_is_recovered_and_reported(tmp_path):
+def test_unclosed_table_at_eof_is_refused(tmp_path):
     """Regression test: a truncated file (or one missing a closing brace)
     used to silently swallow the still-open table -- and, worse, every
     subsequent line in the file, since each was interpreted as if it
@@ -2027,14 +1809,13 @@ def test_unclosed_table_at_eof_is_recovered_and_reported(tmp_path):
       name varchar
     """
     )
-    tables, refs = parse_dbml(dbml_file)
-    assert "customers" in tables
-    assert {c.name for c in tables["customers"].columns} == {"id", "name"}
-    warnings = get_parse_warnings()
-    assert any("customers" in w and "never closed" in w for w in warnings)
+    # Refused with the line it stopped at (ModelError) rather than read in
+    # part, as the line parser before 1.8 did.
+    with pytest.raises(ModelError):
+        parse_dbml(dbml_file)
 
 
-def test_unclosed_project_block_does_not_swallow_rest_of_file(tmp_path):
+def test_unclosed_project_block_is_refused(tmp_path):
     """Regression test: removing a Project block's closing brace used to
     make the ignored-block-depth tracker never return to 0, silently
     swallowing every table declared afterward for the rest of the file
@@ -2051,12 +1832,13 @@ def test_unclosed_project_block_does_not_swallow_rest_of_file(tmp_path):
     }
     """
     )
-    tables, refs = parse_dbml(dbml_file)
-    warnings = get_parse_warnings()
-    assert any("Project/TableGroup" in w and "never closed" in w for w in warnings)
+    # Refused with the line it stopped at (ModelError) rather than read in
+    # part and warned about, as the line parser before 1.8 did.
+    with pytest.raises(ModelError):
+        parse_dbml(dbml_file)
 
 
-def test_unclosed_note_block_at_eof_is_reported(tmp_path):
+def test_unclosed_note_block_at_eof_is_refused(tmp_path):
     """Regression test companion to the unclosed-table case above: a
     multi-line table note whose closing `'''` (or `}`) is missing must also
     be reported, not just the table that contains it.
@@ -2070,7 +1852,7 @@ def test_unclosed_note_block_at_eof_is_reported(tmp_path):
       an unterminated triple-quoted note
     """
     )
-    tables, refs = parse_dbml(dbml_file)
-    warnings = get_parse_warnings()
-    assert any("Note block" in w and "never closed" in w for w in warnings)
-    assert any("foo" in w and "never closed" in w for w in warnings)
+    # Refused with the line it stopped at (ModelError) rather than read in
+    # part and warned about, as the line parser before 1.8 did.
+    with pytest.raises(ModelError):
+        parse_dbml(dbml_file)

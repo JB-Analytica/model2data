@@ -1,8 +1,9 @@
-// Mixed quote styles, inline comments, and CRLF line endings.
-Table `user accounts` {
+// Bare and double-quoted identifiers, inline comments, and CRLF line endings.
+// (DBML quotes a name with double quotes; backticks hold expressions.)
+Table "user accounts" {
   id integer [pk] // primary key, note the comment right after a column def
   "display name" varchar [not null] // quoted identifier with a space
-  `email address` varchar [unique]
+  "email address" varchar [unique]
   // a comment on its own line right before a column def
   status varchar [default: 'active']
 }
@@ -10,6 +11,6 @@ Table `user accounts` {
 // a comment immediately before a Table block
 Table "orders" {
   id integer [pk]
-  account_id integer [ref: > `user accounts`.id] // inline ref, backtick target
+  account_id integer [ref: > "user accounts".id] // inline ref, quoted target
   amount decimal [default: 0]
 }

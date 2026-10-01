@@ -32,6 +32,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
+from model2data.generate import kinds
 from model2data.generate.relationships import build_fk_lookup, classify_refs
 from model2data.parse.dbml import ColumnDef, TableDef
 
@@ -86,31 +87,27 @@ def validate_hints(tables: Mapping[str, TableDef], refs: list[dict]) -> None:
 # Internal helpers
 # ---------------------------------------------------------
 def _base_type(data_type: str) -> str:
-    return data_type.lower().split("(")[0].strip()
+    return kinds.base_type(data_type)
 
 
-def _is_temporal_type(base_type: str) -> bool:
+def _is_temporal_type(base: str) -> bool:
     """True for the date/timestamp types the time-aware generator and `after` cover.
 
-    Mirrors generate.faker's own date/timestamp/time split: a plain `time`
-    column has no window to be "after" another column within, only a date or
-    a timestamp does.
+    The spec's temporal kind (see generate.kinds): the type contains `date` or
+    `timestamp`. A plain `time` column has no window to be "after" another
+    column within, only a date or a timestamp does.
     """
-    if "date" in base_type and "time" not in base_type:
-        return True
-    return any(key in base_type for key in ("timestamp", "datetime"))
+    return kinds.is_temporal_type(base)
 
 
-def _is_numeric_type(base_type: str) -> bool:
-    """True for the integer and float/decimal types `min`/`max`/`distribution` apply to.
+def _is_numeric_type(base: str) -> bool:
+    """True for the integer and decimal types `min`/`max`/`distribution` apply to.
 
-    Mirrors generate.faker's own two numeric branches exactly, so a hint this
-    module accepts is guaranteed to land on a branch that reads it.
+    The spec's numeric kind (see generate.kinds), which generate.faker's two
+    numeric branches use too, so a hint this module accepts is guaranteed to
+    land on a branch that reads it.
     """
-    return any(
-        key in base_type
-        for key in ("int", "integer", "bigint", "smallint", "decimal", "numeric", "float", "double")
-    )
+    return kinds.is_numeric_type(base)
 
 
 # Distributions a numeric column's `distribution` hint may name.
@@ -141,7 +138,7 @@ def _validate_column_hints(
     label = f"{table_name}.{column.name}"
     base_type = _base_type(column.data_type)
     is_enum = bool(column.enum_values)
-    is_boolean = "boolean" in base_type or "bool" in base_type
+    is_boolean = "bool" in base_type
     is_temporal = _is_temporal_type(base_type)
     is_numeric = _is_numeric_type(base_type)
     is_nullable = not is_pk and "not null" not in column.settings

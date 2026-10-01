@@ -1,0 +1,22 @@
+// Which side holds the key: one-to-one both ways round, self refs, inline `<`,
+// two refs on one column, quoted schema and table names.
+Table users {
+  id int [pk, ref: < posts.author_id]
+}
+Table posts {
+  id int [pk]
+  author_id int
+  reviewer_id int [ref: > users.id, ref: > "legacy schema"."old users".id]
+}
+Table profiles {
+  id int [pk]
+  user_id int [unique]
+}
+Ref: users.id - profiles.user_id
+Table nodes {
+  id int [pk]
+  next_id int [unique, ref: - nodes.id]
+}
+Table "legacy schema"."old users" {
+  id int [pk]
+}

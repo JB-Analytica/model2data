@@ -5,6 +5,126 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+## [1.8.0] - 2026-10-01
+
+### Added
+- **Your model writes your data tests.** The generated dbt project now tests what the model's
+  hints say valid data looks like: `generate.min`/`max` (`model2data_between`), `after`
+  (`model2data_not_before`), `null_rate` (`model2data_max_null_share`, with `--test-tolerance`,
+  default 0.1 absolute), `distinct` (`model2data_max_distinct`) and a table's `grain`
+  (`model2data_unique_combination`), as generic tests in a self-contained
+  `macros/model2data_hint_tests.sql` (no `dbt_expectations`, no `dbt deps`). `--hint-tests
+  {error,warn,off}` sets their severity (default `warn`); statistical hints (`true_rate`,
+  `weights`, `skew`, `distribution`, the temporal shape hints) write no test. A model with no such
+  hints generates the same YAML as before. `model2data.dbt.hint_tests.hint_tests_for` returns the
+  tests as data for other exporters. A table's `grain` is now in its `TableDef.note`.
+- **A model is one YAML document: `<name>.model2data.yml`, spec 0.2.0.** `model2data --file
+  shop.model2data.yml` (or `.yaml`, or the same document as `.json`) generates from it, and the
+  document's `run:` settings -- rows, rows per table, seed, table seeds, `as_of`, locale, shape --
+  are the defaults every CLI option overrides. The model's `name` names the dbt project. The
+  format is [model2data/spec/README.md](model2data/spec/README.md) and its JSON Schema, packaged
+  with the engine. Every `examples/*.dbml` now has its `examples/*.model2data.yml`, and the two
+  generate the same bytes under a seed and an `--as-of`.
+- **Spec 0.2.0 vocabulary for modelling and time:** `grain` on a table (the columns that
+  identify a row), `measure` as an aggregation (`sum`, `average`, `min`, `max`, `median`,
+  `count`, `count_distinct`) as well as `true`/`false`, `incremental` on a table (`new_per_day`,
+  `update_rate`, `changes`, `updated_at`) and `transitions` among an enum column's hints. Read,
+  written by `dump` and checked; what uses them is listed under its own entry.
+- **Generate the days after the first: `model2data generate --days N` / `--next`, and
+  `model2data.generate.days.generate_days`.** A table with `incremental` inserts `new_per_day` rows
+  each day, their dates and timestamps falling on that day, with keys continuing after the ones it
+  holds and foreign keys pointing at rows that exist by then, and updates `update_rate` of its rows:
+  an enum column with `transitions` moves along an allowed edge, any other `changes` column is drawn
+  again, and `updated_at` is set. Day *n* is fixed by the seed, `as_of`, *n* and the model: each table
+  and day draws from its own stream, so days do not shift when another table is added, and day 0 is
+  byte for byte what a run without days generates. `--days-format` writes `batches`
+  (`days/<table>/day_NNN.csv`), a `changelog` (`changelog/<table>.csv` with `_day` and `_op`) or only
+  the `final` state; the dbt seeds always hold the state after the last day. `generate_days(model,
+  days, ...)` returns one `DayResult` per day (`inserted`, `updated` and `state` per table);
+  `iter_days` yields them one at a time. `examples/ecommerce_daily.model2data.yml` demonstrates it.
+  `incremental.changes` naming a key column is now a validation error (keys never change).
+- **`model2data validate FILE`** checks a model -- the schema, then every check beyond it -- and
+  prints every issue with its path in the document
+  (`tables.orders.columns.status.generate.weights: weighs "returned", which is not a member of
+  order_status`), exiting 1 on an error. Warnings are printed and do not fail it.
+- **`model2data convert FILE.dbml [-o out.model2data.yml]`** writes the model a DBML file
+  converts to, in the canonical style of the spec's reference example.
+- **`model2data.model`**, a small typed API over the document: `load(path_or_text, *,
+  format=None)`, `from_dict(data)`, `validate(...)`, `dump(model)`, `to_dict(model)`,
+  `to_engine(model)` and `from_dbml(text)`. YAML is read under the spec's YAML profile: the YAML
+  1.2 core schema (`no`, `on`, `NO` and `2026-01-01` are strings), and duplicate keys, anchors,
+  aliases, merge keys, tags and second documents are errors. `dump(load(x))` of a canonical
+  document is `x`, byte for byte.
+- `jsonschema` is a direct dependency (it was already installed through dbt-core), and so is
+  `pyparsing` (`>=3.1,<4`). PyDBML is vendored, not a dependency: see below.
+
+### Changed
+- **DBML is read with PyDBML and converted to the model, instead of by a line parser.**
+  PyDBML 1.2.1 is vendored in `model2data/_vendor/pydbml` (MIT, licence shipped beside it) and
+  patched to read what dbdiagram and model2data studio read: signed and exponent numbers,
+  `default: null`, unquoted non-ASCII names, `numeric(10,2)[]`, a Ref's `color`, check
+  constraints, `Records` and `TablePartial`. Check constraints and records are kept as the
+  extensions `x-checks` and `x-records`; each patch is listed in its `VENDORED.md`.
+  `parse_dbml(path)` is now `from_dbml` then `to_engine`, and returns the same `(tables, refs)`;
+  `TableDef` and `ColumnDef` are still in `model2data.parse.dbml`, and `TableDef` gains a `note`
+  holding a table's `role`. The spec's "From 0.1" table is the conversion: a note that is a JSON
+  object is hints (`measure` and a table's `role` included), any other note a description; a flat
+  `distribution` and its parameters become `distribution: {kind: ...}`.
+- **DBML that cannot be read is refused, with the line and what to change, instead of read in
+  part with a warning.** `get_parse_warnings()` is kept and always empty. What stays refused is
+  what DBML itself does not allow or the model cannot hold: backtick-quoted names (DBML quotes
+  names with double quotes; backticks hold expressions), and a column with two refs (a 0.2.0
+  column references one column). Each says so. `examples/mixed_quotes_crlf.dbml` now double-quotes its names. An
+  empty DBML file, which a model cannot be (it has at least one table), is an error.
+- **A table key is the table's name as written**, `schema.name` outside the default schema.
+  Where it becomes a seed, a staging model and every `ref()`, the CLI normalises it to
+  `[a-z0-9_]` (`raw.Users` -> `raw_users`, `user accounts` -> `user_accounts`), and refuses two
+  tables that would share a name. The line parser sanitised names in the parser, keeping case.
+- **A `Project` block names the model**, and so the dbt project: `examples/tagging_m2m` now
+  generates `dbt_blog_platform`. `--name` still overrides it.
+- **A hint in the wrong place is reported at its document path** (`tables.t.columns.label.generate.weights`)
+  when the model is read, before anything is written, rather than as `t.label` mid-run.
+- **Spec 0.2.0: a reference onto a column that is not a key conforms, with a warning.** Real
+  schemas have them (dlt's `_dlt_loads.schema_version_hash` onto `_dlt_version.version_hash`).
+  Issues now carry a severity; only errors make a model non-conforming, and `load` keeps the
+  warnings on `Model.warnings`.
+- **A nullable enum column takes the default null rate**, like every other nullable column (spec
+  0.2.0: a column without `not_null` is nullable). It came back null only with an explicit
+  `null_rate`, so the rows generated after such a column in its table change under the same seed.
+
+### Fixed
+- **Several `[pk]` columns are one composite primary key**, as spec 0.2.0 and DBML say, not
+  several single-column keys each made unique on its own: `hackernews`'s `stories` is keyed on
+  `(id, _dlt_id)`.
+- **The line parser's misreadings are gone**: table aliases (`Table customers as C`) resolve,
+  schema-qualified tables and refs (`raw.users`) no longer collapse into one table, one-to-one
+  (`-`) refs are generated instead of dropped, two refs on one column are reported, and commas
+  and brackets inside quoted or triple-quoted notes no longer split the column's settings.
+- **A one-to-one reference takes each parent at most once**, and so does any unique foreign key:
+  a foreign key column that is also `unique` (or `pk`) is drawn without replacement.
+- **A reference onto a plain column draws from the values the parent holds.** With no foreign
+  key to mirror it through, a `Ref` onto a column that is not a key was generated as unrelated
+  data; now every non-null child value exists in the parent (every
+  `_dlt_loads.schema_version_hash` in `hackernews` is a `_dlt_version.version_hash`). With a
+  foreign key onto the same parent, it is still mirrored through it. A foreign key never draws a
+  parent's null.
+- **`real`, `money` and `number` columns generate decimals**, and take `min`/`max`/`distribution`,
+  as spec 0.2.0's numeric kind includes them; they fell through to generic text.
+- **A `datetime` column generates timestamps.** Anything naming both a date and a time is a
+  timestamp (spec 0.2.0's temporal kind); `datetime` generated a bare time of day.
+- **Null counts are exactly floor(n x rate).** Rounding error made 200 rows at the default rate
+  null 39 instead of 40, and `null_rate: 0.29` over 100 rows null 28.
+- **A seed now reproduces `uuid` and `hash` columns.** They were drawn with `uuid.uuid4()`, which
+  reads the operating system's randomness rather than the seeded generator, so the same `--seed`
+  and `--as-of` gave different keys on every run -- and so did every table with a foreign key onto
+  one, and every unique text column the de-duplicator fell back to UUIDs for. Committed fixtures of
+  such a schema could never be verified, and `examples/hackernews.dbml` and
+  `examples/tagging_m2m.dbml` did not reproduce at all. UUIDs are now version-4 values drawn from
+  the seeded stream; `tests/test_reproducibility.py` generates every example in two fresh
+  interpreters and requires identical bytes.
+
 ## [1.7.3] - 2026-09-25
 
 ### Fixed

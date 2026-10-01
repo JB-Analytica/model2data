@@ -1,0 +1,9 @@
+// Identifiers outside ASCII, unquoted.
+Table café {
+  id int [pk]
+  crème varchar
+}
+Table commandes {
+  id int [pk]
+  café_id int [ref: > café.id]
+}
