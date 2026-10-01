@@ -676,3 +676,47 @@ def test_relationships_test_emitted_for_ref_onto_unique_non_pk_column(tmp_path):
         if isinstance(t, dict) and "relationships" in t
     )
     assert relationship_test["arguments"]["field"] == "customer_id"
+
+
+def test_dbt_tests_lists_every_test_under_the_name_dbt_gives_it():
+    from model2data.dbt.tests import dbt_tests
+
+    tables = {
+        "orders": TableDef(
+            name="orders",
+            columns=[
+                ColumnDef(name="id", data_type="int", settings={"pk"}),
+                ColumnDef(name="status", data_type="text", enum_values=["open", "shut"]),
+                ColumnDef(name="display name", data_type="text", settings={"not null"}),
+                ColumnDef(name="qty", data_type="int", note={"min": 1, "max": 9}),
+            ],
+            composite_keys=[
+                {"columns": ["status", "qty"], "type": "unique"},
+                {"columns": ["qty"], "type": "unique"},
+            ],
+            note={"grain": ["id", "qty"]},
+        )
+    }
+    names = {(t.name, t.type, t.severity) for t in dbt_tests(tables, [], hint_tests="warn")}
+    assert names == {
+        ("not_null_stg_orders_id", "not_null", "error"),
+        ("unique_stg_orders_id", "unique", "error"),
+        ("accepted_values_stg_orders_status__open__shut", "accepted_values", "error"),
+        ("not_null_stg_orders__display_name_", "not_null", "error"),
+        ("model2data_between_stg_orders_qty__9__1", "model2data_between", "warn"),
+        (
+            "model2data_unique_combination_stg_orders_id__qty",
+            "model2data_unique_combination",
+            "warn",
+        ),
+        ("unique_combination_stg_orders_status_qty", "unique_combination", "error"),
+    }
+
+
+def test_a_generic_test_name_skips_the_model_and_flattens_mappings():
+    from model2data.dbt.tests import generic_test_name
+
+    assert (
+        generic_test_name("t", "stg_x", {"model": "m", "b": {"k": "v w"}, "a": 1})
+        == "t_stg_x_1__v_w"
+    )

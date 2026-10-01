@@ -1,4 +1,4 @@
-"""The model2data model: spec 0.2.0, read, checked, written, and generated from.
+"""The model2data model: spec 0.3.0 (and 0.2.x), read, checked, written, and generated from.
 
 A model is one document -- `<name>.model2data.yml`, or the same in JSON -- as
 `model2data/spec/README.md` and `model2data/spec/model.schema.json` define it.
@@ -20,7 +20,10 @@ from model2data.model.engine import EngineInputs, run_as_of, to_engine
 from model2data.model.errors import Issue, ModelError
 from model2data.model.reader import load, validate
 from model2data.model.types import (
+    DEFECT_PRESETS,
+    DEFECT_TYPES,
     Column,
+    Defect,
     Enum,
     ForeignKey,
     Group,
@@ -36,9 +39,12 @@ from model2data.model.types import (
 from model2data.model.validate import SCHEMA_URL, SPEC_VERSION
 
 __all__ = [
+    "DEFECT_PRESETS",
+    "DEFECT_TYPES",
     "SCHEMA_URL",
     "SPEC_VERSION",
     "Column",
+    "Defect",
     "EngineInputs",
     "Enum",
     "ForeignKey",

@@ -1,18 +1,18 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://www.jbanalytica.com/model2data/spec/0.2.0/model.schema.json",
+  "$id": "https://www.jbanalytica.com/model2data/spec/0.3.0/model.schema.json",
   "title": "model2data model",
   "description": "A data model: its tables, their columns and keys, the relationships between them, the enums a column can be typed as, and how each column's values are generated. Written as YAML (the `.model2data.yml` file) or as JSON; both are the same document. This schema is normative together with model2data/spec/README.md, which defines the YAML profile a reader must apply and the checks that depend on more than one part of the document.",
   "type": "object",
   "required": ["model2data", "tables"],
   "properties": {
     "model2data": {
-      "description": "The spec version the document is written against, `MAJOR.MINOR` or `MAJOR.MINOR.PATCH`. Write it as `0.2.0`. A reader that met the YAML number 0.2 reads it as `0.2`.",
+      "description": "The spec version the document is written against, `MAJOR.MINOR` or `MAJOR.MINOR.PATCH`. Write it as `0.3.0`. A 0.2 document is still read, and reads as it did: 0.3.0 only adds `defects`, which a 0.2 document cannot use. A reader that met the YAML number 0.3 reads it as `0.3`.",
       "oneOf": [
-        { "type": "string", "pattern": "^0\\.2(\\.(0|[1-9][0-9]*))?$" },
-        { "const": 0.2 }
+        { "type": "string", "pattern": "^0\\.[23](\\.(0|[1-9][0-9]*))?$" },
+        { "enum": [0.2, 0.3] }
       ],
-      "examples": ["0.2.0"]
+      "examples": ["0.3.0"]
     },
     "name": {
       "description": "The model's name. Names the generated dbt project, normalised to `[a-z0-9_]`. Defaults to the file's name without `.model2data.yml`.",
@@ -157,9 +157,55 @@
           "description": "Foreign keys over more than one column. A foreign key of one column is written on the column (`references`).",
           "type": "array",
           "items": { "$ref": "#/$defs/foreignKey" }
+        },
+        "defects": {
+          "description": "Deliberate defects in the table's generated rows, applied after the clean data is generated: each breaks the dbt test it names (or, for the late and messy kinds, an incremental model or a staging clean-up), and every run reports which rows it broke. Spec 0.3.0. An empty list keeps the table clean under a run's `defects` preset; an entry of the same `type` and `column` as a preset's replaces it, and `count: 0` switches it off.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/defect" },
+          "examples": [
+            [
+              { "type": "duplicate_keys", "count": 3 },
+              { "type": "orphan_foreign_keys", "column": "customer_id", "share": 0.02 },
+              { "type": "nulls", "column": "order_date", "count": 5 }
+            ]
+          ]
         }
       },
       "patternProperties": { "^x-": true },
+      "additionalProperties": false
+    },
+    "defect": {
+      "description": "One deliberate defect: its `type`, the `column` it breaks, and how many rows, as a `count` or a `share` of the table's rows (exactly one of the two).",
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "description": "`duplicate_keys`: rows that repeat another row's key (fails `unique`). `orphan_foreign_keys`: rows whose foreign key names no parent row (fails `relationships`). `nulls`: nulls in a column with a not-null test (fails `not_null`). `invalid_values`: values outside an enum column's members (fails `accepted_values`). `late_arriving`: rows inserted on a later day whose event time falls before the previous load's cutoff (an incremental model skips them; no test fails). `late_updates`: updates on a later day whose `updated_at` is backdated to the version they replace (a timestamp snapshot misses them; no test fails). `messy_text`: leading or trailing whitespace and inconsistent casing in a text column (to clean in staging; no test fails). `overlapping_history`: versions in the table's history whose validity runs past the next version's start (fails the history's no-overlap test; needs `incremental.history`).",
+          "enum": [
+            "duplicate_keys",
+            "orphan_foreign_keys",
+            "nulls",
+            "invalid_values",
+            "late_arriving",
+            "late_updates",
+            "messy_text",
+            "overlapping_history"
+          ]
+        },
+        "column": {
+          "description": "The column the defect breaks. Required for `orphan_foreign_keys`, `nulls`, `invalid_values` and `messy_text`. Defaults to the primary key for `duplicate_keys`, and for `late_arriving` to `incremental.updated_at`, else the table's first date or timestamp column. `late_updates` and `overlapping_history` take none: they act on `incremental.updated_at` and the table's history.",
+          "$ref": "#/$defs/name"
+        },
+        "count": {
+          "description": "How many rows the defect breaks. 0 switches the defect off.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "share": {
+          "description": "How many rows the defect breaks, as a fraction of the table's rows, rounded half up; any share above 0 breaks at least one row.",
+          "$ref": "#/$defs/fraction"
+        }
+      },
       "additionalProperties": false
     },
 
@@ -327,6 +373,10 @@
         "updated_at": {
           "description": "A temporal column set to the day a row was last inserted or updated.",
           "$ref": "#/$defs/name"
+        },
+        "history": {
+          "description": "Keep every version of every row as a table of its own, `<table>_history`: the table's columns plus `valid_from`, `valid_to` (null for the current version) and `is_current`, one row per version, as a source keeping its own history (SCD type 2) would. Needs a primary key. Spec 0.3.0.",
+          "type": "boolean"
         }
       },
       "additionalProperties": false,
@@ -521,6 +571,10 @@
             "skew": { "$ref": "#/$defs/fraction" }
           },
           "additionalProperties": false
+        },
+        "defects": {
+          "description": "A defects preset, expanded into defects on every table it suits; a table's own `defects` override it. `clean` (the default): none. `messy`: a mix on every table. `training`: one defect for each kind of dbt test (`unique`, `not_null`, `relationships`, `accepted_values`), so each fails exactly once where the model has one to break, plus the late kinds and overlapping history on a run of several days. `none`: no defect at all, the tables' own `defects` ignored too, for the clean data of a model that lists some. Spec 0.3.0.",
+          "enum": ["clean", "messy", "training", "none"]
         }
       },
       "additionalProperties": false

@@ -1,6 +1,6 @@
 # Examples
 
-Each example is a model in two forms: a `.model2data.yml` document ([spec 0.2.0](../model2data/spec/README.md)),
+Each example is a model in two forms: a `.model2data.yml` document ([spec 0.2.0 or 0.3.0](../model2data/spec/README.md)),
 which is the format `model2data` reads, and the `.dbml` file it was converted from with
 `model2data convert`. DBML is supported input: it is converted to the same model, so both files
 generate the same data under the same seed and `--as-of`.
@@ -259,6 +259,24 @@ dbt seed && dbt run
 model2data --file examples/ecommerce_daily.model2data.yml --rows 100 --seed 42 --as-of 2026-01-31 --days 7
 cd dbt_ecommerce_daily   # seeds hold the state after day 7; days/ holds a file per day
 dbt build
+```
+
+### 8. **ecommerce_training** (`.model2data.yml` only, spec 0.3.0) — Data that breaks on purpose
+
+- **Domain**: ecommerce_daily, with deliberate defects for teaching dbt tests.
+- **Focus**: `run: {defects: training}` breaks each kind of standard dbt test once (`unique`,
+  `not_null`, `relationships`, `accepted_values`), plus late-arriving rows and late updates over
+  the days; the tables add `defects` of their own (messy text to clean in staging, more late
+  updates). Orders keep their history (`incremental.history`): `orders_history` holds every
+  version with `valid_from`, `valid_to` and `is_current`, and the preset overlaps a few of them.
+  `EXPECTED_FAILURES.md` in the project lists exactly the tests `dbt build` should fail;
+  `--defects none` gives the same model's clean data.
+
+**Try it**:
+```bash
+model2data --file examples/ecommerce_training.model2data.yml --days 3
+cd dbt_ecommerce_training && cat EXPECTED_FAILURES.md
+dbt build                # fails exactly the tests listed there
 ```
 
 ---

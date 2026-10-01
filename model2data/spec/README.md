@@ -1,4 +1,4 @@
-# The model2data model — spec 0.2.0
+# The model2data model — spec 0.3.0
 
 A model2data model is one document: the tables of a data model, their columns and keys, the
 relationships between them, the enums a column can be typed as, and how every column's values
@@ -73,7 +73,7 @@ The spec is versioned on its own, apart from the engine and the studio, with
 [semantic versioning](https://semver.org). The version is in the schema's `$id`:
 
 ```
-https://www.jbanalytica.com/model2data/spec/0.2.0/model.schema.json
+https://www.jbanalytica.com/model2data/spec/0.3.0/model.schema.json
 ```
 
 A patch release changes wording only. A minor release adds something optional. A major release
@@ -81,7 +81,13 @@ makes a valid document invalid or changes what one means; until 1.0.0 a minor re
 and says so. A document names the version it is written against in `model2data:`, and a reader
 refuses a major (before 1.0.0: minor) version it does not implement rather than guess.
 
-0.2.0 replaces 0.1.0, which carried hints as JSON inside DBML notes. See
+0.3.0 adds [defects](#defects) and a table's [history](#history), and nothing else: a 0.2
+document is a 0.3.0 document that uses neither, and a reader of 0.3.0 reads it as it always read.
+Such a document keeps saying `model2data: 0.2.0` and pointing at the 0.2.0 schema; a document
+that uses either says `model2data: 0.3.0`, and either in a document that says 0.2 is an error. A
+writer writes the version the document was read with, and 0.3.0 once it uses either.
+
+0.2.0 replaced 0.1.0, which carried hints as JSON inside DBML notes. See
 [From 0.1](#from-01).
 
 ## The YAML profile
@@ -255,12 +261,81 @@ orders:
 How the days are delivered (a file per day, a change log with an operation per row, the state as
 of the last day) is the reader's choice; the rows each day holds are not.
 
+### History
+
+`history: true` in a table's `incremental` (spec 0.3.0) keeps every version of every row, as a
+source that keeps its own history (a slowly changing dimension of type 2) does. A reader writes a
+second table, `<table>_history`: the table's columns, then
+
+- `valid_from`: when the version began: its `updated_at` when the table has one and it is set,
+  else the start of the day the version was delivered (the first day for the rows it holds);
+- `valid_to`: when the next version of the key began, null for the current one;
+- `is_current`: true for the last version of each key, false for the others.
+
+One row per version: the first day's, then one for each day that inserted or updated the row. A
+version never begins before the one it follows (one that would begins a second after it), so each
+key has exactly one current version and no two of its versions overlap. The table needs a primary
+key, has none of the three columns itself, and the model has no table named `<table>_history`.
+The history is the clean record of the days: [defects](#defects) of the table do not reach it,
+and only `overlapping_history` breaks it.
+
 ### Run settings
 
 `run` saves generation settings with the model: the row counts, the seed, the `as_of` day, the
 locale, the shape defaults. A seed and a day name one dataset — the same `run`, model and engine
 version produce the same bytes, on any machine, on any later day. A reader's own options (the
 CLI's flags, the studio's settings) override the file.
+
+### Defects
+
+A run can break its data on purpose, so a dbt project's tests are seen to fire: a learner runs
+`dbt build`, sees exactly the tests that should fail, and fixes them. A table lists its defects
+under `defects`, one per entry:
+
+```yaml
+orders:
+  columns:
+    id: {type: bigint, pk: true}
+    customer_id: {type: bigint, not_null: true, references: customers.id}
+    order_date: {type: timestamp, not_null: true}
+  defects:
+    - {type: duplicate_keys, count: 3}
+    - {type: orphan_foreign_keys, column: customer_id, share: 0.02}
+    - {type: nulls, column: order_date, count: 5}
+```
+
+| `type` | Breaks | `column` | The test it fails |
+|--------|--------|----------|-------------------|
+| `duplicate_keys` | rows that repeat another row's key | the primary key (all of a composite one), or a unique column | `unique` (a composite key's uniqueness test) |
+| `orphan_foreign_keys` | rows whose foreign key names no parent row | required: a column with `references`, or in `foreign_keys`; not a boolean | `relationships` |
+| `nulls` | nulls in a column that is never null | required: `not_null`, or the table's one-column primary key | `not_null` |
+| `invalid_values` | values outside the members | required: a column typed with an enum, in no key | `accepted_values` |
+| `late_arriving` | rows inserted on a later day whose event time is before the previous load's cutoff | the event-time column: `incremental.updated_at`, else the table's first date or timestamp column | none: an incremental model skips them |
+| `late_updates` | updates on a later day whose `incremental.updated_at` is the version's they replace | none: `incremental.updated_at` | none: a timestamp snapshot misses them |
+| `messy_text` | leading or trailing whitespace and inconsistent case | required: a text column (not a time) that is no key, foreign key or enum | none: cleaned in staging |
+| `overlapping_history` | versions in `<table>_history` still valid after the next version of their key began | none | the history's no-overlap test |
+
+- Each entry has a `count` (rows) or a `share` of the table's rows (rounded half up, and at
+  least one row when the share is above 0), never both. `count: 0` switches a defect off.
+- A table lists a `type` once per `column` (a left-out column standing for the type's default):
+  nulls in two columns are two entries.
+- The late kinds and `overlapping_history` need a run of several days (`incremental` and
+  `model2data generate --days`). A run of one day applies none of them, and says so.
+- `run.defects` names a **preset**, which a reader expands into defects on every table it suits:
+  `clean` (none, the default), `messy` (a small share of every defect a table can take) or
+  `training` (one defect for each kind of standard test, so each fails once where the model has
+  one to break; the late kinds and overlapping history too on a run of several days). A table's
+  own entries override it: an entry of the same `type` and `column` replaces the preset's, any
+  other is added, and `defects: []` keeps the table clean. `none` is no defect at all, the
+  tables' own ignored too: the clean data of a model that lists defects. A reader's own option
+  (`--defects`) overrides `run.defects`.
+
+What a defect does to which rows, and how a run reports it, is the engine's (see
+`model2data.defects`); this spec fixes what a defect is asked to break. A run with defects
+reports every one it applied: the rows it broke, and the tests of the generated project that now
+fail. Defects are applied after the clean data is generated, from a random stream of their own,
+so the same seed, model and defects give the same bytes, and the clean data is what it is
+without them.
 
 ### Extensions
 
@@ -291,6 +366,20 @@ reports each failure with the path of the value (`tables.orders.columns.status.g
     `updated_at` is a temporal column, and `changes` names no column of a key.
 11. Every key and every target of `transitions` is a member of the column's enum.
 12. A `measure` aggregating by `sum`, `average`, `min`, `max` or `median` is on a numeric column.
+13. `defects`, `run.defects` and `incremental.history` only in a document of spec 0.3.0 or
+    later.
+14. Every defect has exactly one of `count` and `share`, names a column of its table, and gives a
+    `type` and `column` no other entry of the table gives. `duplicate_keys` names a primary key
+    or a unique column, or its table has a primary key; when `run` gives the table's rows, its
+    `count` is fewer than them. `orphan_foreign_keys`, `nulls`, `invalid_values` and
+    `messy_text` name their column, and it is of the kind the [Defects](#defects) table says.
+    `late_arriving` is on a table with `incremental.new_per_day` and a date or timestamp column
+    (a named one is one); `late_updates` names no column and is on a table with
+    `incremental.update_rate` and `incremental.updated_at`; `overlapping_history` names no
+    column and is on a table with `incremental.history`.
+15. A table with `incremental.history` has a primary key, no column named `valid_from`,
+    `valid_to` or `is_current`, and no table of the model is named `<table>_history`, or
+    normalises to the same dbt name.
 
 ### Warnings
 

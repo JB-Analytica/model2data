@@ -9,7 +9,8 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from model2data.cli import _dbt_identifier, app
+from model2data.cli import app
+from model2data.dbt.naming import dbt_identifier as _dbt_identifier
 from model2data.model import ModelError, dump, from_dbml, from_dict, load, to_dict
 from model2data.model._yaml import parse_yaml, scalar, string_scalar
 from model2data.model.engine import run_as_of

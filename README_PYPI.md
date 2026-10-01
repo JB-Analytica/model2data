@@ -85,7 +85,7 @@ access required.
 ## The model file
 
 A model is one YAML document, `<name>.model2data.yml` — or the same document as JSON. Its format
-is [spec 0.2.0](https://github.com/JB-Analytica/model2data/blob/main/model2data/spec/README.md), with a JSON Schema your editor can autocomplete and
+is [spec 0.3.0](https://github.com/JB-Analytica/model2data/blob/main/model2data/spec/README.md), with a JSON Schema your editor can autocomplete and
 check against:
 
 ```yaml
@@ -281,6 +281,55 @@ days = generate_days(load("examples/ecommerce_daily.model2data.yml"), 7, seed=42
 days[3].tables["orders"].inserted   # rows day 3 added
 days[3].tables["orders"].updated    # rows day 3 changed, with their new values
 days[3].tables["orders"].state      # the table after day 3
+```
+
+### Break the data on purpose
+
+A dbt test you have never seen fail is a test you hope works. `--defects` puts deliberate,
+counted defects in the generated data, so `dbt build` fails exactly the tests it should — for
+teaching dbt, or for proving a project's tests fire:
+
+```bash
+model2data --file examples/ecommerce.model2data.yml --seed 42 --defects training
+cd dbt_ecommerce && dbt build    # fails unique, not_null, relationships, accepted_values once each
+```
+
+`training` breaks each kind of standard dbt test once; `messy` puts a small share of every defect
+on every table; `clean` (the default) is the data as it always was, byte for byte; `none` also
+ignores the defects a model's tables list, for the clean data of a training model. A table can
+also list its own defects in the model (spec 0.3.0):
+
+```yaml
+orders:
+  defects:
+    - {type: duplicate_keys, count: 3}                               # fails unique
+    - {type: orphan_foreign_keys, column: customer_id, share: 0.02}  # fails relationships
+    - {type: nulls, column: order_date, count: 5}                    # fails not_null
+```
+
+The types are `duplicate_keys`, `orphan_foreign_keys`, `nulls`, `invalid_values` (fails
+`accepted_values`), `messy_text` (whitespace and casing to clean in staging), and, with `--days`,
+`late_arriving` (rows an incremental model filtering on `updated_at > max(updated_at)` skips) and
+`late_updates` (versions a `strategy: timestamp` snapshot misses) and `overlapping_history` (see
+below). Every run with defects writes
+`defects_report.json` (each defect, the rows it broke, the tests it breaks) and
+`EXPECTED_FAILURES.md` into the project, so a test that does not fire is visible. Defects are applied
+after the clean data, from their own random stream: the same seed gives the same bytes, and a
+defect on one table moves nothing in another. From Python, `model2data.defects.planned_defects`
+says what a run will break, `model2data.output.finish_run` applies it (and builds the histories)
+after `generate_days`, and `write_defects_report` / `write_expected_failures` write the two files.
+
+### A source that keeps its history
+
+`history: true` in a table's `incremental` (spec 0.3.0) also writes `<table>_history`: every
+version of every row over the generated days, with `valid_from`, `valid_to` (null for the current
+version) and `is_current` — an SCD type 2 source to build snapshots and point-in-time joins
+against. The project tests it with two package-free tests, one current row per key and no
+overlapping versions; the `overlapping_history` defect breaks the second.
+
+```yaml
+orders:
+  incremental: {new_per_day: 20, update_rate: 0.1, updated_at: updated_at, history: true}
 ```
 
 ## Generated dbt project structure

@@ -1,7 +1,6 @@
 import random
-import re
 import shutil
-from dataclasses import replace
+from collections.abc import Iterable
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Optional
@@ -13,12 +12,19 @@ from typer.core import TyperGroup
 from typer.models import ParameterInfo
 
 from model2data.dbt.hint_tests import DEFAULT_TOLERANCE, SEVERITIES
+from model2data.dbt.naming import dbt_names, for_dbt
 from model2data.dbt.project import (
     create_profiles_yml,
     create_project_scaffold,
     create_staging_models,
 )
 from model2data.dbt.tests import generate_dbt_yml, generate_unit_tests
+from model2data.defects import (
+    DefectsReport,
+    planned_defects,
+    write_defects_report,
+    write_expected_failures,
+)
 from model2data.generate.core import (
     generate_data_from_dbml,
     get_cyclic_tables,
@@ -36,8 +42,10 @@ from model2data.generate.faker import (
     get_unmapped_columns,
     reset_stats,
 )
+from model2data.generate.history import history_tables
 from model2data.generate.options import TimeProfile
 from model2data.model import (
+    DEFECT_PRESETS,
     Issue,
     Model,
     ModelError,
@@ -47,7 +55,7 @@ from model2data.model import (
     to_engine,
     validate,
 )
-from model2data.parse.dbml import TableDef
+from model2data.output import finish_run
 from model2data.utils import normalize_identifier
 
 SUPPORTED_ADAPTERS = ("duckdb", "postgres")
@@ -155,7 +163,7 @@ app = typer.Typer(
     cls=_GenerateByDefault,
     help=(
         "model2data: Generate analytics-ready datasets from a data model.\n\n"
-        "Given a model -- a .model2data.yml document (spec 0.2.0), the same as JSON,\n"
+        "Given a model -- a .model2data.yml document (spec 0.3.0), the same as JSON,\n"
         "or a DBML file -- this tool produces:\n"
         "• Synthetic but realistic data\n"
         "• A runnable dbt project scaffold\n"
@@ -211,37 +219,13 @@ def _model_stem(file: Path) -> str:
     return file.stem
 
 
-def _dbt_identifier(key: str) -> str:
-    """A table key as the seed and model name it gets in the dbt project.
-
-    Spec 0.2.0 leaves a name as written (`user accounts`, `raw.orders`) and has
-    a consumer normalise it where it reaches a file or a dbt identifier, to
-    `[a-z0-9_]`. Underscores are kept as they are, so `_dlt_loads` and
-    `stories__kids` stay what they were.
-    """
-    cleaned = re.sub(r"[^0-9a-z_]+", "_", key.lower())
-    if cleaned.strip("_") == "":
-        cleaned = "table"
-    elif cleaned[0].isdigit():
-        cleaned = f"t_{cleaned}"
-    return cleaned
-
-
-def _dbt_names(tables: dict[str, TableDef]) -> dict[str, str]:
+def _dbt_names(tables: Iterable[str]) -> dict[str, str]:
     """Each table key's dbt identifier, refusing two keys that normalise alike."""
-    names: dict[str, str] = {}
-    owners: dict[str, str] = {}
-    for key in tables:
-        name = _dbt_identifier(key)
-        if name in owners:
-            typer.echo(
-                f"❌ Tables {owners[name]!r} and {key!r} would both be the dbt seed {name!r}. "
-                "Rename one of them."
-            )
-            raise typer.Exit(1)
-        owners[name] = key
-        names[key] = name
-    return names
+    try:
+        return dbt_names(tables)
+    except ValueError as exc:
+        typer.echo(f"❌ {exc}")
+        raise typer.Exit(1) from None
 
 
 @app.command(
@@ -420,6 +404,18 @@ def main(
         "--next",
         help="Shorthand for --days 1.",
     ),
+    defects_preset: Optional[str] = typer.Option(
+        None,
+        "--defects",
+        metavar="PRESET",
+        help=(
+            "Break the data on purpose: 'clean' (no preset, the default), 'messy' (a mix on\n"
+            "every table) or 'training' (each kind of dbt test fails once); a table's own\n"
+            "`defects` still apply. 'none' ignores every defect, the tables' own too.\n"
+            "Overrides the model's run.defects. Writes defects_report.json and\n"
+            "EXPECTED_FAILURES.md into the project."
+        ),
+    ),
     days_format: str = typer.Option(
         "batches",
         "--days-format",
@@ -462,6 +458,14 @@ def main(
 
     tolerance = _given(test_tolerance)
     tolerance = DEFAULT_TOLERANCE if tolerance is None else float(tolerance)
+
+    preset = _given(defects_preset)
+    if preset is not None:
+        preset = preset.lower()
+        if preset not in DEFECT_PRESETS:
+            raise typer.BadParameter(
+                f"Choose one of: {', '.join(DEFECT_PRESETS)}.", param_hint="--defects"
+            )
 
     # -------------------------
     # Read the model (names untouched)
@@ -537,7 +541,11 @@ def main(
     if table_seeds:
         rolled = ", ".join(f"{key}={value}" for key, value in sorted(table_seeds.items()))
         typer.echo(f"🎲 Re-rolling with a table seed of its own: {rolled}")
-    dbt_names = _dbt_names(tables)
+    names = _dbt_names([*tables, *history_tables(inputs)])
+    plan = planned_defects(model, preset, days=days or 0)
+    preset = preset or (run.defects if run.defects is not None else None)
+    if preset in ("messy", "training") and not plan:
+        typer.echo(f"ℹ️  The {preset} preset finds nothing to break in this model: no defects.")
 
     project_name = normalize_identifier(_given(name) or model.name or _model_stem(file))
     dest = Path.cwd() / f"dbt_{project_name}"
@@ -597,21 +605,32 @@ def main(
         raise typer.Exit(1) from None
 
     # -------------------------
+    # Defects: broken on purpose, after the clean data, and reported
+    # -------------------------
+    if plan:
+        typer.echo("🧨 Breaking the data on purpose (defects)...")
+    out = finish_run(
+        inputs,
+        day_results or generated_tables,
+        plan,
+        seed=seed,
+        preset=preset,
+        as_of=anchor,
+        hint_tests=hint_tests,
+        test_tolerance=tolerance,
+        names=names,
+    )
+    report = out.report
+    generated_tables = out.frames
+    if day_results:
+        day_results = out.days
+
+    # -------------------------
     # dbt names: a table key becomes a [a-z0-9_] seed and model name here,
     # once, so the CSV's stem, `stg_<name>` and every `ref()` agree.
     # -------------------------
-    dbt_tables = {
-        dbt_names[key]: replace(table, name=dbt_names[key]) for key, table in tables.items()
-    }
-    dbt_refs = [
-        {
-            **ref,
-            "source_table": dbt_names.get(ref["source_table"], ref["source_table"]),
-            "target_table": dbt_names.get(ref["target_table"], ref["target_table"]),
-        }
-        for ref in refs
-    ]
-    dbt_frames = {dbt_names.get(key, key): df for key, df in generated_tables.items()}
+    dbt_tables, dbt_refs = for_dbt(out.tables, refs, names)
+    dbt_frames = {names.get(key, key): df for key, df in generated_tables.items()}
 
     # -------------------------
     # Write dbt seeds (normalized names)
@@ -623,7 +642,7 @@ def main(
 
     if day_results and days_format != "final":
         write = write_batches if days_format == "batches" else write_changelog
-        write(dest, day_results, dbt_names)
+        write(dest, day_results, names)
 
     # -------------------------
     # Build dbt assets
@@ -650,6 +669,10 @@ def main(
 
     # Keep the original model file for reference
     shutil.copy(file, dest / file.name)
+
+    if report is not None:
+        write_defects_report(report, dest)
+        write_expected_failures(report, dest)
 
     # -------------------------
     # Summary
@@ -698,6 +721,9 @@ def main(
         for label in duplicate_unique:
             typer.echo(f"    - {label}")
 
+    if report is not None:
+        _print_defects(report)
+
     # -------------------------
     # Done
     # -------------------------
@@ -705,6 +731,29 @@ def main(
     typer.echo("Next steps:")
     typer.echo(f"  cd {dest}")
     typer.echo("  dbt build   # loads the seeds, builds the models, runs every test")
+
+
+def _spec_of(file: Path) -> str:
+    """The spec a conforming model is written against: 0.3.0, or 0.2.0 (DBML included)."""
+    return "0.3.0" if str(load(file).version).startswith("0.3") else "0.2.0"
+
+
+def _print_defects(report: DefectsReport) -> None:
+    typer.echo("\n🧨 Defects (defects_report.json, EXPECTED_FAILURES.md)")
+    for defect in report.defects:
+        column = defect.column if not isinstance(defect.column, list) else ", ".join(defect.column)
+        on = f".{column}" if column else ""
+        typer.echo(
+            f"  {defect.table}{on}: {defect.defect}, {defect.applied} "
+            f"row{'' if defect.applied == 1 else 's'}"
+        )
+        if defect.note and not defect.applied:
+            typer.echo(f"    ⚠️  {defect.note}")
+    count = len(report.expected_failures)
+    typer.echo(f"  dbt build should fail {count} test{'' if count == 1 else 's'}:")
+    for failure in report.expected_failures:
+        warn = " (warn)" if failure.severity == "warn" else ""
+        typer.echo(f"    - {failure.test}{warn}")
 
 
 @app.command("validate")
@@ -718,7 +767,7 @@ def validate_command(
         help="The model: a .model2data.yml / .yaml / .json document, or a .dbml file.",
     ),
 ):
-    """Check that a model conforms to spec 0.2.0, printing every issue with its path.
+    """Check that a model conforms to spec 0.3.0 (or 0.2.x), printing every issue with its path.
 
     Exits 1 when there is an error; warnings are printed, and the model conforms.
     """
@@ -726,7 +775,7 @@ def validate_command(
     _print_issues(file, issues)
     if any(issue.is_error for issue in issues):
         raise typer.Exit(1)
-    typer.echo(f"✅ {file.name} conforms to spec 0.2.0.")
+    typer.echo(f"✅ {file.name} conforms to spec {_spec_of(file)}.")
 
 
 @app.command("convert")
@@ -748,7 +797,8 @@ def convert_command(
     ),
     force: bool = typer.Option(False, "--force", help="Overwrite the output file if it exists."),
 ):
-    """Convert a model -- DBML, typically -- to a spec 0.2.0 .model2data.yml document."""
+    """Convert a model -- DBML, typically -- to a .model2data.yml document (spec 0.2.0, or
+    0.3.0 when it has defects)."""
     try:
         model = load(file)
     except ModelError as error:

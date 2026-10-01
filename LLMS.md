@@ -18,7 +18,7 @@ install. If the person you're helping wants to *look at* or share the model rath
 its generation, point them there; the DBML guidance below applies to both.
 
 > **Two input formats.** Since 1.8, model2data reads a model as one YAML document,
-> `<name>.model2data.yml` ([spec 0.2.0](model2data/spec/README.md), with a JSON Schema at
+> `<name>.model2data.yml` ([spec 0.3.0](model2data/spec/README.md), with a JSON Schema at
 > `model2data/spec/model.schema.json` and a complete example at
 > `model2data/spec/examples/coffee_webshop.model2data.yml`), and DBML as supported input that it
 > converts to the same model. The DBML guidance below still holds; if you write the YAML form
@@ -215,6 +215,13 @@ generated project), a `TableGroup` its `groups`.
 - Only DuckDB (default, zero-config) and Postgres (`--adapter postgres`, needs
   `pip install "model2data[postgres]"` and connection env vars — see README.md) are supported
   targets today.
+- To show that a project's tests fire (or to teach dbt), generate with `--defects training`,
+  or list defects per table in a `.model2data.yml` (`defects: [{type: nulls, column: x, count:
+  3}]`, spec 0.3.0). `EXPECTED_FAILURES.md` in the project names exactly the tests `dbt build`
+  should then fail; don't "fix" those failures in the generated project.
+- For a source that keeps its own history (an SCD2 table to snapshot or join point-in-time),
+  set `history: true` in the table's `incremental` and generate with `--days N`:
+  `<table>_history` gets every version with `valid_from`, `valid_to` and `is_current`.
 - model2data requires dbt-core >= 1.11 (tracking dbt's own supported-version policy). Everything
   here, `--unit-tests` included, works with a plain `pip install model2data`.
 
@@ -246,6 +253,10 @@ model2data --file SCHEMA.dbml [OPTIONS]
 --hint-tests     TEXT      error, warn (default) or off: severity of the dbt tests written from
                            min/max, after, null_rate, distinct and grain hints
 --test-tolerance FLOAT     Absolute slack of the null_rate test (default 0.1)
+--defects        TEXT      clean (default), messy or training: break the data on purpose, so dbt
+                           tests are seen to fail; writes defects_report.json and
+                           EXPECTED_FAILURES.md into the project. none: ignore every defect,
+                           the model's own too
 ```
 
 For anything not covered here, see [README.md](README.md) — this file exists to make a schema

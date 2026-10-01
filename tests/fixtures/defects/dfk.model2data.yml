@@ -1,0 +1,16 @@
+model2data: 0.3.0
+name: dfk
+tables:
+  cal:
+    columns:
+      d: {type: date, pk: true}
+  ev:
+    columns:
+      id: {type: bigint, pk: true}
+      start_on: {type: date, not_null: true}
+      d: {type: date, not_null: true, references: cal.d, generate: {after: start_on}}
+    defects:
+      - {type: orphan_foreign_keys, column: d, count: 2}
+run:
+  rows: 10
+  seed: 5

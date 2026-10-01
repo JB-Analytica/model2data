@@ -15,6 +15,7 @@ The style is the reference example's (model2data/spec/examples/): a
   1.1 reader (`no`, `on`, `NO`), and then with double quotes.
 - A string ending in a newline is written as a folded (`>`) block when it is one
   line, and a literal (`|`) block when it is several.
+- A table's `defects` come after its keys, one defect a line as a flow mapping.
 
 `dump` writes by hand rather than through `yaml.dump`, which can do neither
 the mixed flow/block layout nor the quoting rule.
@@ -26,9 +27,14 @@ from collections.abc import Mapping
 from typing import Any, Optional
 
 from model2data.model._yaml import scalar
-from model2data.model.document import column_to_dict, incremental_to_dict, to_dict
+from model2data.model.document import (
+    column_to_dict,
+    defect_to_dict,
+    incremental_to_dict,
+    to_dict,
+)
 from model2data.model.types import Model
-from model2data.model.validate import SCHEMA_URL
+from model2data.model.validate import schema_url
 
 WIDTH = 100
 _INDENT = "  "
@@ -38,7 +44,7 @@ _SECTIONS = ("enums", "tables", "relationships", "groups", "run")
 def dump(model: Model) -> str:
     """The model as YAML text in the canonical style; `load(dump(m)) == m`."""
     document = to_dict(model)
-    lines = [f"# yaml-language-server: $schema={SCHEMA_URL}"]
+    lines = [f"# yaml-language-server: $schema={schema_url(document['model2data'])}"]
     for key in ("model2data", "name", "description"):
         if key in document:
             lines += _entry(key, document[key], 0)
@@ -102,6 +108,12 @@ def _tables(model: Model) -> list[str]:
                     entry["one_to_one"] = True
                 entries.append(entry)
             lines += _block_list(entries, 3, flow_items=False)
+        if table.defects:
+            # One defect a line, however short the list: the lines a studio toggles.
+            lines.append(f"{pad}defects:")
+            lines += _block_list([defect_to_dict(d) for d in table.defects], 3)
+        elif table.defects is not None:
+            lines.append(f"{pad}defects: []")
         for name, value in table.extensions.items():
             lines += _entry(name, value, 2)
     return lines

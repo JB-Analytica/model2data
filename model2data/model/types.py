@@ -1,4 +1,4 @@
-"""The model as typed values: what a spec 0.2.0 document says, read.
+"""The model as typed values: what a spec 0.3.0 (or 0.2.x) document says, read.
 
 Every class is a plain, comparable dataclass, so `load(dump(m)) == m` means
 what it says. A value left out of the document is the class default (`None`,
@@ -78,6 +78,39 @@ class Incremental:
     update_rate: Optional[float] = None
     changes: Optional[list[str]] = None
     updated_at: Optional[str] = None
+    # Keep every version of every row as `<table>_history` (spec 0.3.0).
+    history: bool = False
+
+
+DEFECT_TYPES: tuple[str, ...] = (
+    "duplicate_keys",
+    "orphan_foreign_keys",
+    "nulls",
+    "invalid_values",
+    "late_arriving",
+    "late_updates",
+    "messy_text",
+    "overlapping_history",
+)
+# `none` ignores every defect, the tables' own too; `clean` is the preset that adds none.
+DEFECT_PRESETS: tuple[str, ...] = ("clean", "messy", "training", "none")
+
+
+@dataclass
+class Defect:
+    """One deliberate defect in a table's generated rows (spec 0.3.0, "Defects").
+
+    `type` is one of `DEFECT_TYPES`. Exactly one of `count` (rows) and `share`
+    (a fraction of the table's rows) says how many rows it breaks. `column` is
+    the column it breaks; None for a type that has a default (the primary key
+    for `duplicate_keys`, the event-time column for `late_arriving`) or takes
+    none (`late_updates`).
+    """
+
+    type: str
+    column: Optional[str] = None
+    count: Optional[int] = None
+    share: Optional[float] = None
 
 
 @dataclass
@@ -90,6 +123,9 @@ class Table:
     incremental: Optional[Incremental] = None
     keys: list[Key] = field(default_factory=list)
     foreign_keys: list[ForeignKey] = field(default_factory=list)
+    # None when the document has no `defects`; an empty list keeps the table
+    # clean under a run's defects preset.
+    defects: Optional[list[Defect]] = None
     extensions: dict[str, Any] = field(default_factory=dict)
 
     def primary_key(self) -> list[str]:
@@ -142,6 +178,8 @@ class Run:
     as_of: Optional[str] = None
     locale: Optional[str] = None
     shape: Optional[Shape] = None
+    # A defects preset (`DEFECT_PRESETS`); spec 0.3.0.
+    defects: Optional[str] = None
 
 
 @dataclass

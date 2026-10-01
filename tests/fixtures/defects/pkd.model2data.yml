@@ -1,0 +1,32 @@
+model2data: 0.3.0
+name: pkd
+tables:
+  cal:
+    columns:
+      d: {type: date, pk: true}
+      label: varchar
+    defects:
+      - {type: duplicate_keys, count: 2}
+  u:
+    columns:
+      id: {type: uuid, pk: true}
+      price: {type: "decimal(10,2)", unique: true, not_null: true}
+      flag: {type: boolean, not_null: true}
+    defects:
+      - {type: duplicate_keys, count: 2}
+      - {type: duplicate_keys, column: price, count: 2}
+      - {type: nulls, column: flag, count: 2}
+  c:
+    columns:
+      u_id: {type: uuid, not_null: true, references: u.id}
+      d: {type: date, not_null: true, references: cal.d}
+      amount: {type: float, not_null: true}
+    keys:
+      - {pk: [u_id, d]}
+    defects:
+      - {type: orphan_foreign_keys, column: u_id, count: 2}
+      - {type: orphan_foreign_keys, column: d, count: 2}
+      - {type: duplicate_keys, count: 2}
+run:
+  rows: 8
+  seed: 2
