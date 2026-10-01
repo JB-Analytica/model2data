@@ -9,9 +9,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
     - name: Install uv
-      uses: astral-sh/setup-uv@v4
+      uses: astral-sh/setup-uv@7e7c3cb9c1c89b4a3e8c1f4fec50b7b24d4fa10e # v4.1.0
       with:
         enable-cache: true
     - name: Set up Python
@@ -19,6 +19,6 @@ jobs:
     - name: Build package
       run: uv build
     - name: Publish package
-      uses: pypa/gh-action-pypi-publish@release/v1
+      uses: pypa/gh-action-pypi-publish@f7600683efdcb7656dec5b29656edb7bc586e597 # release/v1
       with:
         password: ${{ secrets.PYPI_API_TOKEN }}

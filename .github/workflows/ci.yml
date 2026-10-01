@@ -10,9 +10,9 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
     - name: Install uv
-      uses: astral-sh/setup-uv@v4
+      uses: astral-sh/setup-uv@7e7c3cb9c1c89b4a3e8c1f4fec50b7b24d4fa10e # v4.1.0
       with:
         enable-cache: true
     - name: Set up Python
@@ -33,9 +33,9 @@ jobs:
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
     - name: Install uv
-      uses: astral-sh/setup-uv@v4
+      uses: astral-sh/setup-uv@7e7c3cb9c1c89b4a3e8c1f4fec50b7b24d4fa10e # v4.1.0
       with:
         enable-cache: true
     - name: Set up Python ${{ matrix.python-version }}
@@ -45,7 +45,7 @@ jobs:
     - name: Run tests
       run: uv run pytest --cov=model2data --cov-report=xml
     - name: Upload coverage reports to Codecov
-      uses: codecov/codecov-action@v5
+      uses: codecov/codecov-action@015f24e6818733317a2da2edd6290ab26238649a # v5.0.7
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
 
@@ -63,9 +63,9 @@ jobs:
         dbt-version: ["floor", "latest"]
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
     - name: Install uv
-      uses: astral-sh/setup-uv@v4
+      uses: astral-sh/setup-uv@7e7c3cb9c1c89b4a3e8c1f4fec50b7b24d4fa10e # v4.1.0
       with:
         enable-cache: true
     - name: Set up Python
@@ -84,58 +84,58 @@ jobs:
       working-directory: dbt_floor_ci
       run: uv run dbt build --profiles-dir .
 
-  postgres-integration:
+  ****-integration:
     runs-on: ubuntu-latest
     services:
-      postgres:
-        image: postgres:16
+      ****:
+        image: ****:16
         env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: postgres
+          POSTGRES_USER: ****
+          POSTGRES_PASSWORD: ****
+          POSTGRES_DB: ****
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U postgres"
+          --health-cmd "pg_isready -U ****"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
     - name: Install uv
-      uses: astral-sh/setup-uv@v4
+      uses: astral-sh/setup-uv@7e7c3cb9c1c89b4a3e8c1f4fec50b7b24d4fa10e # v4.1.0
       with:
         enable-cache: true
     - name: Set up Python
       run: uv python install 3.12
     - name: Install dependencies
-      run: uv sync --extra dev --extra postgres
+      run: uv sync --extra dev --extra ****
     - name: Generate a project targeting Postgres
       run: >
         uv run model2data --file examples/hackernews.dbml --rows 50 --seed 1
-        --adapter postgres --name pg_ci
+        --adapter **** --name pg_ci
       env:
         MODEL2DATA_PG_HOST: localhost
         MODEL2DATA_PG_PORT: "5432"
-        MODEL2DATA_PG_USER: postgres
-        MODEL2DATA_PG_PASSWORD: postgres
-        MODEL2DATA_PG_DATABASE: postgres
+        MODEL2DATA_PG_USER: ****
+        MODEL2DATA_PG_PASSWORD: ****
+        MODEL2DATA_PG_DATABASE: ****
     - name: dbt seed
       working-directory: dbt_pg_ci
       run: uv run dbt seed --profiles-dir .
       env:
         MODEL2DATA_PG_HOST: localhost
         MODEL2DATA_PG_PORT: "5432"
-        MODEL2DATA_PG_USER: postgres
-        MODEL2DATA_PG_PASSWORD: postgres
-        MODEL2DATA_PG_DATABASE: postgres
+        MODEL2DATA_PG_USER: ****
+        MODEL2DATA_PG_PASSWORD: ****
+        MODEL2DATA_PG_DATABASE: ****
     - name: dbt run
       working-directory: dbt_pg_ci
       run: uv run dbt run --profiles-dir .
       env:
         MODEL2DATA_PG_HOST: localhost
         MODEL2DATA_PG_PORT: "5432"
-        MODEL2DATA_PG_USER: postgres
-        MODEL2DATA_PG_PASSWORD: postgres
-        MODEL2DATA_PG_DATABASE: postgres
+        MODEL2DATA_PG_USER: ****
+        MODEL2DATA_PG_PASSWORD: ****
+        MODEL2DATA_PG_DATABASE: ****
