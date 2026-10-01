@@ -283,3 +283,20 @@ def test_an_undone_row_without_days():
     outcome = _Outcome("x", [0, 1], [_Patch(0, "x", None, 0), _Patch(1, "x", "b", 0)])
     _recount(Defect("nulls", column="x", count=2), outcome, frame)
     assert outcome.positions == [1] and outcome.days is None
+
+
+def test_late_rows_a_later_defect_makes_on_time_are_not_counted():
+    model = load(SHOP)
+    days = generate_days(model, 3, seed=11, as_of=AS_OF)
+    plan = {
+        "orders": [
+            Defect("late_arriving", count=3),
+            # Nulls every other updated_at, so nothing loaded before is later than these.
+            Defect("nulls", column="updated_at", count=10_000),
+        ]
+    }
+    _, report = apply_defects(model, days, plan, seed=11)
+    late = report.defects[0]
+    assert late.applied < 3
+    assert "no longer before the cutoff once the table's other defects are in" in late.note
+    assert len(late.rows) == len(late.days or []) == late.applied

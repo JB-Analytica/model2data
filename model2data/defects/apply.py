@@ -36,8 +36,10 @@ inserted or updated. The late kinds need days:
 
 - `late_arriving` takes rows inserted on a later day (and not updated since)
   and moves every date and timestamp of the row back by whole days, until its
-  event-time column is before the previous load's cutoff: the largest value
-  that column held at the end of the day before.
+  event-time column is before the previous load's cutoff: the latest value of
+  that column in every file delivered before the row's day, defects included
+  (rows moved back on earlier days lower it). A row a later defect puts back
+  on time is not counted.
 - `late_updates` takes rows whose last version is an update on a later day, and
   sets their `updated_at` back to the previous version's: the values changed,
   the timestamp did not move.
@@ -125,6 +127,7 @@ class _Table:
         if results is not None and key not in results[0].tables:
             results = None  # a table the days do not hold: a history table
         self.days = len(results) - 1 if results else 0
+        self.results = results or []
         self.states = [r.tables[key].state for r in results] if results else [self.frame]
         self.inserted_day = [0] * rows
         self.last_day = [0] * rows
@@ -180,16 +183,35 @@ class _Table:
             self.claimed.setdefault(column, set()).add(position)
         self.patches.extend(outcome.patches)
 
-    def column_on(self, day: int, column: str) -> list[Any]:
-        """`column` as it stood at the end of `day`, with the defects broken by then.
+    def loaded_max(self, day: int, column: str, patches: Sequence[_Patch] = ()) -> Any:
+        """The latest `column` a loader has seen after loading the files of days 0 to `day`.
 
-        What a loader saw: an earlier defect's cells from the day they arrived on.
+        Every version each day's file delivered (the first day's whole state, a later
+        day's inserted and updated rows), with the cells defects broke as the files
+        hold them: a patch from its `since` day on. `patches` are this table's
+        defects' cells beside those already claimed. None when nothing was loaded.
         """
-        values = self.states[day][column].tolist()
-        for patch in self.patches:
-            if patch.column == column and patch.since <= day and patch.position < len(values):
-                values[patch.position] = patch.value
-        return values
+        broken: dict[int, list[_Patch]] = {}
+        for patch in [*self.patches, *patches]:
+            if patch.column == column:
+                broken.setdefault(patch.position, []).append(patch)
+        latest = None
+        for result in self.results[: day + 1]:
+            table_day = result.tables[self.key]
+            delivered = table_day.state if result.day == 0 else table_day.inserted
+            start = 0 if result.day == 0 else len(self.states[result.day - 1])
+            rows = [
+                *zip(range(start, start + len(delivered)), delivered[column].tolist(), strict=True),
+                *zip(table_day.updated_positions, table_day.updated[column].tolist(), strict=True),
+            ]
+            for position, value in rows:
+                for patch in broken.get(position, []):
+                    if patch.since <= result.day:
+                        value = patch.value
+                if _present(value):
+                    moment = _moment(value)
+                    latest = moment if latest is None or moment > latest else latest
+        return latest
 
     def present(self, column: str) -> list[int]:
         return [p for p, value in enumerate(self.frame[column].tolist()) if _present(value)]
@@ -498,12 +520,11 @@ def _late_arriving(table: _Table, defect: Defect, rng: random.Random, count: int
     candidates = table.free(candidates, temporal)
     chosen = _choose(rng, candidates, count, set())
     patches: list[_Patch] = []
-    days = []
-    for position in chosen:
+    # Earliest day first: a row moved back lowers what the loader has seen on later days.
+    for position in sorted(chosen, key=lambda p: (table.inserted_day[p], p)):
         day = table.inserted_day[position]
-        before = [_moment(v) for v in table.column_on(day - 1, name) if _present(v)]
+        cutoff = table.loaded_max(day - 1, name, patches)
         moment = _moment(values[position])
-        cutoff = max(before, default=None)
         back = 1
         while cutoff is not None and moment - timedelta(days=back) >= cutoff:
             back += 1
@@ -511,7 +532,7 @@ def _late_arriving(table: _Table, defect: Defect, rng: random.Random, count: int
             value = table.frame[column].iloc[position]
             if _present(value):
                 patches.append(_Patch(position, column, _shift(value, -back), day))
-        days.append(day)
+    days = [table.inserted_day[position] for position in chosen]
     note = _join(
         _short(
             count,
@@ -781,6 +802,8 @@ def break_tables(
             broken[key] = _patched(clean[key], patches)
     for key, defect, _, outcome in applied:
         _recount(defect, outcome, broken.get(key))
+        if defect.type == "late_arriving" and key in tables:
+            _still_late(tables[key], outcome)
 
     report = _report(inputs, clean, broken, applied, names, hint_tests, test_tolerance)
     report.seed = seed
@@ -931,6 +954,33 @@ def _recount(defect: Defect, outcome: _Outcome, frame: Optional[pd.DataFrame]) -
             outcome.days = [day for position, day in pairs if position in keep]
         outcome.positions = held
         outcome.note = _join(outcome.note, f"{undone} of its rows were undone by a later defect")
+
+
+def _still_late(table: _Table, outcome: _Outcome) -> None:
+    """Keep only the late rows still before the cutoff once every defect of the table is in.
+
+    A later defect (nulls in the event column, say) can lower what the loader
+    saw before a row's day; a row no longer before it is not late, and is not
+    reported as late.
+    """
+    column = str(outcome.column)
+    final = {p.position: p.value for p in outcome.patches if p.column == column}
+    late = []
+    for position, day in zip(outcome.positions, outcome.days or [], strict=True):
+        cutoff = table.loaded_max(day - 1, column)
+        if cutoff is not None and _moment(final[position]) < cutoff:
+            late.append(position)
+    undone = len(outcome.positions) - len(late)
+    if undone:
+        keep = set(late)
+        pairs = zip(outcome.positions, outcome.days or [], strict=True)
+        outcome.days = [day for position, day in pairs if position in keep]
+        outcome.positions = late
+        outcome.note = _join(
+            outcome.note,
+            f"{undone} of its rows are no longer before the cutoff once the table's other "
+            "defects are in, and are not counted",
+        )
 
 
 def _applied(
