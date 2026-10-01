@@ -1,0 +1,44 @@
+name: model2data validate
+description: Validate model2data models (*.model2data.yml) in a repository, with inline annotations on pull requests.
+author: JB Analytica
+branding:
+  icon: check-circle
+  color: blue
+
+inputs:
+  files:
+    description: Recursive glob of model files to validate, relative to the workspace.
+    required: false
+    default: "**/*.model2data.yml"
+  version:
+    description: >-
+      The model2data engine version to install: a bare version such as `1.10.0`, or a full
+      requirement specifier such as `>=1.9,<2`.
+    required: false
+    default: "1.10.0"
+  python-version:
+    description: The Python version to run model2data with.
+    required: false
+    default: "3.12"
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+    - name: Install model2data
+      shell: bash
+      env:
+        M2D_VERSION: ${{ inputs.version }}
+      run: |
+        case "$M2D_VERSION" in
+          [0-9]*) spec="==${M2D_VERSION}" ;;
+          *) spec="${M2D_VERSION}" ;;
+        esac
+        python -m pip install "model2data${spec}"
+    - name: Validate models
+      shell: bash
+      env:
+        M2D_FILES: ${{ inputs.files }}
+      run: model2data validate --glob "$M2D_FILES" --format github

@@ -196,15 +196,16 @@ def _read_model(file: Path) -> Model:
     return model
 
 
-def _print_issues(file: Path, issues: list[Issue]) -> None:
+def _print_issues(file: Path, issues: list[Issue], label: Optional[str] = None) -> None:
     """Errors, then warnings, each with its document path."""
+    label = label or file.name
     errors = [issue for issue in issues if issue.is_error]
     warnings = [issue for issue in issues if not issue.is_error]
     for marker, group, word in (("❌", errors, "error"), ("⚠️ ", warnings, "warning")):
         if not group:
             continue
         count = f"1 {word}" if len(group) == 1 else f"{len(group)} {word}s"
-        typer.echo(f"{marker} {file.name}: {count}")
+        typer.echo(f"{marker} {label}: {count}")
         for issue in group:
             text = str(issue).removeprefix("warning: ").replace("\n", "\n      ")
             typer.echo(f"  - {text}")
@@ -756,26 +757,98 @@ def _print_defects(report: DefectsReport) -> None:
         typer.echo(f"    - {failure.test}{warn}")
 
 
+_SKIPPED_DIRS = {".git", ".venv", "node_modules"}
+
+
+def _expand_globs(patterns: list[str]) -> list[Path]:
+    """Files matching recursive glob patterns relative to the cwd, sorted, without duplicates."""
+    found: dict[Path, None] = {}
+    for pattern in patterns:
+        for match in sorted(Path.cwd().glob(pattern)):
+            relative = match.relative_to(Path.cwd())
+            if match.is_file() and not _SKIPPED_DIRS.intersection(relative.parts):
+                found[relative] = None
+    return list(found)
+
+
+def _github_escape(text: str, *, prop: bool = False) -> str:
+    """Escape a workflow-command message (or property value) the way GitHub expects."""
+    text = text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+    return text.replace(":", "%3A").replace(",", "%2C") if prop else text
+
+
+def _print_github_issues(file: Path, issues: list[Issue]) -> None:
+    """One `::error` / `::warning` annotation per issue, shown inline on a pull request."""
+    for issue in issues:
+        level = "error" if issue.is_error else "warning"
+        where = f"file={_github_escape(file.as_posix(), prop=True)}"
+        if issue.line:
+            where += f",line={issue.line}"
+        text = f"{issue.path}: {issue.message}" if issue.path else issue.message
+        typer.echo(f"::{level} {where}::{_github_escape(text)}")
+
+
 @app.command("validate")
 def validate_command(
-    file: Path = typer.Argument(  # noqa: B008
-        ...,
+    files: Optional[list[Path]] = typer.Argument(  # noqa: B008
+        None,
         exists=True,
         file_okay=True,
         dir_okay=False,
         readable=True,
-        help="The model: a .model2data.yml / .yaml / .json document, or a .dbml file.",
+        help="The models: .model2data.yml / .yaml / .json documents, or .dbml files.",
+    ),
+    glob: Optional[list[str]] = typer.Option(  # noqa: B008
+        None,
+        "--glob",
+        help=(
+            "A recursive glob relative to the current directory, e.g. '**/*.model2data.yml'. "
+            "Repeatable; expands without the shell, so CI needs no globstar."
+        ),
+    ),
+    output_format: str = typer.Option(
+        "text",
+        "--format",
+        help="'text' (default) or 'github' for ::error / ::warning annotations on a pull request.",
+    ),
+    require_files: bool = typer.Option(
+        False, "--require-files", help="Exit 1 when no model file was given or matched."
     ),
 ):
-    """Check that a model conforms to spec 0.3.0 (or 0.2.x), printing every issue with its path.
+    """Check that models conform to spec 0.3.0 (or 0.2.x), printing every issue with its path.
 
-    Exits 1 when there is an error; warnings are printed, and the model conforms.
+    Takes one or more files and/or --glob patterns. Exits 1 when any file has an error;
+    warnings are printed, and the model conforms.
     """
-    issues = validate(file)
-    _print_issues(file, issues)
-    if any(issue.is_error for issue in issues):
+    if output_format not in ("text", "github"):
+        raise typer.BadParameter("must be 'text' or 'github'", param_hint="--format")
+    targets = list(files or [])
+    if glob:
+        targets += [path for path in _expand_globs(glob) if path not in targets]
+    if not targets:
+        typer.echo("no model files matched")
+        raise typer.Exit(1 if require_files else 0)
+
+    failed = 0
+    for file in targets:
+        issues = validate(file)
+        if output_format == "github":
+            _print_github_issues(file, issues)
+        else:
+            _print_issues(file, issues, label=str(file) if len(targets) > 1 else file.name)
+        if any(issue.is_error for issue in issues):
+            failed += 1
+        elif output_format == "text":
+            typer.echo(
+                f"✅ {file if len(targets) > 1 else file.name} conforms to spec {_spec_of(file)}."
+            )
+    if len(targets) > 1 or output_format == "github":
+        checked = f"{len(targets)} model file{'s' if len(targets) != 1 else ''}"
+        typer.echo(
+            f"❌ {failed} of {checked} do not conform." if failed else f"✅ {checked} conform."
+        )
+    if failed:
         raise typer.Exit(1)
-    typer.echo(f"✅ {file.name} conforms to spec {_spec_of(file)}.")
 
 
 @app.command("convert")
