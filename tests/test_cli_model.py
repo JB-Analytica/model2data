@@ -246,3 +246,95 @@ def test_help_lists_the_commands():
     assert result.exit_code == 0
     for command in ("generate", "validate", "convert"):
         assert command in result.output
+
+
+# ---------------------------------------------------------------------------
+# validate: several files, --glob, --format github, and the CI integration files
+# ---------------------------------------------------------------------------
+def _broken(tmp_path, name="bad.model2data.yml"):
+    return _write(tmp_path, name, MODEL.replace("rows: 12", "rows: 0"))
+
+
+def test_validate_several_files_all_valid(tmp_path):
+    a = _write(tmp_path, "a.model2data.yml", MODEL)
+    b = _write(tmp_path, "b.model2data.yml", MODEL)
+    result = runner.invoke(app, ["validate", str(a), str(b)])
+    assert result.exit_code == 0, result.output
+    assert f"✅ {a} conforms to spec 0.2.0." in result.output
+    assert "✅ 2 model files conform." in result.output
+
+
+def test_validate_several_files_one_invalid_exits_1_with_path_prefixed_issues(tmp_path):
+    good = _write(tmp_path, "good.model2data.yml", MODEL)
+    bad = _broken(tmp_path)
+    result = runner.invoke(app, ["validate", str(good), str(bad)])
+    assert result.exit_code == 1
+    assert f"❌ {bad}: 1 error" in result.output
+    assert "  - run.rows: must be 1 or more (got 0)" in result.output
+    assert "❌ 1 of 2 model files do not conform." in result.output
+
+
+def test_validate_glob_matches_nested_files(tmp_path, monkeypatch):
+    (tmp_path / "deep" / "er").mkdir(parents=True)
+    _write(tmp_path, "top.model2data.yml", MODEL)
+    _write(tmp_path / "deep" / "er", "nested.model2data.yml", MODEL)
+    (tmp_path / "node_modules").mkdir()
+    _write(tmp_path / "node_modules", "skipped.model2data.yml", MODEL)
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(app, ["validate", "--glob", "**/*.model2data.yml"])
+    assert result.exit_code == 0, result.output
+    assert "top.model2data.yml" in result.output
+    assert "nested.model2data.yml" in result.output
+    assert "skipped" not in result.output
+    assert "2 model files conform" in result.output
+
+
+def test_validate_glob_with_no_match_is_a_note_unless_files_are_required(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(app, ["validate", "--glob", "**/*.model2data.yml"])
+    assert result.exit_code == 0
+    assert "no model files matched" in result.output
+    required = runner.invoke(app, ["validate", "--glob", "**/*.model2data.yml", "--require-files"])
+    assert required.exit_code == 1
+    assert "no model files matched" in required.output
+
+
+def test_validate_format_github_prints_annotations(tmp_path, monkeypatch):
+    _broken(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(app, ["validate", "bad.model2data.yml", "--format", "github"])
+    assert result.exit_code == 1
+    assert "::error file=bad.model2data.yml::run.rows: must be 1 or more (got 0)" in result.output
+    yaml_error = _write(tmp_path, "dup.model2data.yml", MODEL + "name: again\n")
+    result = runner.invoke(app, ["validate", yaml_error.name, "--format", "github"])
+    assert "::error file=dup.model2data.yml,line=25::" in result.output
+
+
+def test_validate_format_github_prints_warnings_and_exits_0():
+    result = runner.invoke(
+        app, ["validate", str(EXAMPLES / "hackernews.dbml"), "--format", "github"]
+    )
+    assert result.exit_code == 0
+    assert "::warning file=" in result.output
+
+
+def test_validate_rejects_an_unknown_format(tmp_path):
+    model = _write(tmp_path, "m.model2data.yml", MODEL)
+    assert runner.invoke(app, ["validate", str(model), "--format", "xml"]).exit_code != 0
+
+
+def test_ci_integration_files_run_the_validate_command():
+    import yaml
+
+    root = Path(__file__).resolve().parent.parent
+    action = yaml.safe_load((root / "action.yml").read_text())
+    assert action["runs"]["using"] == "composite"
+    assert set(action["inputs"]) == {"files", "version", "python-version"}
+    steps = " ".join(str(step.get("run", "")) for step in action["runs"]["steps"])
+    assert "model2data validate --glob" in steps
+    assert "--format github" in steps
+    hooks = yaml.safe_load((root / ".pre-commit-hooks.yaml").read_text())
+    assert hooks[0]["id"] == "model2data-validate"
+    assert hooks[0]["entry"] == "model2data validate"
+    assert hooks[0]["language"] == "python"
+    assert hooks[0]["pass_filenames"] is True

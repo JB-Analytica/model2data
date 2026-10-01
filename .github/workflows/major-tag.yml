@@ -1,0 +1,29 @@
+name: Move major tag
+
+# Keeps the floating vX tag (`uses: JB-Analytica/model2data@v1`) on the newest vX.Y.Z release.
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  major-tag:
+    if: ${{ !github.event.release.prerelease && !github.event.release.draft }}
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: ${{ github.event.release.tag_name }}
+    - name: Move the major tag
+      env:
+        TAG: ${{ github.event.release.tag_name }}
+      run: |
+        if [[ ! "$TAG" =~ ^v([0-9]+)\.[0-9]+\.[0-9]+$ ]]; then
+          echo "$TAG is not vX.Y.Z; leaving the major tag alone."
+          exit 0
+        fi
+        major="v${BASH_REMATCH[1]}"
+        git tag -f "$major" "$TAG"
+        git push -f origin "$major"

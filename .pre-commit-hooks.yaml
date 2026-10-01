@@ -1,0 +1,7 @@
+- id: model2data-validate
+  name: model2data validate
+  description: Check that model2data models conform to the spec.
+  entry: model2data validate
+  language: python
+  files: '\.model2data\.ya?ml$'
+  pass_filenames: true

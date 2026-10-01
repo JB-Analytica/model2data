@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-10-01
+
+### Added
+- **Checks in the repository.** `model2data validate` takes several files and `--glob`
+  patterns (`--glob "**/*.model2data.yml"`, expanded by model2data, no shell globstar needed),
+  prefixes each file's issues with its path, and exits 1 if any file has an error. `--format
+  github` prints issues as `::error` / `::warning` annotations so they show inline on a pull
+  request's Files tab; `--require-files` makes "no model files matched" an error instead of a
+  note. One file prints exactly what it did.
+- **A GitHub Action and a pre-commit hook.** `uses: JB-Analytica/model2data@v1` validates every
+  `*.model2data.yml` in a repository (`files`, `version` and `python-version` inputs), and
+  `.pre-commit-hooks.yaml` provides the `model2data-validate` hook. The floating `v1` tag is
+  moved to each new 1.x release by `.github/workflows/major-tag.yml`. The README shows both, and
+  a GitLab CI job.
+
 ## [1.9.0] - 2026-10-01
 
 ### Added

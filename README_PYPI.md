@@ -130,6 +130,12 @@ run:
 CLI option overrides the one it names. `model2data validate FILE` checks a model and prints every
 issue with its path in the document.
 
+**Validate models in CI.** `model2data validate a.model2data.yml b.model2data.yml` (or
+`--glob "**/*.model2data.yml"`, `--format github` for inline pull request annotations) exits 1
+when any model has an error. A GitHub Action (`uses: JB-Analytica/model2data@v1`), a pre-commit
+hook (`model2data-validate`) and a GitLab CI snippet are in the
+[README](https://github.com/JB-Analytica/model2data#validate-models-in-ci).
+
 **DBML is supported input.** `--file` also takes a `.dbml` file, converted to the same model
 before generating; a JSON note on a column (`[note: '{"min": 1}']`) becomes its `generate`, any
 other note its description. `model2data convert schema.dbml -o schema.model2data.yml` writes the
