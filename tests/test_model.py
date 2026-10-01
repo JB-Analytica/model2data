@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -350,7 +351,8 @@ def test_2_foreign_key_columns_pair_up():
         "are drawn from the ones it holds, but a parent of one row per value needs them to be "
         "its primary key, one of its keys, or a unique column",
     ]
-    assert [str(issue) for issue in validate(json.dumps(document))][1:] == [
+    # `validate` on text adds the line each issue sits on; `from_dict` has no text.
+    assert [str(replace(issue, line=None)) for issue in validate(json.dumps(document))][1:] == [
         str(issue) for issue in raised.value.warnings
     ]
 

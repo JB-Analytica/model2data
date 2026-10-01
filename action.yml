@@ -12,10 +12,10 @@ inputs:
     default: "**/*.model2data.yml"
   version:
     description: >-
-      The model2data engine version to install: a bare version such as `1.10.0`, or a full
+      The model2data engine version to install: a bare version such as `1.10.1`, or a full
       requirement specifier such as `>=1.9,<2`.
     required: false
-    default: "1.10.0"
+    default: "1.10.1"
   python-version:
     description: The Python version to run model2data with.
     required: false
@@ -24,7 +24,7 @@ inputs:
 runs:
   using: composite
   steps:
-    - uses: actions/setup-python@v5
+    - uses: actions/setup-python@v6
       with:
         python-version: ${{ inputs.python-version }}
     - name: Install model2data
