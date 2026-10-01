@@ -319,6 +319,7 @@ def test_changes_naming_a_key_is_invalid():
         (Incremental(changes=["colour"]), "names 'colour', not a column"),
         (Incremental(updated_at="nowhere"), "names 'nowhere', not a column"),
         (Incremental(updated_at="total_amount"), "'total_amount' is not temporal"),
+        (Incremental(updated_at="status"), "'status' is not temporal"),
     ],
 )
 def test_hand_built_incremental_inputs_are_checked(incremental, message):
@@ -334,6 +335,72 @@ def test_as_of_defaults_to_the_models_run():
     from_run = generate_days(from_dict(data), 2, base_rows=30, seed=7)
     given = generate_days(load(DAILY), 2, base_rows=30, seed=7, as_of=AS_OF)
     assert [_csv(d.state) for d in from_run] == [_csv(d.state) for d in given]
+
+
+EDGES = """\
+model2data: 0.2.0
+tables:
+  customers:
+    incremental: {new_per_day: 4, update_rate: 0.5, changes: [country, score]}
+    columns:
+      id: {type: bigint, pk: true}
+      country: {type: country, not_null: true}
+      score: {type: int, generate: {min: 1, max: 5, null_rate: 0.2}}
+      segment: {type: text, generate: {distinct: 3}}
+  orders:
+    incremental: {new_per_day: 6, update_rate: 0.5, changes: [parent_id, note_count]}
+    columns:
+      id: {type: bigint, pk: true}
+      customer_id: {type: bigint, not_null: true, references: customers.id}
+      customer_country: {type: country, references: customers.country}
+      parent_id: {type: bigint, references: orders.id}
+      note_count: {type: int, generate: {min: 0, max: 3, null_rate: 0.3}}
+      ticket: {type: int, unique: true, generate: {min: 1, max: 40}}
+      placed_at: {type: timestamp, not_null: true}
+      shipped_at: {type: timestamp, generate: {after: placed_at}}
+  slots:
+    incremental: {new_per_day: 10}
+    keys:
+      - pk: [day, hour]
+    columns:
+      day: {type: int, generate: {min: 1, max: 2}}
+      hour: {type: int, generate: {min: 1, max: 2}}
+  nobody:
+    columns:
+      id: {type: bigint, pk: true}
+  orphans:
+    incremental: {new_per_day: 3}
+    columns:
+      id: {type: bigint, pk: true}
+      nobody_id: {type: bigint, references: nobody.id}
+"""
+
+
+def test_the_days_hold_their_rules_at_the_edges():
+    days = generate_days(
+        load(EDGES),
+        3,
+        base_rows=8,
+        row_overrides={"nobody": 0, "slots": 3},
+        seed=2,
+        as_of=AS_OF,
+    )
+    last = days[-1].state
+    # A column referencing a parent's attribute mirrors it through the row's foreign key,
+    # The parent's value on the day the row is inserted, since `country` changes too.
+    for day in days[1:]:
+        countries = day.state["customers"].set_index("id")["country"]
+        inserted = day.tables["orders"].inserted
+        assert (inserted["customer_country"] == inserted["customer_id"].map(countries)).all()
+    # Self-references and the parent's keys resolve, and distinct holds across days.
+    assert last["orders"]["parent_id"].dropna().isin(set(last["orders"]["id"])).all()
+    assert last["customers"]["segment"].dropna().nunique() <= 3
+    # Four (day, hour) combinations cannot take ten new rows a day: said, not hidden.
+    assert all(any("slots (day, hour)" in w for w in d.warnings) for d in days[1:])
+    # No parent row to point at: the foreign key is null rather than dangling.
+    for day in days[1:]:
+        orphans = day.tables["orphans"].inserted
+        assert len(orphans) == 3 and orphans["nobody_id"].isna().all()
 
 
 def test_a_unique_foreign_key_runs_out_of_parents_and_says_so():
