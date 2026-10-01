@@ -7,6 +7,81 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-10-01
+
+### Added
+- **Data that breaks things on purpose: defects.** `model2data generate --defects
+  {clean,messy,training}` (or `run: {defects: ...}` in the model) puts deliberate, counted
+  defects in the generated data, so a dbt project's tests are seen to fire -- for teaching dbt, or
+  for proving a project's tests work. `training` breaks each kind of standard dbt test once
+  (`unique`, `not_null`, `relationships`, `accepted_values`), plus late-arriving rows and late
+  updates on a run of several days; `messy` puts a small share of every defect on every table;
+  `clean`, the default, is the data as before, byte for byte. A table lists its own under
+  `defects` (spec 0.3.0): `duplicate_keys`, `orphan_foreign_keys`, `nulls`, `invalid_values`,
+  `messy_text`, and with `--days`, `late_arriving` (rows inserted on a later day whose event time
+  is before the previous load's cutoff) and `late_updates` (updates whose `updated_at` is
+  backdated to the version they replace, which a `strategy: timestamp` snapshot misses). Each has a
+  `count` or a `share`; a table entry overrides the preset's of the same type and column, `count:
+  0` switches one off, and `defects: []` keeps a table clean.
+- **Every run with defects says what it broke.** `defects_report.json` and
+  `EXPECTED_FAILURES.md` in the project list every defect, the rows it broke (by primary key, or
+  row number), and the dbt tests that now fail, under the names dbt gives them. The list is
+  checked, not predicted: every test the project holds is run against the broken rows in Python,
+  so a test a defect breaks by the way (messy text pushing a `distinct` hint test over its count,
+  duplicates of a key that child rows point at) is named too, and the integration tests hold it to
+  a real `dbt build` on DuckDB, which fails exactly the tests the report names. A defect breaks
+  its own test and nothing else where it can: duplicates and nulls take rows no child points at,
+  messy text never makes a value the column already holds, and two defects never take one cell.
+- Defects are applied after the clean data is generated, from a random stream of their own
+  (seed, table, type, column): the same seed, model and defects give the same bytes, and a defect
+  on one table moves nothing in another. On a run of several days they are applied to the state
+  the dbt seeds load, and the day files are rewritten to match (a key from the day its row was
+  inserted, any other value from the day its row was last delivered).
+- **`model2data.defects`**, for callers that compose the steps themselves (the studio):
+  `preset_defects(model, preset, days=)` and `planned_defects(model, preset=None, days=)` say what
+  a run will break before anything is generated; `apply_defects(model, frames_or_days, plan,
+  seed=, preset=, hint_tests=, test_tolerance=, names=)` returns the broken data and a
+  `DefectsReport` (without history tables; `finish_run` below builds those too);
+  `write_defects_report` and `write_expected_failures` write the two files.
+- **The report names rows twice:** `rows` are the primary-key values as the output holds them
+  (null where a defect nulled the key), and `row_numbers` the 1-based rows of the seed CSV, which
+  stay unambiguous where a duplicated key does not. A defect never takes a cell another one
+  broke or relies on (a duplicate's source key included), and `applied` counts what the output
+  still holds broken. Orphans are of the column's kind (a date past the parent's latest, a UUID,
+  an integer that stays 32-bit when the column is); a note says when a test already failing
+  without defects cannot show a defect, when a defect meant for no test breaks one, and when a
+  column is an SQL keyword the generated tests write unquoted.
+- **`model2data.dbt.tests.dbt_tests(tables, refs, hint_tests=, test_tolerance=)`** lists every
+  data test `generate_dbt_yml` writes, under the name dbt gives it, built from the same entries
+  as the YAML. `model2data.dbt.naming` holds the table-key-to-dbt-name rules the CLI used.
+- **A source that keeps its history (SCD type 2): `incremental.history: true`** (spec 0.3.0)
+  writes `<table>_history` beside the table: every version of every row over the generated days,
+  with `valid_from` (the version's `updated_at`, else the start of its day), `valid_to` (null for
+  the current version) and `is_current`. The project tests it with two package-free generic tests,
+  `model2data_one_current_row` and `model2data_no_overlapping_ranges`, in
+  `macros/model2data_history_tests.sql`, written only when a table keeps its history. The history
+  is built from the clean days; the `overlapping_history` defect breaks it (a version still valid
+  an hour after the next one began), failing only the overlap test. `training` and `messy` add it
+  on a run of several days. `model2data.generate.history` has `history_tables` and
+  `history_frames(model, days)`.
+- **`--defects none`** (and `run: {defects: none}`) ignores every defect, the tables' own too:
+  the clean data of a model that lists defects, without editing it.
+- **`model2data.output.finish_run(model, days_or_frames, plan, seed=, preset=, as_of=,
+  hint_tests=, test_tolerance=, names=)`** does everything between generating and writing the
+  dbt project -- the history tables, then the defects -- and returns a `RunOutput` (`tables`,
+  `refs`, `frames`, `days`, `report`). The CLI calls it; the studio can too, after
+  `generate_days`.
+- `TableDay.updated_positions`: where each updated row of a day sits in the table's state.
+- `examples/ecommerce_training.model2data.yml`: the training preset on the daily store, with
+  orders keeping their history.
+
+### Changed
+- **Spec 0.3.0.** It adds `defects` on a table, `run.defects` and `incremental.history`, and
+  nothing else: a 0.2 document reads as it did, and is written back as 0.2.0, pointing at the
+  0.2.0 schema. A document that uses them says `model2data: 0.3.0` (`dump` writes 0.3.0 once a
+  0.2 model is given one); either in a document that says 0.2 is an error. The packaged schema's `$id`
+  is `.../spec/0.3.0/model.schema.json`; it still validates 0.2 documents.
+
 ## [1.8.0] - 2026-10-01
 
 ### Added

@@ -1,6 +1,7 @@
 import datetime
 import re
 from collections import defaultdict
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional, Union
 
@@ -65,36 +66,12 @@ def generate_dbt_yml(
     staging_path = dest / "models" / "staging"
     staging_path.mkdir(parents=True, exist_ok=True)
 
-    if hint_tests not in ("error", "warn", "off"):
-        raise ValueError(f"hint_tests must be error, warn or off, not {hint_tests!r}")
-    hinted: dict[tuple[str, Optional[str]], list[HintTest]] = defaultdict(list)
-    if hint_tests != "off":
-        for hint_test in hint_tests_for(tables, tolerance=test_tolerance):
-            hinted[(hint_test.table, hint_test.column)].append(hint_test)
-        if hinted:
-            write_hint_macros(dest)
-
-    # -------------------------
-    # Build foreign key map
-    # -------------------------
-    # Only emit a `relationships` test for refs the generator actually makes
-    # FK-aware: direct FK refs (target column is a pk/"id"), plus attribute
-    # refs that ride along an existing FK between the same two tables (see
-    # generate.core's attribute-mirroring pass). An attribute ref with no
-    # accompanying FK is left as unrelated random data by the generator, so
-    # testing it against the parent table would be a guaranteed false
-    # failure.
-    fk_refs_classified, attribute_refs_classified = classify_refs(tables, refs)
-    fk_table_pairs = {(fk["source_table"], fk["target_table"]) for fk in fk_refs_classified}
-    eligible_refs = list(fk_refs_classified) + [
-        ref
-        for ref in attribute_refs_classified
-        if (ref["source_table"], ref["target_table"]) in fk_table_pairs
-    ]
-
-    fk_map = defaultdict(list)
-    for ref in eligible_refs:
-        fk_map[(ref["source_table"], ref["source_column"])].append(ref)
+    hinted = _hinted(tables, hint_tests, test_tolerance)
+    if hinted:
+        write_hint_macros(dest)
+    if any(_history_entries(table) for table in tables.values()):
+        write_history_macros(dest)
+    fk_map = _fk_map(tables, refs)
 
     # -------------------------
     # Generate individual staging model YAMLs
@@ -104,30 +81,7 @@ def generate_dbt_yml(
         model_columns = []
 
         for col in table.columns:
-            tests: list[Union[str, dict[str, dict[str, Any]]]] = []
-            settings = col.settings or set()
-
-            if "not null" in settings or "pk" in settings:
-                tests.append("not_null")
-            if "unique" in settings or "pk" in settings:
-                tests.append("unique")
-            if getattr(col, "enum_values", None):
-                tests.append(_generic_test("accepted_values", {"values": list(col.enum_values)}))
-
-            fk_refs = fk_map.get((table.name, col.name), [])
-            for fk in fk_refs:
-                tests.append(
-                    _generic_test(
-                        "relationships",
-                        {
-                            "to": f"ref('stg_{fk['target_table']}')",
-                            "field": _dbt_column_ref(fk["target_column"]),
-                        },
-                    )
-                )
-
-            tests.extend(t.to_dbt(hint_tests) for t in hinted.get((table.name, col.name), []))
-
+            tests = _column_entries(table, col, fk_map, hinted, hint_tests)
             col_doc: dict[str, Any] = {"name": _dbt_column_ref(col.name)}
             description = getattr(col, "description", None)
             if description:
@@ -138,6 +92,7 @@ def generate_dbt_yml(
 
         model_entry: dict[str, Any] = {"name": stg_name, "columns": model_columns}
         table_tests = [t.to_dbt(hint_tests) for t in hinted.get((table.name, None), [])]
+        table_tests += _history_entries(table)
         if table_tests:
             model_entry["tests"] = table_tests
         model_doc = {"version": 2, "models": [model_entry]}
@@ -155,6 +110,243 @@ def generate_dbt_yml(
     # Seed descriptions + column-type overrides
     # -------------------------
     _generate_seed_properties(dest, tables)
+
+
+def _hinted(
+    tables: dict, hint_tests: str, test_tolerance: float
+) -> dict[tuple[str, Optional[str]], list[HintTest]]:
+    """The hint tests by (table, column), column None for a table-level one; none for `off`."""
+    if hint_tests not in ("error", "warn", "off"):
+        raise ValueError(f"hint_tests must be error, warn or off, not {hint_tests!r}")
+    hinted: dict[tuple[str, Optional[str]], list[HintTest]] = defaultdict(list)
+    if hint_tests != "off":
+        for hint_test in hint_tests_for(tables, tolerance=test_tolerance):
+            hinted[(hint_test.table, hint_test.column)].append(hint_test)
+    return hinted
+
+
+def _fk_map(tables: dict, refs: list[dict]) -> dict[tuple[str, str], list[dict]]:
+    """The refs that get a `relationships` test, by (child table, child column).
+
+    Only refs the generator actually makes FK-aware: direct FK refs (target
+    column is a pk/"id"), plus attribute refs that ride along an existing FK
+    between the same two tables (see generate.core's attribute-mirroring
+    pass). An attribute ref with no accompanying FK is left as unrelated random
+    data by the generator, so testing it against the parent table would be a
+    guaranteed false failure.
+    """
+    fk_refs_classified, attribute_refs_classified = classify_refs(tables, refs)
+    fk_table_pairs = {(fk["source_table"], fk["target_table"]) for fk in fk_refs_classified}
+    eligible_refs = list(fk_refs_classified) + [
+        ref
+        for ref in attribute_refs_classified
+        if (ref["source_table"], ref["target_table"]) in fk_table_pairs
+    ]
+    fk_map: dict[tuple[str, str], list[dict]] = defaultdict(list)
+    for ref in eligible_refs:
+        fk_map[(ref["source_table"], ref["source_column"])].append(ref)
+    return fk_map
+
+
+def _column_entries(
+    table: Any,
+    col: Any,
+    fk_map: dict[tuple[str, str], list[dict]],
+    hinted: dict[tuple[str, Optional[str]], list[HintTest]],
+    hint_tests: str,
+) -> list[Union[str, dict[str, dict[str, Any]]]]:
+    """The `tests:` entries of one column of a staging model's schema YAML."""
+    tests: list[Union[str, dict[str, dict[str, Any]]]] = []
+    settings = col.settings or set()
+
+    if "not null" in settings or "pk" in settings:
+        tests.append("not_null")
+    if "unique" in settings or "pk" in settings:
+        tests.append("unique")
+    if getattr(col, "enum_values", None):
+        tests.append(_generic_test("accepted_values", {"values": list(col.enum_values)}))
+
+    for fk in fk_map.get((table.name, col.name), []):
+        tests.append(
+            _generic_test(
+                "relationships",
+                {
+                    "to": f"ref('stg_{fk['target_table']}')",
+                    "field": _dbt_column_ref(fk["target_column"]),
+                },
+            )
+        )
+
+    tests.extend(t.to_dbt(hint_tests) for t in hinted.get((table.name, col.name), []))
+    return tests
+
+
+@dataclass(frozen=True)
+class DbtTest:
+    """One data test `generate_dbt_yml` writes, under the name dbt gives it.
+
+    `name` is the test's node name: what `dbt build` prints and `run_results.json`
+    holds. `table` is the table's name in the tables given (the dbt seed name the
+    CLI uses), `column` the raw column name, None for a table-level test. `type`
+    is the generic test (`not_null`, `unique`, `accepted_values`,
+    `relationships`, a `model2data_*` hint test) or `unique_combination` for the
+    singular test of a composite key. `arguments` are the test's parameters,
+    `severity` is `error`, or the hint tests' severity, and `parent` is the
+    `(table, column)` a `relationships` test looks values up in.
+    """
+
+    name: str
+    table: str
+    column: Optional[str]
+    type: str
+    arguments: dict[str, Any] = field(default_factory=dict, compare=False, hash=False)
+    severity: str = "error"
+    parent: Optional[tuple[str, str]] = None
+
+
+def dbt_tests(
+    tables: dict,
+    refs: list[dict],
+    *,
+    hint_tests: str = "off",
+    test_tolerance: float = DEFAULT_TOLERANCE,
+) -> list[DbtTest]:
+    """Every data test `generate_dbt_yml` writes for the same arguments, as `DbtTest`s.
+
+    Built from the very entries the YAML is written from, so a name here is the
+    name dbt gives the test in the generated project. Unit tests are not data
+    tests and are not listed.
+    """
+    hinted = _hinted(tables, hint_tests, test_tolerance)
+    fk_map = _fk_map(tables, refs)
+    found: list[DbtTest] = []
+    for table in tables.values():
+        stg_name = f"stg_{table.name}"
+        for col in table.columns:
+            column_ref = _dbt_column_ref(col.name)
+            parents = iter(fk_map.get((table.name, col.name), []))
+            for entry in _column_entries(table, col, fk_map, hinted, hint_tests):
+                test_type, body = _entry_parts(entry)
+                arguments = dict(body.get("arguments") or {})
+                parent = None
+                if test_type == "relationships":
+                    ref = next(parents)
+                    parent = (ref["target_table"], ref["target_column"])
+                found.append(
+                    DbtTest(
+                        name=generic_test_name(
+                            test_type, stg_name, {"column_name": column_ref, **arguments}
+                        ),
+                        table=table.name,
+                        column=col.name,
+                        type=test_type,
+                        arguments=arguments,
+                        severity=(body.get("config") or {}).get("severity", "error"),
+                        parent=parent,
+                    )
+                )
+        for hint_test in hinted.get((table.name, None), []):
+            found.append(
+                DbtTest(
+                    name=generic_test_name(hint_test.test, stg_name, hint_test.arguments),
+                    table=table.name,
+                    column=None,
+                    type=hint_test.test,
+                    arguments=dict(hint_test.arguments),
+                    severity=hint_tests,
+                )
+            )
+        for entry in _history_entries(table):
+            test_type, body = _entry_parts(entry)
+            found.append(
+                DbtTest(
+                    name=generic_test_name(test_type, stg_name, body["arguments"]),
+                    table=table.name,
+                    column=None,
+                    type=test_type,
+                    arguments=dict(body["arguments"]),
+                )
+            )
+        for key in getattr(table, "composite_keys", None) or []:
+            columns = key.get("columns") or []
+            if len(columns) < 2:
+                continue
+            found.append(
+                DbtTest(
+                    name=_composite_key_test_name(stg_name, columns),
+                    table=table.name,
+                    column=None,
+                    type="unique_combination",
+                    arguments={"columns": list(columns)},
+                )
+            )
+    return found
+
+
+HISTORY_MACROS_FILE = "model2data_history_tests.sql"
+_HISTORY_MACROS = Path(__file__).parent / "templates" / "history_macros" / HISTORY_MACROS_FILE
+
+
+def _history_entries(table: Any) -> list[dict[str, dict[str, Any]]]:
+    """The tests of a history table (`model2data.generate.history`): none for any other."""
+    history = (getattr(table, "note", None) or {}).get("history")
+    if not history:
+        return []
+    key = list(history["key"])
+    return [
+        _generic_test("model2data_one_current_row", {"key": key, "current": history["current"]}),
+        _generic_test(
+            "model2data_no_overlapping_ranges",
+            {"key": key, "valid_from": history["valid_from"], "valid_to": history["valid_to"]},
+        ),
+    ]
+
+
+def write_history_macros(dest: Path) -> Path:
+    """Write the history tables' generic tests into `dest/macros/`, and return the path.
+
+    `generate_dbt_yml` writes it when a table is a history table, and only then,
+    so a project without one is what it was.
+    """
+    macros = dest / "macros"
+    macros.mkdir(parents=True, exist_ok=True)
+    target = macros / HISTORY_MACROS_FILE
+    target.write_text(_HISTORY_MACROS.read_text())
+    return target
+
+
+def _entry_parts(entry: Union[str, dict[str, dict[str, Any]]]) -> tuple[str, dict[str, Any]]:
+    if isinstance(entry, str):
+        return entry, {}
+    (test_type, body), *_ = entry.items()
+    return test_type, body
+
+
+def generic_test_name(test_type: str, model_name: str, arguments: dict[str, Any]) -> str:
+    """The node name dbt synthesises for a generic test on `model_name`.
+
+    dbt-core's `synthesize_generic_test_names`: the test, the model, then every
+    argument's values in argument-name order, each cleaned to `[0-9a-zA-Z_]`,
+    joined by `__`. dbt shortens only the alias of a long name, never this one.
+    """
+    parts: list[str] = []
+    for name in sorted(arguments):
+        if name == "model":
+            continue
+        value = arguments[name]
+        if isinstance(value, dict):
+            values = list(value.values())
+        elif isinstance(value, (list, tuple)):
+            values = list(value)
+        else:
+            values = [value]
+        parts.extend(str(item) for item in values)
+    unique = "__".join(re.sub("[^0-9a-zA-Z_]+", "_", part) for part in parts)
+    return f"{test_type}_{model_name}_{unique}"
+
+
+def _composite_key_test_name(stg_name: str, columns: list[str]) -> str:
+    return "unique_combination_" + "_".join([stg_name, *columns])
 
 
 def _generate_seed_properties(dest: Path, tables: dict) -> None:
@@ -181,6 +373,12 @@ def _generate_seed_properties(dest: Path, tables: dict) -> None:
         column_types = {
             col.name: "varchar" for col in table.columns if is_free_text_type(col.data_type)
         }
+        history = (getattr(table, "note", None) or {}).get("history")
+        if history:
+            # A key never updated has no `valid_to` at all: the loader must not guess its type.
+            column_types[history["valid_from"]] = "timestamp"
+            column_types[history["valid_to"]] = "timestamp"
+            column_types[history["current"]] = "boolean"
         description = getattr(table, "description", None) or f"Table {table.name}"
 
         entry: dict[str, Any] = {"name": table.name, "description": description}
@@ -244,7 +442,7 @@ def _generate_composite_key_tests(dest: Path, tables: dict) -> None:
 
             quoted_columns = [_quote_sql_identifier(c) for c in columns]
             columns_csv = ", ".join(quoted_columns)
-            test_name = "unique_combination_" + "_".join([stg_name, *columns])
+            test_name = _composite_key_test_name(stg_name, columns)
             sql = (
                 f"select {columns_csv}, count(*) as n\n"
                 f"from {{{{ ref('{stg_name}') }}}}\n"

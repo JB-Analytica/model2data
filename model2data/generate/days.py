@@ -109,11 +109,16 @@ class TableDay:
     is `inserted` and none is `updated`. A table that does not move has empty
     `inserted` and `updated` and the same `state` every day. Frames are never
     modified after they are handed out, so a `state` may be shared by days.
+
+    `updated_positions` holds, for each row of `updated` in order, its position
+    in `state` (and in the state of the day before: rows are never reordered,
+    and a day's inserted rows follow the rows it already held).
     """
 
     inserted: pd.DataFrame
     updated: pd.DataFrame
     state: pd.DataFrame
+    updated_positions: list[int] = field(default_factory=list)
 
 
 @dataclass
@@ -262,9 +267,9 @@ def iter_days(
                 empty = current.iloc[0:0].copy()
                 result[key] = TableDay(empty, empty.copy(), current)
                 continue
-            inserted, updated, new_state = engine.advance(key, inc)
+            inserted, updated, new_state, positions = engine.advance(key, inc)
             state[key] = new_state
-            result[key] = TableDay(inserted, updated, new_state)
+            result[key] = TableDay(inserted, updated, new_state, positions)
         yield DayResult(day, engine.day_date, {key: result[key] for key in tables}, engine.warnings)
 
 
@@ -330,7 +335,7 @@ class _Engine:
     # -- one table, one day ---------------------------------------------
     def advance(
         self, key: str, inc: Incremental
-    ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, list[int]]:
         table = self.tables[key]
         state = self.states[key]
         if self.seed is not None:
@@ -352,7 +357,7 @@ class _Engine:
         if len(inserted):
             new_state = pd.concat([new_state, inserted], ignore_index=True)
             new_state = _coerce_integer_dtypes(new_state, table)
-        return inserted, updated, new_state
+        return inserted, updated, new_state, list(positions)
 
     # -- inserts ----------------------------------------------------------
     def _insert(

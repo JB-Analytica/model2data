@@ -1,0 +1,16 @@
+model2data: 0.3.0
+name: dupnull
+tables:
+  t:
+    columns:
+      id: {type: bigint, pk: true}
+      email: {type: email, unique: true, not_null: true}
+      body: varchar
+    defects:
+      - {type: duplicate_keys, count: 1}
+      - {type: nulls, column: id, count: 8}
+      - {type: duplicate_keys, column: email, count: 1}
+      - {type: messy_text, column: email, count: 8}
+run:
+  rows: 10
+  seed: 1

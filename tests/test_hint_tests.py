@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -405,6 +406,16 @@ def test_every_example_builds_with_hint_tests_at_error(tmp_path, monkeypatch, ex
         + ["--hint-tests", "error"],
     )
     assert result.exit_code == 0, result.output
-    build = _dbt(tmp_path / "dbt_ex", "build")
+    project = tmp_path / "dbt_ex"
+    build = _dbt(project, "build")
+    report = project / "defects_report.json"
+    if report.exists():
+        # An example with defects fails exactly the tests its report names, and nothing errors.
+        expected = {f["test"] for f in json.loads(report.read_text())["expected_failures"]}
+        results = json.loads((project / "target" / "run_results.json").read_text())["results"]
+        failed = {r["unique_id"].split(".")[2] for r in results if r["status"] in ("fail", "warn")}
+        assert expected and failed == expected, build.stdout
+        assert not any(r["status"] == "error" for r in results), build.stdout
+        return
     assert build.returncode == 0, build.stdout + build.stderr
     assert "ERROR=0" in build.stdout

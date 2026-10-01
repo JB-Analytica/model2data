@@ -1,0 +1,16 @@
+model2data: 0.3.0
+name: lu
+tables:
+  customers:
+    columns:
+      id: {type: bigint, pk: true}
+  orders:
+    incremental: {new_per_day: 3, update_rate: 0.5, changes: [status], updated_at: updated_at}
+    columns:
+      id: {type: bigint, pk: true}
+      customer_id: {type: bigint, references: customers.id, generate: {null_rate: 0.5}}
+      status: varchar
+      updated_at: {type: timestamp, not_null: true}
+run:
+  rows: 20
+  seed: 4

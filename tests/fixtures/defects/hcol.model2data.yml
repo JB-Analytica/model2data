@@ -1,0 +1,12 @@
+model2data: 0.3.0
+name: hcol
+tables:
+  orders:
+    incremental: {new_per_day: 3, update_rate: 0.5, changes: [status], history: true}
+    columns:
+      id: {type: bigint, pk: true}
+      status: varchar
+      _position: int
+run:
+  rows: 10
+  seed: 1

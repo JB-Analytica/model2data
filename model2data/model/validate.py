@@ -1,4 +1,4 @@
-"""Does a document conform to spec 0.2.0: the schema, then the checks beyond it.
+"""Does a document conform to spec 0.3.0 (or 0.2.x): the schema, then the checks beyond it.
 
 `check(document)` returns every issue it finds, each with the document path of
 the value at fault and a severity; it never stops at the first. The schema is
@@ -22,16 +22,36 @@ from typing import Any, Optional
 import jsonschema
 from jsonschema.exceptions import ValidationError
 
+from model2data.dbt.naming import dbt_identifier
 from model2data.generate import kinds
 from model2data.model.errors import Issue, PathPart, format_path
 
-SPEC_VERSION = "0.2.0"
-SCHEMA_URL = "https://www.jbanalytica.com/model2data/spec/0.2.0/model.schema.json"
+SPEC_VERSION = "0.3.0"
+# The columns `incremental.history` adds to `<table>_history`.
+HISTORY_COLUMNS = ("valid_from", "valid_to", "is_current")
+# The minor versions this reader implements. 0.3.0 only adds `defects`, so a
+# 0.2 document reads exactly as it did; it just cannot use them.
+READS = ("0.2", "0.3")
+_URL = "https://www.jbanalytica.com/model2data/spec/{}/model.schema.json"
+SCHEMA_URL = _URL.format(SPEC_VERSION)
+
+
+def schema_url(version: Any) -> str:
+    """The schema URL a document of `version` points editors at: 0.2.0's for a 0.2 one."""
+    return _URL.format("0.2.0") if _minor(version) == "0.2" else SCHEMA_URL
+
+
+def _minor(version: Any) -> Optional[str]:
+    if isinstance(version, float):
+        return {0.2: "0.2", 0.3: "0.3"}.get(version)
+    if isinstance(version, str):
+        return ".".join(version.split(".")[:2])
+    return None
 
 
 @lru_cache(maxsize=1)
 def schema() -> dict[str, Any]:
-    """The packaged, normative JSON Schema of spec 0.2.0."""
+    """The packaged, normative JSON Schema of spec 0.3.0, which also reads 0.2 documents."""
     text = resources.files("model2data").joinpath("spec/model.schema.json").read_text("utf-8")
     return json.loads(text)
 
@@ -75,18 +95,18 @@ def _version_issues(document: Mapping) -> list[Issue]:
     version = document.get("model2data")
     if version is None:
         return []  # reported by the schema as missing
-    if version == 0.2 and not isinstance(version, bool):
+    if version in (0.2, 0.3) and not isinstance(version, bool):
         return []
     if isinstance(version, str):
         parts = version.split(".")
-        if parts[:2] == ["0", "2"] and len(parts) in (2, 3):
+        if ".".join(parts[:2]) in READS and len(parts) in (2, 3):
             return []  # a malformed patch number is left to the schema
         if len(parts) >= 2 and all(part.isdigit() for part in parts):
             return [
                 Issue(
                     "model2data",
                     f"the document is written against spec {version}, and this reader "
-                    f"implements spec {SPEC_VERSION} (0.2.x). "
+                    f"implements spec {SPEC_VERSION} (0.2.x and 0.3.x). "
                     + (
                         "Convert a 0.1 model, which is DBML, with `model2data convert`."
                         if parts[:2] == ["0", "1"]
@@ -380,6 +400,7 @@ class _Checks:
             elif isinstance(members, Mapping):
                 self.enums[name] = [_member_text(member) for member in members]
         self.issues: list[Issue] = []
+        self.minor = _minor(document.get("model2data"))
 
     def run(self) -> list[Issue]:
         self._enum_members()
@@ -504,6 +525,8 @@ class _Checks:
             )
         self._after_cycles(key, columns)
         self._grain_and_incremental(key, table, columns)
+        if "defects" in table:
+            self._defects(key, table, columns, fk_children)
 
     def _grain_and_incremental(self, key: str, table: Mapping, columns: dict[str, dict]) -> None:
         base = ["tables", key]
@@ -556,6 +579,276 @@ class _Checks:
                     [*base, "incremental", "updated_at"],
                     f"names {updated_at}, which is not a date or timestamp column",
                 )
+        if incremental.get("history") is True:
+            self._history(key, columns)
+
+    def _history(self, key: str, columns: dict[str, dict]) -> None:
+        path: list[PathPart] = ["tables", key, "incremental", "history"]
+        if self._needs_0_3(path, "incremental.history"):
+            return
+        if not self.primary_key(key):
+            self.add(
+                path,
+                f"{key} has no primary key: a history keeps the versions of each key, so it "
+                "needs one",
+            )
+        taken = [name for name in HISTORY_COLUMNS if name in columns]
+        if taken:
+            self.add(
+                path,
+                f"adds the columns {', '.join(HISTORY_COLUMNS)} to {key}_history, and {key} "
+                f"already has {', '.join(taken)}",
+            )
+        if f"{key}_history" in self.tables:
+            self.add(
+                path,
+                f"writes the table {key}_history, and the model already has a table of that name",
+            )
+            return
+        name = dbt_identifier(f"{key}_history")
+        other = next((t for t in self.tables if dbt_identifier(t) == name), None)
+        if other is not None:
+            self.add(
+                path,
+                f"writes the table {key}_history, whose dbt name {name} is also the table "
+                f"{other}'s: rename one of them",
+            )
+
+    # -- defects -------------------------------------------------------
+    def _needs_0_3(self, path: list[PathPart], what: str = "defects") -> bool:
+        """Report what 0.3.0 added (`what`) in a 0.2 document; True when it was reported."""
+        if self.minor != "0.2":
+            return False
+        self.add(
+            path,
+            f"`{what}` is spec 0.3.0, and the document is written against 0.2: "
+            "write `model2data: 0.3.0`",
+        )
+        return True
+
+    def table_rows(self, key: str) -> Optional[int]:
+        """The rows the document's `run` gives a table, or None when it leaves them to the reader."""
+        run = _mapping(self.document.get("run"))
+        rows = _mapping(run.get("rows_per_table")).get(key, run.get("rows"))
+        return rows if isinstance(rows, int) and not isinstance(rows, bool) else None
+
+    def _defects(
+        self, key: str, table: Mapping, columns: dict[str, dict], fk_children: set
+    ) -> None:
+        base: list[PathPart] = ["tables", key, "defects"]
+        if self._needs_0_3(base):
+            return
+        incremental = _mapping(table.get("incremental"))
+        temporal = [
+            name
+            for name, column in columns.items()
+            if kinds.is_temporal_type(str(column.get("type", "")))
+            and not self.enum_named(column.get("type"))
+        ]
+        seen: dict[tuple, int] = {}
+        for index, entry in enumerate(_list(table.get("defects"))):
+            if not isinstance(entry, Mapping) or not isinstance(entry.get("type"), str):
+                continue  # the schema has reported it
+            path: list[PathPart] = [*base, index]
+            kind = entry["type"]
+            if ("count" in entry) == ("share" in entry):
+                self.add(
+                    path,
+                    "gives both `count` and `share`: give one"
+                    if "count" in entry
+                    else "needs `count` (rows) or `share` (a fraction of the table's rows)",
+                )
+            column = entry.get("column")
+            if isinstance(column, str) and column not in columns:
+                self.add(
+                    [*path, "column"], f"names {_show(column)}, which is not a column of {key}"
+                )
+                column = None
+            elif column is not None and not isinstance(column, str):
+                column = None
+            # A column that is not a name (a list) is the schema's to report; it is
+            # still one entry's identity here.
+            identity = (kind, _show(entry.get("column")))
+            if identity in seen:
+                self.add(
+                    path,
+                    f"repeats defects.{seen[identity]} ({kind}"
+                    + (f" on {entry.get('column')}" if entry.get("column") else "")
+                    + "): give each type and column once",
+                )
+            seen.setdefault(identity, index)
+            check = getattr(self, f"_defect_{kind}", None)
+            if check is not None:
+                check(key, path, entry, column, columns, fk_children, incremental, temporal)
+
+    def _needs_column(self, path: list[PathPart], entry: Mapping, kind: str) -> bool:
+        if "column" in entry:
+            return True
+        self.add(path, f"`column` is required: {kind} breaks one column")
+        return False
+
+    def _defect_duplicate_keys(
+        self, key, path, entry, column, columns, fk_children, incremental, temporal
+    ) -> None:
+        if column is not None:
+            if {column} not in self.key_sets(key):
+                self.add(
+                    [*path, "column"],
+                    f"names {column}, which is not a key of {key}: duplicate_keys repeats a "
+                    "primary key or a unique column (it has a `unique` test to break)",
+                )
+        elif "column" not in entry and not self.primary_key(key):
+            self.add(
+                path,
+                f"{key} has no primary key to repeat: name a unique column with `column`",
+            )
+        count = entry.get("count")
+        rows = self.table_rows(key)
+        if isinstance(count, int) and rows is not None and count >= rows:
+            self.add(
+                [*path, "count"],
+                f"asks for {count} duplicates, and the run gives {key} {rows} rows: a duplicate "
+                f"repeats another row's key, so at most {max(rows - 1, 0)} can",
+            )
+
+    def _defect_orphan_foreign_keys(
+        self, key, path, entry, column, columns, fk_children, incremental, temporal
+    ) -> None:
+        if not self._needs_column(path, entry, "orphan_foreign_keys") or column is None:
+            return
+        if columns[column].get("references") is None and column not in fk_children:
+            self.add(
+                [*path, "column"],
+                f"names {column}, which is not a foreign key: orphan_foreign_keys needs a "
+                "column with `references` (or in `foreign_keys`), whose relationships test "
+                "it breaks",
+            )
+        elif kinds.is_boolean_type(str(columns[column].get("type", ""))):
+            self.add(
+                [*path, "column"],
+                f"names {column}, a boolean: it has no value its parent does not hold",
+            )
+
+    def _defect_nulls(
+        self, key, path, entry, column, columns, fk_children, incremental, temporal
+    ) -> None:
+        if not self._needs_column(path, entry, "nulls") or column is None:
+            return
+        pk_columns = [n for n, c in columns.items() if c.get("pk") is True]
+        has_pk_key = any(
+            isinstance(k, Mapping) and "pk" in k for k in _list(self.tables[key].get("keys"))
+        )
+        single_pk = len(pk_columns) == 1 and not has_pk_key and pk_columns[0] == column
+        if columns[column].get("not_null") is not True and not single_pk:
+            self.add(
+                [*path, "column"],
+                f"names {column}, which has no not_null test (it is not `not_null: true`, nor "
+                f"the table's one-column primary key), so nulls in it break nothing; "
+                "`generate.null_rate` makes a nullable column null",
+            )
+
+    def _defect_invalid_values(
+        self, key, path, entry, column, columns, fk_children, incremental, temporal
+    ) -> None:
+        if not self._needs_column(path, entry, "invalid_values") or column is None:
+            return
+        if self.enum_named(columns[column].get("type")) is None:
+            self.add(
+                [*path, "column"],
+                f"names {column}, which has no allowed set: invalid_values needs a column "
+                "typed with an enum, whose accepted_values test it breaks",
+            )
+        elif any(column in keyset for keyset in self.key_sets(key)):
+            self.add(
+                [*path, "column"],
+                f"names {column}, part of a key of {key}: an invalid value there would break "
+                "its key tests and joins too, not only accepted_values",
+            )
+
+    def _defect_messy_text(
+        self, key, path, entry, column, columns, fk_children, incremental, temporal
+    ) -> None:
+        if not self._needs_column(path, entry, "messy_text") or column is None:
+            return
+        spec = columns[column]
+        type_text = str(spec.get("type", ""))
+        if self.enum_named(type_text) is not None:
+            self.add(
+                [*path, "column"],
+                f"names {column}, an enum column: its accepted_values test would fail; "
+                "use invalid_values for that",
+            )
+        elif (
+            kinds.is_numeric_type(type_text)
+            or kinds.is_boolean_type(type_text)
+            or "time" in kinds.base_type(type_text)
+            or kinds.is_temporal_type(type_text)
+        ):
+            self.add(
+                [*path, "column"],
+                f"names {column}, which is not a text column ({type_text} is not text)",
+            )
+        elif (
+            spec.get("pk") is True
+            or column in self.primary_key(key)
+            or spec.get("references") is not None
+            or column in fk_children
+        ):
+            self.add(
+                [*path, "column"],
+                f"names {column}, a key or foreign key: messy_text is for descriptive text, "
+                "and changing a key's text breaks the joins on it",
+            )
+
+    def _defect_late_arriving(
+        self, key, path, entry, column, columns, fk_children, incremental, temporal
+    ) -> None:
+        if not incremental.get("new_per_day"):
+            self.add(
+                path,
+                f"{key} inserts no rows after the first day: late_arriving needs "
+                "`incremental.new_per_day`, and a run of several days",
+            )
+        if column is not None:
+            if column not in temporal:
+                self.add(
+                    [*path, "column"],
+                    f"names {column}, which is not a date or timestamp column",
+                )
+        elif "column" not in entry and not temporal:
+            self.add(path, f"{key} has no date or timestamp column for rows to arrive late on")
+
+    def _defect_overlapping_history(
+        self, key, path, entry, column, columns, fk_children, incremental, temporal
+    ) -> None:
+        if "column" in entry:
+            self.add(
+                [*path, "column"],
+                "overlapping_history takes no column: it breaks the validity of versions in "
+                f"{key}_history",
+            )
+        if incremental.get("history") is not True:
+            self.add(
+                path,
+                f"{key} keeps no history: overlapping_history needs `incremental.history: true`, "
+                "and a run of several days",
+            )
+
+    def _defect_late_updates(
+        self, key, path, entry, column, columns, fk_children, incremental, temporal
+    ) -> None:
+        if "column" in entry:
+            self.add(
+                [*path, "column"],
+                "late_updates takes no column: it backdates `incremental.updated_at`",
+            )
+        if not incremental.get("update_rate") or not isinstance(incremental.get("updated_at"), str):
+            self.add(
+                path,
+                f"{key} has no updates to backdate: late_updates needs "
+                "`incremental.update_rate` and `incremental.updated_at`, and a run of several "
+                "days",
+            )
 
     # -- references ----------------------------------------------------
     def _parent_issue(self, to: str) -> Optional[tuple[str, bool]]:
@@ -871,6 +1164,8 @@ class _Checks:
                         ["run", setting, table],
                         f"names the table {_show(table)}, which is not in the model",
                     )
+        if "defects" in run:
+            self._needs_0_3(["run", "defects"])
         if run.get("table_seeds") and "seed" not in run:
             self.add(
                 ["run", "table_seeds"],

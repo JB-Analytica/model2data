@@ -9,6 +9,7 @@ from typing import Any
 from model2data.model.errors import ModelError
 from model2data.model.types import (
     Column,
+    Defect,
     Enum,
     ForeignKey,
     Group,
@@ -103,8 +104,27 @@ def _table(table: Mapping) -> Table:
             )
             for fk in table.get("foreign_keys") or []
         ],
+        defects=[_defect(entry) for entry in table["defects"]] if "defects" in table else None,
         extensions=_extensions(table),
     )
+
+
+def _defect(entry: Mapping) -> Defect:
+    return Defect(
+        type=entry["type"],
+        column=entry.get("column"),
+        count=entry.get("count"),
+        share=entry.get("share"),
+    )
+
+
+def defect_to_dict(defect: Defect) -> dict[str, Any]:
+    out: dict[str, Any] = {"type": defect.type}
+    for name in ("column", "count", "share"):
+        value = getattr(defect, name)
+        if value is not None:
+            out[name] = value
+    return out
 
 
 def _incremental(incremental: Mapping) -> Incremental:
@@ -113,6 +133,7 @@ def _incremental(incremental: Mapping) -> Incremental:
         update_rate=incremental.get("update_rate"),
         changes=list(incremental["changes"]) if incremental.get("changes") is not None else None,
         updated_at=incremental.get("updated_at"),
+        history=bool(incremental.get("history", False)),
     )
 
 
@@ -122,6 +143,7 @@ def incremental_to_dict(incremental: Incremental) -> dict[str, Any]:
     _put(out, "update_rate", incremental.update_rate)
     _put(out, "changes", list(incremental.changes) if incremental.changes is not None else None)
     _put(out, "updated_at", incremental.updated_at)
+    _put(out, "history", incremental.history)
     return out
 
 
@@ -158,6 +180,7 @@ def _run(run: Mapping) -> Run:
         as_of=run.get("as_of"),
         locale=run.get("locale"),
         shape=Shape(**shape) if shape is not None else None,
+        defects=run.get("defects"),
     )
 
 
@@ -178,7 +201,7 @@ def to_dict(model: Model) -> dict[str, Any]:
     shorthand) and a value at its default is left out. `from_dict(to_dict(m))`
     is `m`.
     """
-    out: dict[str, Any] = {"model2data": model.version}
+    out: dict[str, Any] = {"model2data": document_version(model)}
     _put(out, "name", model.name)
     _put(out, "description", model.description)
     _put(out, "enums", {name: enum_to_value(enum) for name, enum in model.enums.items()})
@@ -203,6 +226,28 @@ def to_dict(model: Model) -> dict[str, Any]:
         out["run"] = run_to_dict(model.run)
     out.update(copy.deepcopy(model.extensions))
     return out
+
+
+def uses_0_3(model: Model) -> bool:
+    """Whether the model uses what spec 0.3.0 added: defects, or a table's history."""
+    return (
+        (model.run is not None and model.run.defects is not None)
+        or any(table.defects is not None for table in model.tables.values())
+        or any(t.incremental is not None and t.incremental.history for t in model.tables.values())
+    )
+
+
+def document_version(model: Model) -> Any:
+    """The version the model's document is written against.
+
+    The version the model was read with, unless it is a 0.2 one and the model
+    uses `defects` or `incremental.history`, which 0.2 does not have: then
+    0.3.0. A 0.2.0 document without them is written as 0.2.0, as it always was.
+    """
+    version = model.version
+    if uses_0_3(model) and str(version).split(".")[:2] == ["0", "2"]:
+        return "0.3.0"
+    return version
 
 
 def enum_to_value(enum: Enum) -> Any:
@@ -231,6 +276,8 @@ def table_to_dict(table: Table) -> dict[str, Any]:
         _put(entry, "one_to_one", fk.one_to_one)
         foreign_keys.append(entry)
     _put(out, "foreign_keys", foreign_keys)
+    if table.defects is not None:
+        out["defects"] = [defect_to_dict(defect) for defect in table.defects]
     out.update(copy.deepcopy(table.extensions))
     return out
 
@@ -269,4 +316,6 @@ def run_to_dict(run: Run) -> dict[str, Any]:
             for name in ("business_hours", "growth", "seasonality", "skew")
             if getattr(run.shape, name) is not None
         }
+    if run.defects is not None:
+        out["defects"] = run.defects
     return out
