@@ -416,8 +416,13 @@ def _deduplicate_composite_keys(
 
         seen: set = set()
         unresolved = 0
-        for idx in df.index:
-            combo = tuple(df.at[idx, c] for c in key_columns)
+        # Read the key once, as plain values: a row's combination is only read
+        # back from the frame once it has been regenerated (rarely), where the
+        # frame's own dtype decides the value stored. A plain value and the
+        # frame's scalar for it are equal and hash alike, so `seen` is the same.
+        combos = list(zip(*(df[c].tolist() for c in key_columns), strict=True))
+        for position, idx in enumerate(df.index):
+            combo = combos[position]
             attempts = 0
             while combo in seen and attempts < max_attempts:
                 # Regenerate every column of the key (not just the last one) so

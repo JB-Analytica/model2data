@@ -222,14 +222,14 @@ jobs:
 ```
 
 Inputs: `files` (glob, default `**/*.model2data.yml`), `version` (default: the release the tag
-points at, e.g. `1.10.1`; a specifier such as `>=1.10,<2` also works), `python-version` (3.12).
+points at, e.g. `1.10.2`; a specifier such as `>=1.10,<2` also works), `python-version` (3.12).
 
 **pre-commit**
 
 ```yaml
 repos:
   - repo: https://github.com/JB-Analytica/model2data
-    rev: v1.10.1
+    rev: v1.10.2
     hooks:
       - id: model2data-validate
 ```
@@ -243,7 +243,7 @@ model2data:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       changes: ["**/*.model2data.yml"]
   script:
-    - pip install model2data==1.10.1
+    - pip install model2data==1.10.2
     - model2data validate --glob "**/*.model2data.yml"
 ```
 

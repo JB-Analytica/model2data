@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.10.2] - 2026-10-02
+
+### Changed
+- **Performance: generation is about 2.5x faster, a defects run about 2.8x, with the same output
+  byte for byte.** A model of four tables (500 users, 4,000 follows, 1,500 posts, 6,000 comments)
+  generates in 0.22 s instead of 0.54 s, and with `--defects messy` in 0.41 s instead of 1.17 s.
+  The defects report reads each seeded column once and keeps it across checks, re-checks after
+  each defect only the tests that read its table, and writes out and reads back only the columns
+  a defect changed. `text` columns draw Faker's lorem text with the same draws from the same
+  stream but without Faker's per-word overhead; a locale or Faker version whose lorem does not
+  give the very same text keeps going through Faker. Composite keys are deduplicated without
+  reading the frame cell by cell. The same seed, model and defects give the same files as 1.10.1.
+
 ## [1.10.1] - 2026-10-01
 
 ### Fixed

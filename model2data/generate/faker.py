@@ -11,6 +11,7 @@ from typing import Callable, Optional, Union
 
 import pandas as pd
 from faker import Faker
+from faker.providers.lorem import Provider as _LoremProvider
 
 from model2data.generate.kinds import (
     is_boolean_type,
@@ -368,10 +369,10 @@ _NAME_PATTERNS: list[tuple[str, _Provider]] = [
     ("slug", lambda: fake.slug()),
     ("avatar", lambda: fake.image_url()),
     ("image", lambda: fake.image_url()),
-    ("bio", lambda: fake.text(max_nb_chars=160)),
-    ("description", lambda: fake.text(max_nb_chars=160)),
-    ("comment", lambda: fake.text(max_nb_chars=160)),
-    ("summary", lambda: fake.text(max_nb_chars=160)),
+    ("bio", lambda: _text(160)),
+    ("description", lambda: _text(160)),
+    ("comment", lambda: _text(160)),
+    ("summary", lambda: _text(160)),
 ]
 
 # DBML type substrings generate_column_values renders as a database-native
@@ -918,7 +919,10 @@ def generate_column_values(
             )
         else:
             try:
-                values = [fake.format(base_type) for _ in range(row_count)]
+                if base_type == "text":
+                    values = [_text() for _ in range(row_count)]
+                else:
+                    values = [fake.format(base_type) for _ in range(row_count)]
             except (AttributeError, TypeError):
                 if column.name.lower().endswith("_id") or ensure_unique:
                     values = [_seeded_uuid() for _ in range(row_count)]
@@ -1059,6 +1063,96 @@ def _distinct_parent_values(fk_values: list, row_count: int, unique_label: str) 
         f"{unique_label}: {row_count - len(parents)} duplicate value(s)"
     )
     return values
+
+
+# Faker's `text` reaches each word through five layers of provider methods,
+# copying the locale's word list twice per sentence on the way; a text column
+# spends most of a run's generation time there. `_text` makes the same draws
+# from the same random stream directly. It is used for a locale only after it
+# has given the very strings Faker gives, so another Faker version or a locale
+# with lorem of its own falls back to `fake.text` rather than drift.
+_LOREM_METHODS = (
+    "text",
+    "paragraph",
+    "sentences",
+    "sentence",
+    "words",
+    "get_words_list",
+    "randomize_nb_elements",
+    "random_choices",
+    "random_elements",
+)
+_lorem_checked: dict[int, tuple[object, bool]] = {}
+
+
+def _text(max_nb_chars: int = 200) -> str:
+    """`fake.text(max_nb_chars)`: the same text, from the same draws."""
+    method = fake.get_formatter("text") if len(fake.locales) == 1 else None
+    provider = getattr(method, "__self__", None)
+    if (
+        max_nb_chars < 100
+        or not isinstance(provider, _LoremProvider)
+        or not _lorem_is_faker(provider)
+    ):
+        return fake.text(max_nb_chars=max_nb_chars)
+    return _paragraphs_text(provider, max_nb_chars)
+
+
+def _lorem_is_faker(provider: _LoremProvider) -> bool:
+    """Whether `_paragraphs_text` gives what `provider.text` gives, checked once."""
+    held = _lorem_checked.get(id(provider))
+    if held is not None and held[0] is provider:
+        return held[1]
+    same = all(
+        getattr(type(provider), name, None) is getattr(_LoremProvider, name)
+        for name in _LOREM_METHODS
+    ) and _lorem_matches(provider)
+    _lorem_checked[id(provider)] = (provider, same)
+    return same
+
+
+def _lorem_matches(provider: _LoremProvider) -> bool:
+    """Whether both give the same texts and leave the stream the same, which they leave as found."""
+    stream = provider.generator.random
+    start = stream.getstate()
+    try:
+        sizes = (100, 160, 200, 450)
+        faker_texts = [provider.text(max_nb_chars=size) for size in sizes]
+        faker_end = stream.getstate()
+        stream.setstate(start)
+        ours = [_paragraphs_text(provider, size) for size in sizes]
+        return ours == faker_texts and stream.getstate() == faker_end
+    except Exception:  # noqa: BLE001 - any surprise means "not the Faker we know"
+        return False
+    finally:
+        stream.setstate(start)
+
+
+def _paragraphs_text(provider: _LoremProvider, max_nb_chars: int) -> str:
+    """Faker's lorem `text` for 100 characters or more: paragraphs of 3 +/-40% sentences
+    of 6 +/-40% words, drawn as `randomize_nb_elements` and `random_choices` draw."""
+    stream = provider.generator.random
+    randint, choice, choices = stream.randint, stream.choice, stream.choices
+    words = provider.word_list  # type: ignore[attr-defined]
+    if not isinstance(words, tuple):
+        words = tuple(words)
+    connector = provider.word_connector
+    punctuation = provider.sentence_punctuation
+    text: list[str] = []
+    while not text:
+        size = 0
+        while size < max_nb_chars:
+            sentences = []
+            for _ in range(max(1, int(3 * randint(60, 140) / 100))):
+                count = max(1, int(6 * randint(60, 140) / 100))
+                drawn = [choice(words)] if count == 1 else choices(words, k=count)
+                drawn[0] = drawn[0].title()
+                sentences.append(connector.join(drawn) + punctuation)
+            paragraph = ("\n" if size else "") + connector.join(sentences)
+            text.append(paragraph)
+            size += len(paragraph)
+        text.pop()
+    return "".join(text)
 
 
 def _seeded_uuid() -> str:
