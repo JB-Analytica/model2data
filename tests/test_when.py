@@ -626,6 +626,12 @@ def test_a_valid_when_has_no_issue():
             id="integer",
         ),
         pytest.param(
+            _when_doc({"priority": ["high"]}),
+            'tables.t.columns.x.generate.when.priority: lists "high", and priority (int) holds a '
+            "whole number",
+            id="integer-text",
+        ),
+        pytest.param(
             _when_doc({"score": ["high"]}),
             'tables.t.columns.x.generate.when.score: lists "high", and score (numeric) holds a '
             "number",
