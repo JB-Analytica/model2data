@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.11.0] - 2026-10-02
+
 ### Added
 - **`model2data guide [setup|triage|tune]`** prints one page of Markdown written for a coding
   agent about to use model2data: `setup` (install, a starter model, the first run), `triage`
