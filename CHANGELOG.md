@@ -26,6 +26,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **Determinism:** a model without an FK cycle generates exactly what it did before. A model
   whose cycle had a nullable link now writes different foreign key values in that cycle's tables
   (valid ones, where some used to dangle), and different columns mirrored from them.
+- **PostgreSQL serial types are integers.** `serial`, `serial2`, `serial4`, `serial8`,
+  `smallserial` and `bigserial` were not recognised as integer types, so a `bigserial` primary
+  key was filled with UUIDs and a `bigint` foreign key onto it failed with `invalid literal for
+  int() with base 10`. They now count as integers everywhere an `int` type does (generation,
+  `min`/`max`/`distribution` hints, the `Int64` dtype, defect kinds, dbt seed column types), and
+  a serial key generates exactly what the same model typed `integer`/`bigint`/`smallint` does.
+  The declared type is kept as written.
+- **Determinism:** only a model with a serial-typed column generates differently (it crashed or
+  produced UUIDs before); every other model is byte-identical.
 
 ## [1.10.4] - 2026-10-02
 

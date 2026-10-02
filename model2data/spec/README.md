@@ -173,7 +173,7 @@ meaning. A hint's `x-model2data-applies-to` names the **kinds** of column it may
 
 | Kind | A column is this kind when |
 |------|-----------------------------|
-| `numeric` | its base type (its `type` lower-cased, cut at the first `(`, trimmed) is an integer type — contains `int` — or a decimal type — contains `decimal`, `numeric`, `float`, `double` or `real`, or is `money` or `number` |
+| `numeric` | its base type (its `type` lower-cased, cut at the first `(`, trimmed) is an integer type — contains `int`, or is a PostgreSQL serial type (`serial`, `serial2`, `serial4`, `serial8`, `smallserial`, `bigserial`) — or a decimal type — contains `decimal`, `numeric`, `float`, `double` or `real`, or is `money` or `number` |
 | `boolean` | the base type contains `bool` |
 | `temporal` | the base type contains `date` or `timestamp`; `time` alone is not temporal |
 | `enum` | its `type` is the key of an enum in the model |

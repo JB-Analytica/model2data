@@ -19,6 +19,7 @@ from model2data.generate.faker import (
     set_locale,
 )
 from model2data.generate.hints import validate_hints
+from model2data.generate.kinds import is_integer_type
 from model2data.generate.options import UNIFORM, TimeProfile, validate_skew
 from model2data.generate.relationships import (
     build_fk_lookup,
@@ -404,8 +405,10 @@ def _coerce_integer_dtypes(df: pd.DataFrame, table_def: TableDef) -> pd.DataFram
             # column's real string values to Int64. Values here are always
             # generated as strings (see generate_column_values), never ints.
             continue
-        base_type = column.data_type.lower().split("(")[0].strip()
-        if any(key in base_type for key in ["int", "integer", "bigint", "smallint"]):
+        # "int" alone matched every name the old list spelled out ("integer",
+        # "bigint", "smallint" all contain it), so this is the same test, now
+        # shared with the generator so the two cannot drift apart again.
+        if is_integer_type(column.data_type):
             df[column.name] = df[column.name].astype("Int64")
 
     return df
