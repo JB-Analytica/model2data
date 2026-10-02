@@ -29,7 +29,7 @@ from __future__ import annotations
 import io
 import re
 from collections.abc import Iterable, Mapping
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 
 import pandas as pd
 
@@ -37,24 +37,126 @@ from model2data.dbt.tests import DbtTest
 
 
 def as_seeded(frame: pd.DataFrame) -> pd.DataFrame:
-    """`frame` as the text its seed CSV holds, an empty field (a null) as None."""
+    """`frame` as the text its seed CSV holds, an empty field (a null) as None.
+
+    The CSV writes each column on its own (a lone empty field as `""`), so a
+    column reads back the same whichever of the frame's columns are written
+    beside it: the report seeds only the columns a defect changed.
+    """
     text = frame.to_csv(index=False)
     read = pd.read_csv(io.StringIO(text), dtype=str, keep_default_na=False, na_values=[""])
     return read.astype(object).where(read.notna(), None)
 
 
-def failing(tests: Iterable[DbtTest], seeded: Mapping[str, pd.DataFrame]) -> set[str]:
-    """The names of the tests that fail on `seeded` (frames by dbt name, from `as_seeded`)."""
-    return {test.name for test in tests if fails(test, seeded)}
+class Columns:
+    """Each seeded frame's columns as the checks read them, worked out once.
+
+    The checks of a project read the same column many times (its `not_null`,
+    `unique` and the `relationships` of every child pointing at it), and the
+    report checks the same frames over and over; this keeps each column's
+    values, and its values as numbers, for as long as the frame is in use. A
+    frame is known by identity: it must not change while it is cached.
+    """
+
+    def __init__(self) -> None:
+        self._frames: dict[int, tuple[pd.DataFrame, dict[tuple[str, str], Any]]] = {}
+
+    def _entry(self, frame: pd.DataFrame) -> dict[tuple[str, str], Any]:
+        held = self._frames.get(id(frame))
+        if held is None or held[0] is not frame:
+            held = (frame, {})
+            self._frames[id(frame)] = held
+        return held[1]
+
+    def share(self, frame: pd.DataFrame, base: pd.DataFrame, columns: Iterable[str]) -> None:
+        """Let `frame` use what is known of `base`'s `columns`, which it holds unchanged."""
+        keep = set(columns)
+        mine = self._entry(frame)
+        for (kind, column), value in self._entry(base).items():
+            if column in keep:
+                mine.setdefault((kind, column), value)
+
+    def _get(self, frame: pd.DataFrame, kind: str, column: str, make: Callable[[], Any]) -> Any:
+        entry = self._entry(frame)
+        key = (kind, column)
+        if key not in entry:
+            entry[key] = make()
+        return entry[key]
+
+    def values(self, frame: pd.DataFrame, column: str) -> list[Any]:
+        """Every value of the column, a null as None."""
+        return self._get(frame, "values", column, lambda: frame[column].tolist())
+
+    def present(self, frame: pd.DataFrame, column: str) -> list[Any]:
+        """The column's values that are not null."""
+        return self._get(
+            frame,
+            "present",
+            column,
+            lambda: [value for value in self.values(frame, column) if value is not None],
+        )
+
+    def numbers(self, frame: pd.DataFrame, column: str) -> list[Any]:
+        """Every value of the column through `_number`, a null as None."""
+
+        def make() -> list[Any]:
+            values = self.values(frame, column)
+            converted = {value: _number(value) for value in set(values)}
+            return [converted[value] for value in values]
+
+        return self._get(frame, "numbers", column, make)
+
+    def present_numbers(self, frame: pd.DataFrame, column: str) -> list[Any]:
+        """The column's values that are not null, through `_number`."""
+        return self._get(
+            frame,
+            "present_numbers",
+            column,
+            lambda: [value for value in self.numbers(frame, column) if value is not None],
+        )
+
+    def number_set(self, frame: pd.DataFrame, column: str) -> set[Any]:
+        """The distinct values of the column that are not null, through `_number`."""
+        return self._get(
+            frame, "number_set", column, lambda: set(self.present_numbers(frame, column))
+        )
+
+    def has_null(self, frame: pd.DataFrame, column: str) -> bool:
+        return self._get(
+            frame,
+            "has_null",
+            column,
+            lambda: any(value is None for value in self.values(frame, column)),
+        )
 
 
-def fails(test: DbtTest, seeded: Mapping[str, pd.DataFrame]) -> bool:
+def failing(
+    tests: Iterable[DbtTest],
+    seeded: Mapping[str, pd.DataFrame],
+    *,
+    cache: Optional[Columns] = None,
+) -> set[str]:
+    """The names of the tests that fail on `seeded` (frames by dbt name, from `as_seeded`).
+
+    `cache` keeps what is read of each frame for the next call on the same frames.
+    """
+    cache = cache if cache is not None else Columns()
+    return {test.name for test in tests if fails(test, seeded, cache=cache)}
+
+
+def fails(
+    test: DbtTest,
+    seeded: Mapping[str, pd.DataFrame],
+    *,
+    cache: Optional[Columns] = None,
+) -> bool:
     """Whether `test` fails on `seeded`. A test of a kind not known here never fails."""
     frame = seeded.get(test.table)
     if frame is None:
         return False
     check = _CHECKS.get(test.type)
-    return bool(check is not None and check(test, frame, seeded))
+    cache = cache if cache is not None else Columns()
+    return bool(check is not None and check(test, frame, seeded, cache))
 
 
 _NUMBER = re.compile(r"^-?[0-9]+(\.[0-9]+)?([eE][-+]?[0-9]+)?$")
@@ -67,40 +169,35 @@ def _number(value: Any) -> Any:
     return value
 
 
-def _values(frame: pd.DataFrame, column: str) -> list[Any]:
-    return [value for value in frame[column].tolist() if value is not None]
+def _not_null(test: DbtTest, frame: pd.DataFrame, seeded: Mapping, cache: Columns) -> bool:
+    return cache.has_null(frame, str(test.column))
 
 
-def _not_null(test: DbtTest, frame: pd.DataFrame, seeded: Mapping) -> bool:
-    return any(value is None for value in frame[test.column].tolist())
+def _unique(test: DbtTest, frame: pd.DataFrame, seeded: Mapping, cache: Columns) -> bool:
+    column = str(test.column)
+    return len(cache.number_set(frame, column)) < len(cache.present_numbers(frame, column))
 
 
-def _unique(test: DbtTest, frame: pd.DataFrame, seeded: Mapping) -> bool:
-    values = [_number(value) for value in _values(frame, str(test.column))]
-    return len(set(values)) < len(values)
-
-
-def _accepted_values(test: DbtTest, frame: pd.DataFrame, seeded: Mapping) -> bool:
+def _accepted_values(test: DbtTest, frame: pd.DataFrame, seeded: Mapping, cache: Columns) -> bool:
     allowed = {str(value) for value in test.arguments.get("values", [])}
-    return any(value not in allowed for value in _values(frame, str(test.column)))
+    return any(value not in allowed for value in cache.present(frame, str(test.column)))
 
 
-def _relationships(test: DbtTest, frame: pd.DataFrame, seeded: Mapping) -> bool:
+def _relationships(test: DbtTest, frame: pd.DataFrame, seeded: Mapping, cache: Columns) -> bool:
     if test.parent is None:
         return False
     parent_table, parent_column = test.parent
     parent = seeded.get(parent_table)
     if parent is None:
         return False
-    held = {_number(value) for value in _values(parent, parent_column)}
-    return any(_number(value) not in held for value in _values(frame, str(test.column)))
+    held = cache.number_set(parent, parent_column)
+    return not cache.number_set(frame, str(test.column)) <= held
 
 
-def _between(test: DbtTest, frame: pd.DataFrame, seeded: Mapping) -> bool:
+def _between(test: DbtTest, frame: pd.DataFrame, seeded: Mapping, cache: Columns) -> bool:
     low = test.arguments.get("min_value")
     high = test.arguments.get("max_value")
-    for value in _values(frame, str(test.column)):
-        number = _number(value)
+    for number in cache.present_numbers(frame, str(test.column)):
         if not isinstance(number, float):
             continue
         if (low is not None and number < low) or (high is not None and number > high):
@@ -108,7 +205,7 @@ def _between(test: DbtTest, frame: pd.DataFrame, seeded: Mapping) -> bool:
     return False
 
 
-def _not_before(test: DbtTest, frame: pd.DataFrame, seeded: Mapping) -> bool:
+def _not_before(test: DbtTest, frame: pd.DataFrame, seeded: Mapping, cache: Columns) -> bool:
     other = test.arguments["other"]
     pairs = frame[[str(test.column), other]].dropna()
     if pairs.empty:
@@ -120,38 +217,40 @@ def _not_before(test: DbtTest, frame: pd.DataFrame, seeded: Mapping) -> bool:
     return bool((mine < theirs).any())
 
 
-def _max_null_share(test: DbtTest, frame: pd.DataFrame, seeded: Mapping) -> bool:
+def _max_null_share(test: DbtTest, frame: pd.DataFrame, seeded: Mapping, cache: Columns) -> bool:
     if not len(frame):
         return False
-    nulls = sum(value is None for value in frame[test.column].tolist())
+    values = cache.values(frame, str(test.column))
+    nulls = len(values) - len(cache.present(frame, str(test.column)))
     return nulls / len(frame) > test.arguments["max_share"]
 
 
-def _max_distinct(test: DbtTest, frame: pd.DataFrame, seeded: Mapping) -> bool:
-    distinct = {_number(value) for value in _values(frame, str(test.column))}
-    return len(distinct) > test.arguments["max_count"]
+def _max_distinct(test: DbtTest, frame: pd.DataFrame, seeded: Mapping, cache: Columns) -> bool:
+    return len(cache.number_set(frame, str(test.column))) > test.arguments["max_count"]
 
 
-def _unique_combination(test: DbtTest, frame: pd.DataFrame, seeded: Mapping) -> bool:
-    columns = list(test.arguments["columns"])
-    rows = [
-        tuple(_number(value) for value in row) for row in frame[columns].itertuples(index=False)
-    ]
+def _unique_combination(
+    test: DbtTest, frame: pd.DataFrame, seeded: Mapping, cache: Columns
+) -> bool:
+    columns = [cache.numbers(frame, column) for column in test.arguments["columns"]]
+    rows = list(zip(*columns, strict=True))
     return len(set(rows)) < len(rows)
 
 
-def _one_current_row(test: DbtTest, frame: pd.DataFrame, seeded: Mapping) -> bool:
+def _one_current_row(test: DbtTest, frame: pd.DataFrame, seeded: Mapping, cache: Columns) -> bool:
     key = list(test.arguments["key"])
     current = frame[test.arguments["current"]].map(lambda value: str(value).lower() == "true")
     counts = current.groupby([frame[column].map(_number) for column in key], dropna=False).sum()
     return bool((counts != 1).any())
 
 
-def _no_overlapping_ranges(test: DbtTest, frame: pd.DataFrame, seeded: Mapping) -> bool:
+def _no_overlapping_ranges(
+    test: DbtTest, frame: pd.DataFrame, seeded: Mapping, cache: Columns
+) -> bool:
     key = list(test.arguments["key"])
     begins = pd.to_datetime(frame[test.arguments["valid_from"]], format="mixed")
     ends = pd.to_datetime(frame[test.arguments["valid_to"]], format="mixed")
-    keys = [tuple(_number(v) for v in row) for row in frame[key].itertuples(index=False)]
+    keys = list(zip(*(cache.numbers(frame, column) for column in key), strict=True))
     versions: dict[tuple, list[tuple]] = {}
     for row, k in enumerate(keys):
         versions.setdefault(k, []).append((begins.iloc[row], ends.iloc[row]))
@@ -163,7 +262,7 @@ def _no_overlapping_ranges(test: DbtTest, frame: pd.DataFrame, seeded: Mapping) 
     return False
 
 
-_CHECKS: dict[str, Callable[[DbtTest, pd.DataFrame, Mapping], bool]] = {
+_CHECKS: dict[str, Callable[[DbtTest, pd.DataFrame, Mapping, Columns], bool]] = {
     "not_null": _not_null,
     "unique": _unique,
     "accepted_values": _accepted_values,

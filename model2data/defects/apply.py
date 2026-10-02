@@ -64,7 +64,7 @@ from model2data import __version__
 from model2data.dbt.hint_tests import DEFAULT_TOLERANCE
 from model2data.dbt.naming import dbt_names, for_dbt
 from model2data.dbt.tests import DbtTest, dbt_tests
-from model2data.defects.checks import as_seeded, failing
+from model2data.defects.checks import Columns, as_seeded, failing, fails
 from model2data.defects.report import AppliedDefect, DefectsReport, ExpectedFailure
 from model2data.generate import kinds
 from model2data.generate.days import DayResult, TableDay
@@ -823,18 +823,41 @@ def _report(
     dbt_tables, dbt_refs = for_dbt(inputs.tables, inputs.refs, names)
     tests = dbt_tests(dbt_tables, dbt_refs, hint_tests=hint_tests, test_tolerance=test_tolerance)
     keys = {name: key for key, name in names.items()}
+    cache = Columns()
     seeded_clean = {names[key]: as_seeded(frame) for key, frame in clean.items()}
-    seeded_broken = {names[key]: as_seeded(frame) for key, frame in broken.items()}
-    failing_clean = failing(tests, seeded_clean)
-    failing_broken = failing(tests, seeded_broken)
+    seeded_broken = dict(seeded_clean)
+    done: dict[str, tuple[pd.DataFrame, Sequence[_Patch]]] = {}
+    for key, frame in broken.items():
+        if frame is not clean.get(key):
+            patches = [p for k, _, _, o in applied if k == key for p in o.patches]
+            seeded = _seeded_patched(clean[key], seeded_clean[names[key]], patches, cache)
+            seeded_broken[names[key]] = seeded
+            done[key] = (seeded, patches)
+    fails_clean = [fails(test, seeded_clean, cache=cache) for test in tests]
+    failing_clean = {test.name for test, failed in zip(tests, fails_clean, strict=True) if failed}
+    failing_broken = failing(tests, seeded_broken, cache=cache)
     alone: list[set[str]] = []
     for key, _, _, outcome in applied:
         if not outcome.patches:
             alone.append(set())
             continue
+        # A test that does not read this table fails as it does on the clean data.
+        name = names[key]
         seeded = dict(seeded_clean)
-        seeded[names[key]] = as_seeded(_patched(clean[key], outcome.patches))
-        alone.append(failing(tests, seeded))
+        seeded[name] = _seeded_patched(
+            clean[key], seeded_clean[name], outcome.patches, cache, done.get(key)
+        )
+        alone.append(
+            {
+                test.name
+                for test, failed in zip(tests, fails_clean, strict=True)
+                if (
+                    fails(test, seeded, cache=cache)
+                    if test.table == name or (test.parent is not None and test.parent[0] == name)
+                    else failed
+                )
+            }
+        )
 
     expected: list[ExpectedFailure] = []
     by_defect: list[list[str]] = [[] for _ in applied]
@@ -869,6 +892,52 @@ def _report(
             )
         )
     return report
+
+
+def _seeded_patched(
+    frame: pd.DataFrame,
+    base: pd.DataFrame,
+    patches: Sequence[_Patch],
+    cache: Columns,
+    done: Optional[tuple[pd.DataFrame, Sequence[_Patch]]] = None,
+) -> pd.DataFrame:
+    """`as_seeded(_patched(frame, patches))`, given `base`, `as_seeded(frame)`.
+
+    Only the columns `patches` set are written out and read back, as a column
+    reads back the same whichever columns stand beside it; the others, and what
+    `cache` knows of them, are `base`'s. `done` is another seeded frame of
+    `frame` and the patches it was made with: a column those patches set exactly
+    as `patches` do is taken from it rather than written out again.
+    """
+    mine = _by_column(patches)
+    theirs = _by_column(done[1]) if done is not None else {}
+    reuse = [
+        column
+        for column, own in mine.items()
+        if len(own) == len(theirs.get(column, ()))
+        and all(a is b for a, b in zip(own, theirs[column], strict=True))
+    ]
+    fresh = [column for column in mine if column not in reuse]
+    seeded = base.copy()
+    if fresh:
+        part = as_seeded(
+            _patched(frame[fresh], [patch for patch in patches if patch.column in fresh])
+        )
+        for column in fresh:
+            seeded[column] = part[column]
+    cache.share(seeded, base, [column for column in base.columns if column not in mine])
+    if done is not None and reuse:
+        for column in reuse:
+            seeded[column] = done[0][column]
+        cache.share(seeded, done[0], reuse)
+    return seeded
+
+
+def _by_column(patches: Sequence[_Patch]) -> dict[str, list[_Patch]]:
+    by_column: dict[str, list[_Patch]] = {}
+    for patch in patches:
+        by_column.setdefault(patch.column, []).append(patch)
+    return by_column
 
 
 def _culprits(
