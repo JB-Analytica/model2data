@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.10.3] - 2026-10-02
+
+### Changed
+- **Performance, second pass: a defects run about 2x faster again than 1.10.2, a clean run about
+  1.6x, with the same output byte for byte.** The four-table model 1.10.2 timed (500 users,
+  4,000 follows, 1,500 posts, 6,000 comments) generates in 0.135 s instead of 0.21 s, and with
+  `--defects messy` in 0.20 s instead of 0.41 s (1.10.1: 0.54 s and 1.14 s). At 5,000 rows a
+  table the ecommerce example takes 0.30 s instead of 0.66 s, and 0.44 s instead of 0.94 s with
+  `--defects messy`.
+  - The defects report works out what each seed CSV column holds directly instead of writing the
+    CSV and reading it back; a column holding anything it does not know to come back the same (a
+    NUL, a datetime, a Decimal) still takes the round trip.
+  - The rows a child references, the cells a defect sets and the keys it reports are read from
+    lists rather than cell by cell.
+  - Generic `varchar` columns draw Faker's three-word sentences, and a person's first and last
+    name the locale's weighted names, with the same draws from the same stream but without
+    Faker's per-call overhead (a person: 70 µs down to 2); timestamps shaped by `growth` or
+    `business_hours` draw their time of day without `randint`'s call overhead.
+  - Each shortcut is checked against Faker's or `random`'s own draws before it is used, so a
+    locale, Faker version or random stream that draws otherwise keeps the old path. The same
+    seed, model and defects give the same files as 1.10.2.
+
 ## [1.10.2] - 2026-10-02
 
 ### Changed

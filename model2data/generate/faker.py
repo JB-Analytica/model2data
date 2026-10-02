@@ -5,13 +5,18 @@ import random
 import re
 import unicodedata
 import uuid
+from bisect import bisect_right
+from collections import OrderedDict
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
-from typing import Callable, Optional, Union
+from itertools import accumulate
+from typing import Any, Callable, Optional, Union
 
 import pandas as pd
 from faker import Faker
+from faker.providers import BaseProvider as _BaseProvider
 from faker.providers.lorem import Provider as _LoremProvider
+from faker.providers.person import Provider as _PersonProvider
 
 from model2data.generate.kinds import (
     is_boolean_type,
@@ -262,11 +267,91 @@ def _resolve_locale() -> None:
 
 
 def _new_person() -> _Person:
+    first = _element("first_name", "first_names")
+    last = _element("last_name", "last_names")
     return _Person(
-        first_name=fake.first_name(),
-        last_name=fake.last_name(),
+        first_name=first() if first is not None else fake.first_name(),
+        last_name=last() if last is not None else fake.last_name(),
         email_domain=fake.free_email_domain(),
     )
+
+
+# Faker draws a name through `random_element`, which copies the locale's list of
+# names (and their weights, adding them up anew) for every name it draws: most
+# of a person's cost. `_element` makes the same draw from the same stream --
+# `random.choices` over the weights added up once, or `random.choice` -- once it
+# has drawn what Faker draws.
+_elements: dict[tuple[int, str], tuple[object, Optional[Callable[[], Any]]]] = {}
+
+
+def _element(method: str, attribute: str) -> Optional[Callable[[], Any]]:
+    """What draws `fake.<method>()` directly, for a person-provider `method` that is
+    `random_element(self.<attribute>)`; None when it is left to Faker (several
+    locales pick a locale on every call, say)."""
+    key = (id(fake), method)
+    held = _elements.get(key)
+    if held is not None and held[0] is fake:
+        return held[1]
+    ours = None
+    if len(fake.locales) == 1:
+        theirs = getattr(fake, method)
+        provider = getattr(theirs, "__self__", None)
+        if (
+            isinstance(provider, _PersonProvider)
+            and getattr(type(provider), method) is getattr(_PersonProvider, method)
+            and type(provider).random_element is _BaseProvider.random_element
+            and type(provider).random_elements is _BaseProvider.random_elements
+        ):
+            ours = _element_draw(provider, getattr(provider, attribute))
+            if ours is not None and not _draws_alike(provider, theirs, ours):
+                ours = None
+    _elements[key] = (fake, ours)
+    return ours
+
+
+def _element_draw(provider: Any, elements: Any) -> Optional[Callable[[], Any]]:
+    """`provider.random_element(elements)` drawn directly; None for elements it does not know."""
+    if isinstance(elements, OrderedDict) and provider.__use_weighting__:
+        population = tuple(elements.keys())
+        cumulative = list(accumulate(elements.values()))
+        total = cumulative[-1] + 0.0
+        last = len(population) - 1
+
+        def weighted() -> Any:  # random.choices(population, weights, k=1)[0]
+            stream = provider.generator.random
+            if type(stream) is not random.Random:
+                return provider.random_element(elements)
+            return population[bisect_right(cumulative, stream.random() * total, 0, last)]
+
+        return weighted
+    if isinstance(elements, (tuple, list, OrderedDict)) and elements:
+        population = tuple(elements)
+
+        def uniform() -> Any:  # random.choice(population)
+            stream = provider.generator.random
+            if type(stream) is not random.Random:
+                return provider.random_element(elements)
+            return population[stream._randbelow(len(population))]
+
+        return uniform
+    return None
+
+
+def _draws_alike(provider: Any, theirs: Callable[[], Any], ours: Callable[[], Any]) -> bool:
+    """Whether `ours` draws what `theirs` draws and leaves the stream alike, which it leaves as found."""
+    stream = provider.generator.random
+    if type(stream) is not random.Random:
+        return False
+    start = stream.getstate()
+    try:
+        expected = [theirs() for _ in range(300)]
+        end = stream.getstate()
+        stream.setstate(start)
+        return [ours() for _ in range(300)] == expected and stream.getstate() == end
+    except Exception:  # noqa: BLE001 - any surprise means "not the Faker we know"
+        return False
+    finally:
+        stream.setstate(start)
 
 
 def _new_address() -> _Address:
@@ -928,7 +1013,7 @@ def generate_column_values(
                     values = [_seeded_uuid() for _ in range(row_count)]
                 else:
                     _stats_state["unmapped"].append((column.name, column.data_type))
-                    values = [fake.sentence(nb_words=3) for _ in range(row_count)]
+                    values = [_sentence(3) for _ in range(row_count)]
 
     # -----------------------------------------------------
     # Nullability
@@ -1067,10 +1152,12 @@ def _distinct_parent_values(fk_values: list, row_count: int, unique_label: str) 
 
 # Faker's `text` reaches each word through five layers of provider methods,
 # copying the locale's word list twice per sentence on the way; a text column
-# spends most of a run's generation time there. `_text` makes the same draws
-# from the same random stream directly. It is used for a locale only after it
-# has given the very strings Faker gives, so another Faker version or a locale
-# with lorem of its own falls back to `fake.text` rather than drift.
+# spends most of a run's generation time there. `_text` and `_sentence` make
+# the same draws from the same random stream directly, written out as
+# `random.Random` makes them. They are used for a locale only after they have
+# given the very strings Faker gives, so another Faker version, a locale with
+# lorem of its own, or a stream that draws otherwise falls back to Faker
+# rather than drift.
 _LOREM_METHODS = (
     "text",
     "paragraph",
@@ -1082,31 +1169,69 @@ _LOREM_METHODS = (
     "random_choices",
     "random_elements",
 )
+_RANDOM_METHODS = (
+    "random",
+    "getrandbits",
+    "_randbelow",
+    "randint",
+    "randrange",
+    "choice",
+    "choices",
+)
 _lorem_checked: dict[int, tuple[object, bool]] = {}
+_lorem_of: dict[int, tuple[object, Optional[_LoremProvider]]] = {}
 
 
 def _text(max_nb_chars: int = 200) -> str:
     """`fake.text(max_nb_chars)`: the same text, from the same draws."""
-    method = fake.get_formatter("text") if len(fake.locales) == 1 else None
-    provider = getattr(method, "__self__", None)
-    if (
-        max_nb_chars < 100
-        or not isinstance(provider, _LoremProvider)
-        or not _lorem_is_faker(provider)
-    ):
+    provider = _lorem() if max_nb_chars >= 100 else None
+    if provider is None:
         return fake.text(max_nb_chars=max_nb_chars)
     return _paragraphs_text(provider, max_nb_chars)
 
 
+def _sentence(nb_words: int) -> str:
+    """`fake.sentence(nb_words)`: the same sentence, from the same draws."""
+    provider = _lorem()
+    if provider is None or nb_words <= 0:
+        return fake.sentence(nb_words=nb_words)
+    return _Draws(provider).sentence(nb_words)
+
+
+def _lorem() -> Optional[_LoremProvider]:
+    """The lorem provider of `fake`'s one locale, when `_Draws` gives what it gives."""
+    held = _lorem_of.get(id(fake))
+    if held is not None and held[0] is fake:
+        return held[1]
+    method = fake.get_formatter("text") if len(fake.locales) == 1 else None
+    provider = getattr(method, "__self__", None)
+    usable = (
+        isinstance(provider, _LoremProvider)
+        and getattr(fake.get_formatter("sentence"), "__self__", None) is provider
+        and _lorem_is_faker(provider)
+    )
+    found = provider if usable else None
+    _lorem_of[id(fake)] = (fake, found)
+    return found
+
+
 def _lorem_is_faker(provider: _LoremProvider) -> bool:
-    """Whether `_paragraphs_text` gives what `provider.text` gives, checked once."""
+    """Whether `_Draws` gives what `provider` gives, checked once."""
     held = _lorem_checked.get(id(provider))
     if held is not None and held[0] is provider:
         return held[1]
-    same = all(
-        getattr(type(provider), name, None) is getattr(_LoremProvider, name)
-        for name in _LOREM_METHODS
-    ) and _lorem_matches(provider)
+    stream = provider.generator.random
+    same = (
+        all(
+            getattr(type(provider), name, None) is getattr(_LoremProvider, name)
+            for name in _LOREM_METHODS
+        )
+        and isinstance(stream, random.Random)
+        and all(
+            getattr(type(stream), name) is getattr(random.Random, name) for name in _RANDOM_METHODS
+        )
+        and _lorem_matches(provider)
+    )
     _lorem_checked[id(provider)] = (provider, same)
     return same
 
@@ -1118,9 +1243,12 @@ def _lorem_matches(provider: _LoremProvider) -> bool:
     try:
         sizes = (100, 160, 200, 450)
         faker_texts = [provider.text(max_nb_chars=size) for size in sizes]
+        faker_texts += [provider.sentence(nb_words=3) for _ in range(60)]
         faker_end = stream.getstate()
         stream.setstate(start)
         ours = [_paragraphs_text(provider, size) for size in sizes]
+        draws = _Draws(provider)
+        ours += [draws.sentence(3) for _ in range(60)]
         return ours == faker_texts and stream.getstate() == faker_end
     except Exception:  # noqa: BLE001 - any surprise means "not the Faker we know"
         return False
@@ -1128,24 +1256,76 @@ def _lorem_matches(provider: _LoremProvider) -> bool:
         stream.setstate(start)
 
 
+class _Draws:
+    """Faker's lorem sentences, drawn as `random.Random` draws them.
+
+    `randomize_nb_elements(n, min=1)` is `max(1, int(n * randint(60, 140) / 100))`,
+    and `randint(60, 140)` is `60 + _randbelow(81)`: `getrandbits(7)` until it is
+    below 81. `random_choices(words, k)` is `choices`, `floor(random() * len)`
+    per word, except that one word is `choice`, `_randbelow(len)`.
+    """
+
+    def __init__(self, provider: _LoremProvider):
+        stream = provider.generator.random
+        words = provider.word_list  # type: ignore[attr-defined]
+        self.words = words if isinstance(words, tuple) else tuple(words)
+        self.many = float(len(self.words))
+        self.bits = len(self.words).bit_length()
+        self.getrandbits = stream.getrandbits
+        self.random = stream.random
+        self.connector = provider.word_connector
+        self.punctuation = provider.sentence_punctuation
+
+    def spread(self, number: int) -> int:
+        """`randomize_nb_elements(number, min=1)`."""
+        getrandbits = self.getrandbits
+        drawn = getrandbits(7)
+        while drawn >= 81:
+            drawn = getrandbits(7)
+        return max(1, int(number * (60 + drawn) / 100))
+
+    def sentence(self, nb_words: int) -> str:
+        words, draw, many = self.words, self.random, self.many
+        count = self.spread(nb_words)
+        if count == 1:
+            drawn = [words[self.below(len(words))]]
+        else:
+            drawn = [words[int(draw() * many)] for _ in range(count)]  # floor: it is >= 0
+        drawn[0] = drawn[0].title()
+        return self.connector.join(drawn) + self.punctuation
+
+    def below(self, n: int) -> int:
+        """`_randbelow(n)`, which `choice` raises for when there is nothing to choose."""
+        if not n:
+            raise IndexError("Cannot choose from an empty sequence")
+        getrandbits, bits = self.getrandbits, self.bits
+        drawn = getrandbits(bits)
+        while drawn >= n:
+            drawn = getrandbits(bits)
+        return drawn
+
+
 def _paragraphs_text(provider: _LoremProvider, max_nb_chars: int) -> str:
     """Faker's lorem `text` for 100 characters or more: paragraphs of 3 +/-40% sentences
-    of 6 +/-40% words, drawn as `randomize_nb_elements` and `random_choices` draw."""
-    stream = provider.generator.random
-    randint, choice, choices = stream.randint, stream.choice, stream.choices
-    words = provider.word_list  # type: ignore[attr-defined]
-    if not isinstance(words, tuple):
-        words = tuple(words)
-    connector = provider.word_connector
-    punctuation = provider.sentence_punctuation
+    of 6 +/-40% words."""
+    # `_Draws.spread` and `.sentence`, written out: this loop draws every word of a text.
+    draws = _Draws(provider)
+    words, many, getrandbits, draw = draws.words, draws.many, draws.getrandbits, draws.random
+    connector, punctuation = draws.connector, draws.punctuation
     text: list[str] = []
     while not text:
         size = 0
         while size < max_nb_chars:
+            spread = getrandbits(7)
+            while spread >= 81:
+                spread = getrandbits(7)
             sentences = []
-            for _ in range(max(1, int(3 * randint(60, 140) / 100))):
-                count = max(1, int(6 * randint(60, 140) / 100))
-                drawn = [choice(words)] if count == 1 else choices(words, k=count)
+            for _ in range(max(1, int(3 * (60 + spread) / 100))):
+                spread = getrandbits(7)
+                while spread >= 81:
+                    spread = getrandbits(7)
+                # At least int(6 * 60 / 100) = 3 words: `choices`, never `choice`.
+                drawn = [words[int(draw() * many)] for _ in range(int(6 * (60 + spread) / 100))]
                 drawn[0] = drawn[0].title()
                 sentences.append(connector.join(drawn) + punctuation)
             paragraph = ("\n" if size else "") + connector.join(sentences)
