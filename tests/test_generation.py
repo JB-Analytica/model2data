@@ -1,6 +1,7 @@
 import pandas as pd
 
 from model2data.generate.core import (
+    _mirror_attributes,
     _topological_table_order,
     generate_data_from_dbml,
     get_cyclic_tables,
@@ -825,7 +826,7 @@ def test_no_composite_keys_leaves_generation_unaffected():
 
 
 def test_two_table_fk_cycle_completes_and_is_flagged():
-    """A → B and B → A is a genuine structural cycle: neither table's
+    """A → B and B → A over required FKs is a genuine structural cycle: neither table's
     indegree ever reaches 0, so the old 'safety net' catches both silently.
     Generation must still complete (not crash/hang), and the new
     get_cyclic_tables() helper must report both tables.
@@ -833,11 +834,11 @@ def test_two_table_fk_cycle_completes_and_is_flagged():
     tables = {
         "a": TableDef(
             name="a",
-            columns=[ColumnDef("id", "int", {"pk"}), ColumnDef("b_id", "int")],
+            columns=[ColumnDef("id", "int", {"pk"}), ColumnDef("b_id", "int", {"not null"})],
         ),
         "b": TableDef(
             name="b",
-            columns=[ColumnDef("id", "int", {"pk"}), ColumnDef("a_id", "int")],
+            columns=[ColumnDef("id", "int", {"pk"}), ColumnDef("a_id", "int", {"not null"})],
         ),
     }
     refs = [
@@ -855,9 +856,15 @@ def test_two_table_fk_cycle_completes_and_is_flagged():
 
 def test_three_table_fk_cycle_is_flagged():
     tables = {
-        "a": TableDef(name="a", columns=[ColumnDef("id", "int", {"pk"}), ColumnDef("c_id", "int")]),
-        "b": TableDef(name="b", columns=[ColumnDef("id", "int", {"pk"}), ColumnDef("a_id", "int")]),
-        "c": TableDef(name="c", columns=[ColumnDef("id", "int", {"pk"}), ColumnDef("b_id", "int")]),
+        "a": TableDef(
+            "a", [ColumnDef("id", "int", {"pk"}), ColumnDef("c_id", "int", {"not null"})]
+        ),
+        "b": TableDef(
+            "b", [ColumnDef("id", "int", {"pk"}), ColumnDef("a_id", "int", {"not null"})]
+        ),
+        "c": TableDef(
+            "c", [ColumnDef("id", "int", {"pk"}), ColumnDef("b_id", "int", {"not null"})]
+        ),
     }
     refs = [
         {"source_table": "a", "source_column": "c_id", "target_table": "c", "target_column": "id"},
@@ -869,6 +876,63 @@ def test_three_table_fk_cycle_is_flagged():
 
     assert set(data.keys()) == {"a", "b", "c"}
     assert set(get_cyclic_tables()) == {"a", "b", "c"}
+
+
+def test_nullable_fk_breaks_a_cycle_and_still_points_at_real_rows():
+    """accounts.owner_user_id -> users.id is nullable, users.account_id -> accounts.id
+    is not: accounts goes first, and owner_user_id is drawn once users exist."""
+    tables = {
+        "accounts": TableDef(
+            "accounts",
+            [ColumnDef("id", "int", {"pk"}), ColumnDef("owner_user_id", "int")],
+        ),
+        "users": TableDef(
+            "users",
+            [ColumnDef("id", "int", {"pk"}), ColumnDef("account_id", "int", {"not null"})],
+        ),
+    }
+    refs = [
+        {
+            "source_table": "accounts",
+            "source_column": "owner_user_id",
+            "target_table": "users",
+            "target_column": "id",
+        },
+        {
+            "source_table": "users",
+            "source_column": "account_id",
+            "target_table": "accounts",
+            "target_column": "id",
+        },
+    ]
+
+    data = generate_data_from_dbml(tables, refs, base_rows=30, seed=3)
+
+    assert get_cyclic_tables() == []
+    owners = data["accounts"]["owner_user_id"].dropna()
+    assert len(owners) > 0
+    assert set(owners) <= set(data["users"]["id"])
+    assert set(data["users"]["account_id"]) <= set(data["accounts"]["id"])
+    again = generate_data_from_dbml(tables, refs, base_rows=30, seed=3)
+    pd.testing.assert_frame_equal(data["accounts"], again["accounts"])
+
+
+def test_mirroring_needs_a_foreign_key_to_the_parent():
+    """An attribute ref onto a parent the child has no foreign key to copies nothing."""
+    child = pd.DataFrame({"id": [1, 2], "region": ["x", "y"]})
+    parents = {"accounts": pd.DataFrame({"id": [1, 2], "region": ["eu", "us"]})}
+    attribute_refs = [
+        {
+            "source_table": "users",
+            "source_column": "region",
+            "target_table": "accounts",
+            "target_column": "region",
+        }
+    ]
+
+    out = _mirror_attributes(child.copy(), "users", attribute_refs, [], parents)
+
+    pd.testing.assert_frame_equal(out, child)
 
 
 def test_composite_ref_produces_fk_aware_values_for_both_columns():

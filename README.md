@@ -16,6 +16,13 @@ relationship-preserving synthetic data
 DuckDB or Postgres profile. No sample data to hunt down, no dbt boilerplate to hand-write, no
 production data to risk exposing.
 
+Driving model2data from a coding agent? Have it start here; the instructions ship with the
+installed version and pick a topic from the current directory:
+
+```bash
+uvx model2data@latest guide
+```
+
 A working analytics stack — real (synthetic) data, tested dbt models, queryable in
 DuckDB — from a schema file, in seconds:
 

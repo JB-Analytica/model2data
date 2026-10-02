@@ -209,12 +209,12 @@ def test_cli_summary_warns_about_fk_cycle(tmp_path):
         """
     Table a {
         id int [pk]
-        b_id int
+        b_id int [not null]
     }
 
     Table b {
         id int [pk]
-        a_id int
+        a_id int [not null]
     }
 
     Ref {

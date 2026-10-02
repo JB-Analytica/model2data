@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **`model2data guide [setup|triage|tune]`** prints one page of Markdown written for a coding
+  agent about to use model2data: `setup` (install, a starter model, the first run), `triage`
+  (what `validate`, `generate` and `dbt build` print and what to do about each, in order) and
+  `tune` (every option, model key and exit code). Without a topic it picks `triage` when the
+  current directory holds a `*.model2data.yml` or `*.dbml` file, else `setup`, and says so on
+  its first line. The pages ship in the package, so they match the installed version; the
+  command reads only file names in the current directory and writes nothing.
+
+### Fixed
+- **A foreign key cycle with a nullable link is generated, not flagged.** Tables were ordered by
+  every foreign key, so `accounts.owner_user_id -> users.id` beside `users.account_id ->
+  accounts.id` left both tables in "an unresolved FK cycle", whatever their nullability, and one
+  side pointed at rows that did not exist. A cycle is now broken at a table whose foreign keys
+  into it are all nullable: that table is generated first, and those columns are drawn once
+  their parent exists, from its rows. Only a cycle of required foreign keys is still reported.
+- **Determinism:** a model without an FK cycle generates exactly what it did before. A model
+  whose cycle had a nullable link now writes different foreign key values in that cycle's tables
+  (valid ones, where some used to dangle), and different columns mirrored from them.
+
 ## [1.10.4] - 2026-10-02
 
 ### Fixed
