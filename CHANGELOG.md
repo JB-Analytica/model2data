@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [1.10.3] - 2026-10-02
 
+### Added
+- **The determinism promise, written down and tested.** The same model, seed and `--as-of`, with
+  the same options, give the same files byte for byte: on any machine and supported Python, with
+  any Faker or pandas version model2data accepts, and in every 1.x release (README, "The
+  determinism promise"). `tests/test_determinism.py` holds the file hashes of 30 runs (every
+  example, every preset, multi-day and changelog runs, unit tests, table seeds, skew, history,
+  composite keys, five locales; 724 files) and runs on every pull request, and once more against
+  the newest Faker and pandas. Its hashes match what 1.10.1 produces.
+
 ### Changed
 - **Performance, second pass: a defects run about 2x faster again than 1.10.2, a clean run about
   1.6x, with the same output byte for byte.** The four-table model 1.10.2 timed (500 users,
