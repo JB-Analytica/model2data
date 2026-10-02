@@ -371,6 +371,37 @@ def test_validate_summary_agrees_with_its_count(tmp_path):
     assert "❌ 2 of 2 model files do not conform." in both.output
 
 
+UNIQUE_ENUM = """\
+model2data: 0.3.0
+name: u
+enums:
+  plan: [free, starter, pro, enterprise]
+tables:
+  plans:
+    columns:
+      id: {type: bigint, pk: true}
+      plan_name: {type: plan, unique: true, not_null: true}
+run: {rows: 10, rows_per_table: {plans: ROWS}, seed: 42, as_of: 2026-01-01}
+"""
+
+
+def test_a_unique_enum_with_a_member_per_row_writes_each_member_once(in_tmp):
+    model = _write(in_tmp, "u.model2data.yml", UNIQUE_ENUM.replace("ROWS", "4"))
+    result = runner.invoke(app, ["--file", str(model)])
+    assert result.exit_code == 0, result.output
+    plans = pd.read_csv(in_tmp / "dbt_u" / "seeds" / "raw" / "plans.csv")
+    assert sorted(plans["plan_name"]) == ["enterprise", "free", "pro", "starter"]
+    assert "Unique columns left with duplicate values" not in result.output
+
+
+def test_a_unique_enum_with_too_few_members_warns_in_the_summary(in_tmp):
+    model = _write(in_tmp, "u.model2data.yml", UNIQUE_ENUM.replace("ROWS", "6"))
+    result = runner.invoke(app, ["--file", str(model)])
+    assert result.exit_code == 0, result.output
+    assert "Unique columns left with duplicate values" in result.output
+    assert "plans.plan_name: 2 duplicate value(s)" in result.output
+
+
 def test_action_uses_setup_python_v6():
     import yaml
 

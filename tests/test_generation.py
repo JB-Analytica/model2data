@@ -519,6 +519,70 @@ def test_unique_column_with_room_reports_nothing():
     assert get_duplicate_unique_columns() == []
 
 
+PLANS = ["free", "starter", "pro", "enterprise"]
+
+
+def _plans_table(settings: set[str]) -> dict[str, TableDef]:
+    return {
+        "plans": TableDef(
+            name="plans",
+            columns=[
+                ColumnDef("id", "bigint", {"pk"}),
+                ColumnDef("plan_name", "plan", settings, enum_values=PLANS),
+            ],
+        )
+    }
+
+
+def test_unique_enum_with_a_member_per_row_takes_each_member_once():
+    # The enum has exactly as many members as the table has rows: a draw
+    # without replacement, so every member appears once and none twice.
+    for seed in range(20):
+        df = generate_data_from_dbml(
+            _plans_table({"unique", "not null"}), [], base_rows=4, seed=seed
+        )["plans"]
+        assert sorted(df["plan_name"]) == sorted(PLANS), seed
+        assert get_duplicate_unique_columns() == []
+
+
+def test_unique_enum_with_more_members_than_rows_stays_unique():
+    df = generate_data_from_dbml(_plans_table({"unique", "not null"}), [], base_rows=3, seed=1)[
+        "plans"
+    ]
+    assert df["plan_name"].is_unique
+    assert set(df["plan_name"]) <= set(PLANS)
+    assert get_duplicate_unique_columns() == []
+
+
+def test_unique_enum_with_fewer_members_than_rows_is_reported():
+    df = generate_data_from_dbml(_plans_table({"unique", "not null"}), [], base_rows=6, seed=1)[
+        "plans"
+    ]
+    # Every member is used before any repeats, and the two repeats are said.
+    assert set(df["plan_name"]) == set(PLANS)
+    assert get_duplicate_unique_columns() == ["plans.plan_name: 2 duplicate value(s)"]
+
+
+def test_unique_enum_that_draws_distinct_keeps_the_bytes_of_the_plain_draw():
+    # The determinism promise: only a repeat is drawn again, so a seed whose
+    # ordinary draw already came out distinct gives the same table as before.
+    kept = 0
+    for seed in range(40):
+        plain = generate_data_from_dbml(_plans_table({"not null"}), [], base_rows=3, seed=seed)
+        unique = generate_data_from_dbml(
+            _plans_table({"unique", "not null"}), [], base_rows=3, seed=seed
+        )
+        if plain["plans"]["plan_name"].is_unique:
+            kept += 1
+            assert plain["plans"].equals(unique["plans"]), seed
+    assert kept
+
+
+def test_nullable_unique_enum_keeps_its_non_null_values_distinct():
+    df = generate_data_from_dbml(_plans_table({"unique"}), [], base_rows=4, seed=2)["plans"]
+    assert df["plan_name"].dropna().is_unique
+
+
 def test_resolvable_composite_key_reports_nothing():
     # The mirror of the test above: when the dedup pass genuinely succeeds,
     # the warning must stay silent (no false positives).
