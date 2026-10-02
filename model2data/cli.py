@@ -165,7 +165,7 @@ app = typer.Typer(
     cls=_GenerateByDefault,
     help=(
         "model2data: Generate analytics-ready datasets from a data model.\n\n"
-        "Given a model -- a .model2data.yml document (spec 0.3.0), the same as JSON,\n"
+        "Given a model -- a .model2data.yml document (spec 0.4.0), the same as JSON,\n"
         "or a DBML file -- this tool produces:\n"
         "• Synthetic but realistic data\n"
         "• A runnable dbt project scaffold\n"
@@ -737,8 +737,12 @@ def main(
 
 
 def _spec_of(file: Path) -> str:
-    """The spec a conforming model is written against: 0.3.0, or 0.2.0 (DBML included)."""
-    return "0.3.0" if str(load(file).version).startswith("0.3") else "0.2.0"
+    """The spec a conforming model is written against: 0.4.0, 0.3.0, or 0.2.0 (DBML without
+    `when` included)."""
+    version = str(load(file).version)
+    return (
+        "0.4.0" if version.startswith("0.4") else "0.3.0" if version.startswith("0.3") else "0.2.0"
+    )
 
 
 def _print_defects(report: DefectsReport) -> None:
@@ -817,7 +821,7 @@ def validate_command(
         False, "--require-files", help="Exit 1 when no model file was given or matched."
     ),
 ):
-    """Check that models conform to spec 0.3.0 (or 0.2.x), printing every issue with its path.
+    """Check that models conform to spec 0.4.0 (or 0.2.x, 0.3.x), printing every issue with its path.
 
     Takes one or more files and/or --glob patterns. Exits 1 when any file has an error;
     warnings are printed, and the model conforms.
@@ -876,7 +880,7 @@ def convert_command(
     force: bool = typer.Option(False, "--force", help="Overwrite the output file if it exists."),
 ):
     """Convert a model -- DBML, typically -- to a .model2data.yml document (spec 0.2.0, or
-    0.3.0 when it has defects)."""
+    0.3.0 when it has defects, 0.4.0 when it has `when`)."""
     try:
         model = load(file)
     except ModelError as error:

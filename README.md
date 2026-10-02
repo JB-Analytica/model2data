@@ -130,7 +130,7 @@ flowchart LR
 ## The model file
 
 A model is one YAML document, `<name>.model2data.yml` — or the same document as JSON. Its
-format is [spec 0.3.0](model2data/spec/README.md), with a JSON Schema
+format is [spec 0.4.0](model2data/spec/README.md), with a JSON Schema
 ([`model.schema.json`](model2data/spec/model.schema.json)) your editor can autocomplete and check
 against:
 
@@ -401,7 +401,8 @@ shipped_at:
   generate: {after: ordered_at}
 ```
 
-A column that only has a value in some states says which with `when`: it holds a value on
+A column that only has a value in some states says which with `when` (spec 0.4.0: the model says
+`model2data: 0.4.0`): it holds a value on
 exactly the rows whose named column holds one of the listed values, and is null on every other
 row — no `pending` order with a `shipped_at`, no `cancelled` subscription without a
 `cancelled_at`:

@@ -15,7 +15,7 @@ runnable dbt project. You write the model; it writes everything else.
 Create `<name>.model2data.yml` in this directory. Start from this and replace the tables:
 
 ```yaml
-model2data: 0.3.0
+model2data: 0.4.0
 name: shop
 
 enums:
@@ -61,7 +61,7 @@ model2data --file <name>.model2data.yml
 cd dbt_<name> && dbt build
 ```
 
-Done looks like: `✅ <name>.model2data.yml conforms to spec 0.3.0.`, a summary with
+Done looks like: `✅ <name>.model2data.yml conforms to spec 0.4.0.`, a summary with
 `Columns using generic fallback text: 0` and no ⚠️ lines, and `dbt build` ending in
 `ERROR=0`. Anything else: `model2data guide triage`.
 

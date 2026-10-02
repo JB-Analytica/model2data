@@ -5,7 +5,7 @@
 | Command | Does | Exit |
 |---|---|---|
 | `model2data --file M` | same as `model2data generate --file M` | see below |
-| `model2data validate M...` | check models against spec 0.3.0 | 0 conforms (warnings allowed), 1 any error |
+| `model2data validate M...` | check models against spec 0.4.0 | 0 conforms (warnings allowed), 1 any error |
 | `model2data convert M` | print M as `.model2data.yml`; `-o FILE` writes it, `--force` overwrites | 0 ok, 1 unreadable model or output exists |
 | `model2data guide [TOPIC]` | this page; topics `setup`, `triage`, `tune` | 0 |
 
@@ -68,7 +68,7 @@ columns. Add `not_null` to every column that must always have a value.
 Each key in use (this model validates):
 
 ```yaml
-model2data: 0.3.0
+model2data: 0.4.0
 name: saas
 enums:
   plan_tier: [free, pro, enterprise]
@@ -107,7 +107,7 @@ run:
 
 `transitions` act only on days after the first: it needs `incremental` and `--days`.
 
-`when` ties a column to another column's value: `cancelled_at` above holds a timestamp on
+`when` (spec 0.4.0, so the model says `model2data: 0.4.0`) ties a column to another column's value: `cancelled_at` above holds a timestamp on
 every `cancelled` row and is null on every other one, so no `active` subscription has a
 `cancelled_at`. Name another column of the table (an enum, boolean, number or text column)
 and list the values it must hold; several columns must all match. Use it for every

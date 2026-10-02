@@ -25,7 +25,7 @@ from model2data.generate.core import generate_data_from_dbml
 from model2data.generate.days import generate_days
 from model2data.generate.hints import validate_hints
 from model2data.generate.when import apply_when, own_stream, update_when
-from model2data.model import from_dbml, from_dict, to_engine
+from model2data.model import dump, from_dbml, from_dict, load, to_engine
 from model2data.parse.dbml import ColumnDef, TableDef
 
 runner = CliRunner()
@@ -33,7 +33,7 @@ AS_OF = date(2026, 3, 1)
 MIDNIGHT = datetime(2026, 3, 1)
 
 TASKS: dict[str, Any] = {
-    "model2data": "0.3.0",
+    "model2data": "0.4.0",
     "enums": {"task_status": ["todo", "doing", "done"]},
     "tables": {
         "tasks": {
@@ -64,7 +64,7 @@ TASKS: dict[str, Any] = {
 }
 
 SUBSCRIPTIONS: dict[str, Any] = {
-    "model2data": "0.3.0",
+    "model2data": "0.4.0",
     "enums": {"sub_status": ["trial", "active", "cancelled"]},
     "tables": {
         "subscriptions": {
@@ -86,7 +86,7 @@ SUBSCRIPTIONS: dict[str, Any] = {
 }
 
 ORDERS: dict[str, Any] = {
-    "model2data": "0.2.0",
+    "model2data": "0.4.0",
     "enums": {"order_status": ["pending", "paid", "shipped", "delivered", "cancelled"]},
     "tables": {
         "customers": {"columns": {"id": {"type": "bigint", "pk": True}, "name": "first_name"}},
@@ -199,7 +199,7 @@ def test_shipped_at_follows_order_date_on_shipped_and_delivered_orders():
 
 def test_several_columns_must_all_match_and_any_type_of_column_can_carry_when():
     document = {
-        "model2data": "0.3.0",
+        "model2data": "0.4.0",
         "enums": {"level": ["1", "2", "3"]},
         "tables": {
             "tickets": {
@@ -578,6 +578,7 @@ def _when_doc(when, **column) -> dict:
             }
         },
         enums=ENUM,
+        model2data="0.4.0",
     )
 
 
@@ -719,6 +720,7 @@ def test_an_integer_enum_member_matches_its_text():
             }
         },
         enums={"lvl": [1, 2, 3]},
+        model2data="0.4.0",
     )
     assert _issues(document) == []
     frame = _days(document, 0, rows=200)[0].tables["t"].state
@@ -895,7 +897,6 @@ def test_defects_report_exactly_the_when_tests_dbt_fails(tmp_path, monkeypatch, 
     """A defect on the status (an invalid value) can break `when`; the report says so if it does."""
     monkeypatch.chdir(tmp_path)
     document: dict[str, Any] = copy.deepcopy(ORDERS)
-    document["model2data"] = "0.3.0"
     project = _generate(tmp_path, document, preset, "--defects", preset)
     build = _dbt(project, "build")
     expected = {
@@ -906,3 +907,62 @@ def test_defects_report_exactly_the_when_tests_dbt_fails(tmp_path, monkeypatch, 
     failed = {r["unique_id"].split(".")[2] for r in results if r["status"] in ("fail", "warn")}
     assert failed == expected, build.stdout
     assert not any(r["status"] == "error" for r in results), build.stdout
+
+
+# ---------------------------------------------------------------------------
+# Spec 0.4.0
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("version", ["0.2.0", "0.3.0", 0.3, "0.3"])
+def test_when_in_an_older_document_says_to_write_0_4(version):
+    document = copy.deepcopy(TASKS)
+    document["model2data"] = version
+    minor = "0.2" if str(version).startswith("0.2") else "0.3"
+    assert _issues(document) == [
+        "tables.tasks.columns.completed_at.generate.when: `when` is spec 0.4.0, and the "
+        f"document is written against {minor}: write `model2data: 0.4.0`"
+    ]
+
+
+@pytest.mark.parametrize("version", ["0.4.0", "0.4", 0.4])
+def test_a_0_4_document_is_read(version):
+    document = copy.deepcopy(TASKS)
+    document["model2data"] = version
+    assert _issues(document) == []
+
+
+def test_a_0_4_document_without_when_generates_what_the_same_0_3_one_does():
+    plain = _without_when(TASKS)
+    newer = copy.deepcopy(plain)
+    plain["model2data"] = "0.3.0"
+    for a, b in zip(_days(plain, 3), _days(newer, 3), strict=True):
+        pd.testing.assert_frame_equal(a.tables["tasks"].state, b.tables["tasks"].state)
+
+
+def test_the_writer_keeps_the_version_and_moves_to_0_4_for_when(tmp_path):
+    older = from_dict(_without_when(TASKS) | {"model2data": "0.3.0"})
+    assert dump(older).splitlines()[:2] == [
+        "# yaml-language-server: $schema=https://www.jbanalytica.com/model2data/spec/0.3.0/"
+        "model.schema.json",
+        "model2data: 0.3.0",
+    ]
+    model = from_dict(TASKS)
+    model.version = "0.2.0"  # read as 0.2, then given a `when`
+    text = dump(model)
+    assert text.splitlines()[:2] == [
+        "# yaml-language-server: $schema=https://www.jbanalytica.com/model2data/spec/0.4.0/"
+        "model.schema.json",
+        "model2data: 0.4.0",
+    ]
+    path = tmp_path / "t.model2data.yml"
+    path.write_text(text)
+    assert load(path) == from_dict(TASKS)
+
+
+def test_dbml_with_a_when_note_converts_to_0_4():
+    without = from_dbml("Table t {\n  id int [pk]\n  s varchar\n}\n")
+    assert without.version == "0.2.0"
+    model = from_dbml(
+        "Table t {\n  id int [pk]\n  s varchar [not null]\n"
+        '  x varchar [note: \'{"when": {"s": ["a"]}}\']\n}\n'
+    )
+    assert model.version == "0.4.0"

@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   current directory holds a `*.model2data.yml` or `*.dbml` file, else `setup`, and says so on
   its first line. The pages ship in the package, so they match the installed version; the
   command reads only file names in the current directory and writes nothing.
-- **A column can depend on another column's value: `when`.** `completed_at` with
+- **Spec 0.4.0: a column can depend on another column's value, with `when`.** `completed_at` with
   `generate: {after: created_at, when: {status: [done]}}` holds a timestamp on every `done` task
   and is null on every other one, where a `todo` task used to get a `completed_at` and a
   `cancelled` subscription none. `when` maps another column of the table (an enum, boolean,
@@ -30,8 +30,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   model's checks say what is wrong with one: a column that is not there (and which one was
   meant), a value its enum does not have, a `not_null`, keyed, unique, foreign-key or defaulted
   column carrying it. In DBML it is a note hint like the others:
-  `[note: '{"when": {"status": ["done"]}}']`. The schema, the spec README, `model2data guide
-  tune` and LLMS.md describe it.
+  `[note: '{"when": {"status": ["done"]}}']`. `when` is spec 0.4.0, which adds it and nothing
+  else: a model using it says `model2data: 0.4.0` (DBML with a `when` note converts to 0.4.0),
+  `when` in a 0.2 or 0.3 document is an error saying to write 0.4.0, and 0.2 and 0.3 documents
+  read exactly as before. A writer keeps the version a document was read with, and writes 0.4.0
+  once it uses `when`. The schema's `$id` is now
+  `https://www.jbanalytica.com/model2data/spec/0.4.0/model.schema.json` (0.2.0 and 0.3.0 stay
+  served, see `model2data/spec/PUBLISHING.md`); the spec README, `model2data guide` and LLMS.md
+  describe it.
 
 ### Fixed
 - **A foreign key cycle with a nullable link is generated, not flagged.** Tables were ordered by

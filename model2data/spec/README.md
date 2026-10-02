@@ -1,4 +1,4 @@
-# The model2data model — spec 0.3.0
+# The model2data model — spec 0.4.0
 
 A model2data model is one document: the tables of a data model, their columns and keys, the
 relationships between them, the enums a column can be typed as, and how every column's values
@@ -73,7 +73,7 @@ The spec is versioned on its own, apart from the engine and the studio, with
 [semantic versioning](https://semver.org). The version is in the schema's `$id`:
 
 ```
-https://www.jbanalytica.com/model2data/spec/0.3.0/model.schema.json
+https://www.jbanalytica.com/model2data/spec/0.4.0/model.schema.json
 ```
 
 A patch release changes wording only. A minor release adds something optional. A major release
@@ -86,6 +86,12 @@ document is a 0.3.0 document that uses neither, and a reader of 0.3.0 reads it a
 Such a document keeps saying `model2data: 0.2.0` and pointing at the 0.2.0 schema; a document
 that uses either says `model2data: 0.3.0`, and either in a document that says 0.2 is an error. A
 writer writes the version the document was read with, and 0.3.0 once it uses either.
+
+0.4.0 adds a column's [`when`](#generation-hints), and nothing else: a 0.2 or 0.3 document is a
+0.4.0 document that does not use it, and a reader of 0.4.0 reads it as it always read. Such a
+document keeps saying the version it says and pointing at that version's schema; a document that
+uses `when` says `model2data: 0.4.0`, and `when` in a document that says 0.2 or 0.3 is an error. A
+writer writes the version the document was read with, and 0.4.0 once it uses `when`.
 
 0.2.0 replaced 0.1.0, which carried hints as JSON inside DBML notes. See
 [From 0.1](#from-01).
@@ -186,7 +192,7 @@ whatever the enum's name contains (`maintenance_type` contains `int`).
 
 The run's defaults for four hints are under `run.shape`; a column's own `generate` wins.
 
-`when` makes a column depend on another column's value: the column holds a value on the rows
+`when` (spec 0.4.0) makes a column depend on another column's value: the column holds a value on the rows
 where the named columns hold one of the listed values, and is null on every other row.
 
 ```yaml
@@ -389,7 +395,7 @@ reports each failure with the path of the value (`tables.orders.columns.status.g
 11. Every key and every target of `transitions` is a member of the column's enum.
 12. A `measure` aggregating by `sum`, `average`, `min`, `max` or `median` is on a numeric column.
 13. `defects`, `run.defects` and `incremental.history` only in a document of spec 0.3.0 or
-    later.
+    later, and `when` only in a document of spec 0.4.0 or later.
 14. Every defect has exactly one of `count` and `share`, names a column of its table, and gives a
     `type` and `column` no other entry of the table gives. `duplicate_keys` names a primary key
     or a unique column, or its table has a primary key; when `run` gives the table's rows, its

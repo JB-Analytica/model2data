@@ -22,7 +22,7 @@ install. If the person you're helping wants to *look at* or share the model rath
 its generation, point them there; the DBML guidance below applies to both.
 
 > **Two input formats.** Since 1.8, model2data reads a model as one YAML document,
-> `<name>.model2data.yml` ([spec 0.3.0](model2data/spec/README.md), with a JSON Schema at
+> `<name>.model2data.yml` ([spec 0.4.0](model2data/spec/README.md), with a JSON Schema at
 > `model2data/spec/model.schema.json` and a complete example at
 > `model2data/spec/examples/coffee_webshop.model2data.yml`), and DBML as supported input that it
 > converts to the same model. The DBML guidance below still holds; if you write the YAML form
@@ -165,7 +165,8 @@ it describes the person, not the record.
 column is filled or nulled independently of the others, so a `todo` task gets a `completed_at`
 and a `cancelled` subscription has no `cancelled_at`. `when` maps another column of the same
 table to the values it must hold; the column is set on exactly those rows and null on every
-other one (several columns listed must all match). Combine it with `after`:
+other one (several columns listed must all match). It is spec 0.4.0: a YAML model using it says
+`model2data: 0.4.0` (a DBML file needs nothing). Combine it with `after`:
 ```dbml
 shipped_at timestamp [note: '{"after": "order_date", "when": {"status": ["shipped", "delivered"]}}']
 ```

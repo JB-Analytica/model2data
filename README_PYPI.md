@@ -85,7 +85,7 @@ access required.
 ## The model file
 
 A model is one YAML document, `<name>.model2data.yml` — or the same document as JSON. Its format
-is [spec 0.3.0](https://github.com/JB-Analytica/model2data/blob/main/model2data/spec/README.md), with a JSON Schema your editor can autocomplete and
+is [spec 0.4.0](https://github.com/JB-Analytica/model2data/blob/main/model2data/spec/README.md), with a JSON Schema your editor can autocomplete and
 check against:
 
 ```yaml

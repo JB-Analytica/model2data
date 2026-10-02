@@ -1,4 +1,4 @@
-"""Does a document conform to spec 0.3.0 (or 0.2.x): the schema, then the checks beyond it.
+"""Does a document conform to spec 0.4.0 (or 0.2.x, 0.3.x): the schema, then the checks beyond it.
 
 `check(document)` returns every issue it finds, each with the document path of
 the value at fault and a severity; it never stops at the first. The schema is
@@ -27,24 +27,27 @@ from model2data.dbt.naming import dbt_identifier
 from model2data.generate import kinds
 from model2data.model.errors import Issue, PathPart, format_path
 
-SPEC_VERSION = "0.3.0"
+SPEC_VERSION = "0.4.0"
 # The columns `incremental.history` adds to `<table>_history`.
 HISTORY_COLUMNS = ("valid_from", "valid_to", "is_current")
-# The minor versions this reader implements. 0.3.0 only adds `defects`, so a
-# 0.2 document reads exactly as it did; it just cannot use them.
-READS = ("0.2", "0.3")
+# The minor versions this reader implements. 0.3.0 only adds `defects` and
+# `incremental.history`, 0.4.0 only `when`, so an older document reads exactly as it
+# did; it just cannot use them.
+READS = ("0.2", "0.3", "0.4")
 _URL = "https://www.jbanalytica.com/model2data/spec/{}/model.schema.json"
 SCHEMA_URL = _URL.format(SPEC_VERSION)
 
 
 def schema_url(version: Any) -> str:
-    """The schema URL a document of `version` points editors at: 0.2.0's for a 0.2 one."""
-    return _URL.format("0.2.0") if _minor(version) == "0.2" else SCHEMA_URL
+    """The schema URL a document of `version` points editors at: 0.2.0's for a 0.2 one,
+    0.3.0's for a 0.3 one, the current one otherwise."""
+    older = {"0.2": "0.2.0", "0.3": "0.3.0"}.get(_minor(version) or "")
+    return _URL.format(older) if older else SCHEMA_URL
 
 
 def _minor(version: Any) -> Optional[str]:
     if isinstance(version, float):
-        return {0.2: "0.2", 0.3: "0.3"}.get(version)
+        return {0.2: "0.2", 0.3: "0.3", 0.4: "0.4"}.get(version)
     if isinstance(version, str):
         return ".".join(version.split(".")[:2])
     return None
@@ -52,7 +55,7 @@ def _minor(version: Any) -> Optional[str]:
 
 @lru_cache(maxsize=1)
 def schema() -> dict[str, Any]:
-    """The packaged, normative JSON Schema of spec 0.3.0, which also reads 0.2 documents."""
+    """The packaged, normative JSON Schema of spec 0.4.0, which also reads 0.2 and 0.3 documents."""
     text = resources.files("model2data").joinpath("spec/model.schema.json").read_text("utf-8")
     return json.loads(text)
 
@@ -96,7 +99,7 @@ def _version_issues(document: Mapping) -> list[Issue]:
     version = document.get("model2data")
     if version is None:
         return []  # reported by the schema as missing
-    if version in (0.2, 0.3) and not isinstance(version, bool):
+    if version in (0.2, 0.3, 0.4) and not isinstance(version, bool):
         return []
     if isinstance(version, str):
         parts = version.split(".")
@@ -107,7 +110,7 @@ def _version_issues(document: Mapping) -> list[Issue]:
                 Issue(
                     "model2data",
                     f"the document is written against spec {version}, and this reader "
-                    f"implements spec {SPEC_VERSION} (0.2.x and 0.3.x). "
+                    f"implements spec {SPEC_VERSION} (0.2.x, 0.3.x and 0.4.x). "
                     + (
                         "Convert a 0.1 model, which is DBML, with `model2data convert`."
                         if parts[:2] == ["0", "1"]
@@ -638,6 +641,17 @@ class _Checks:
         )
         return True
 
+    def _needs_0_4(self, path: list[PathPart], what: str = "when") -> bool:
+        """Report what 0.4.0 added (`what`) in a 0.2 or 0.3 document; True when it was reported."""
+        if self.minor not in ("0.2", "0.3"):
+            return False
+        self.add(
+            path,
+            f"`{what}` is spec 0.4.0, and the document is written against {self.minor}: "
+            "write `model2data: 0.4.0`",
+        )
+        return True
+
     def table_rows(self, key: str) -> Optional[int]:
         """The rows the document's `run` gives a table, or None when it leaves them to the reader."""
         run = _mapping(self.document.get("run"))
@@ -1034,7 +1048,11 @@ class _Checks:
                         )
 
         when = generate.get("when")
-        if isinstance(when, Mapping) and kind_of["nullable"]:
+        if (
+            isinstance(when, Mapping)
+            and not self._needs_0_4([*gen_path, "when"])
+            and kind_of["nullable"]
+        ):
             self._when(key, name, column, when, [*gen_path, "when"], is_fk, in_pk or in_key)
 
         after = generate.get("after")
