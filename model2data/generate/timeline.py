@@ -26,8 +26,10 @@ from __future__ import annotations
 import math
 import random
 import re
+from bisect import bisect_right
 from collections import deque
 from datetime import date, datetime, timedelta
+from itertools import accumulate
 from typing import Optional, Union
 
 from model2data.generate.kinds import temporal_kind
@@ -75,6 +77,11 @@ HOUR_WEIGHTS = (
     + [0.35] * 3  # 18:00-20:59: evening
     + [0.1] * 3  # 21:00-23:59: late
 )
+
+
+# `HOUR_WEIGHTS` added up as `random.choices` adds them up.
+_HOURS_ADDED_UP = list(accumulate(HOUR_WEIGHTS))
+_HOURS_TOTAL = _HOURS_ADDED_UP[-1] + 0.0
 
 
 def _window_days(start: date, end: date) -> list[date]:
@@ -136,17 +143,48 @@ def weighted_timestamps(row_count: int, profile: TimeProfile, anchor: date) -> l
     weights = [_day_weight(day, start, end, profile) for day in days]
     chosen_days = random.choices(days, weights=weights, k=row_count)
 
+    # Drawn as `random.Random` draws them when the module's stream is one: `randint(a, b)`
+    # is `a + _randbelow(b - a + 1)`, `getrandbits(n.bit_length())` until it is below
+    # n; `choices(range(24), HOUR_WEIGHTS)` is the hour whose added-up weight passes
+    # `random() * total`.
+    stream = getattr(random.randint, "__self__", None)
+    plain = (
+        type(stream) is random.Random
+        and getattr(random.getrandbits, "__self__", None) is stream
+        and getattr(random.random, "__self__", None) is stream
+    )
+    getrandbits, draw = random.getrandbits, random.random
+    prefixes: dict[date, str] = {}
     values: list[str] = []
     for day in chosen_days:
-        if profile.business_hours:
+        if profile.business_hours and plain:
+            hour = bisect_right(_HOURS_ADDED_UP, draw() * _HOURS_TOTAL, 0, 23)
+            minute = getrandbits(6)
+            while minute >= 60:
+                minute = getrandbits(6)
+            second = getrandbits(6)
+            while second >= 60:
+                second = getrandbits(6)
+            offset_seconds = hour * 3600 + minute * 60 + second
+        elif profile.business_hours:
             hour = random.choices(range(24), weights=HOUR_WEIGHTS)[0]
             minute = random.randint(0, 59)
             second = random.randint(0, 59)
             offset_seconds = hour * 3600 + minute * 60 + second
+        elif plain:
+            offset_seconds = getrandbits(17)
+            while offset_seconds >= 86400:
+                offset_seconds = getrandbits(17)
         else:
             offset_seconds = random.randint(0, 86399)
-        moment = datetime(day.year, day.month, day.day) + timedelta(seconds=offset_seconds)
-        values.append(moment.isoformat(sep=" "))
+        # As `datetime(day) + timedelta(seconds=offset_seconds)` writes itself with
+        # `isoformat(sep=" ")`: the offset never leaves the day, and is whole seconds.
+        prefix = prefixes.get(day)
+        if prefix is None:
+            prefix = prefixes[day] = date(day.year, day.month, day.day).isoformat() + " "
+        hour, rest = divmod(offset_seconds, 3600)
+        minute, second = divmod(rest, 60)
+        values.append(f"{prefix}{hour:02d}:{minute:02d}:{second:02d}")
     return values
 
 

@@ -7,18 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [1.10.2] - 2026-10-02
+## [1.10.3] - 2026-10-02
+
+### Added
+- **The determinism promise, written down and tested.** The same model, seed and `--as-of`, with
+  the same options, give the same files byte for byte: on any machine and supported Python, with
+  any Faker or pandas version model2data accepts, and in every 1.x release (README, "The
+  determinism promise"). `tests/test_determinism.py` holds the file hashes of 30 runs (every
+  example, every preset, multi-day and changelog runs, unit tests, table seeds, skew, history,
+  composite keys, five locales; 724 files) and runs on every pull request, and once more against
+  the newest Faker and pandas. Its hashes match what 1.10.1 produces.
 
 ### Changed
-- **Performance: generation is about 2.5x faster, a defects run about 2.8x, with the same output
-  byte for byte.** A model of four tables (500 users, 4,000 follows, 1,500 posts, 6,000 comments)
-  generates in 0.22 s instead of 0.54 s, and with `--defects messy` in 0.41 s instead of 1.17 s.
-  The defects report reads each seeded column once and keeps it across checks, re-checks after
-  each defect only the tests that read its table, and writes out and reads back only the columns
-  a defect changed. `text` columns draw Faker's lorem text with the same draws from the same
-  stream but without Faker's per-word overhead; a locale or Faker version whose lorem does not
-  give the very same text keeps going through Faker. Composite keys are deduplicated without
-  reading the frame cell by cell. The same seed, model and defects give the same files as 1.10.1.
+- **Performance: generation about 4x faster, a defects run about 5.7x, with the same output byte
+  for byte.** A model of four tables (500 users, 4,000 follows, 1,500 posts, 6,000 comments)
+  generates in 0.135 s instead of 0.53 s, and with `--defects messy` in 0.20 s instead of 1.14 s.
+  The same seed, model and options give the same files as 1.10.1. (1.10.2 was prepared but not
+  released; its changes are part of this release.)
+  - The defects report reads each seeded column once and keeps it across checks, re-checks after
+    each defect only the tests that read its table, and works out what each seed CSV column holds
+    directly instead of writing the CSV and reading it back; a column holding anything it does not
+    know to come back the same (a NUL, a carriage return, a datetime, a Decimal) still takes the
+    round trip.
+  - The rows a child references, the cells a defect sets and the keys it reports are read from
+    lists rather than cell by cell; composite keys are deduplicated the same way.
+  - `text` columns draw Faker's lorem text, generic `varchar` columns its three-word sentences
+    and a person's first and last name the locale's weighted names, with the same draws from the
+    same stream but without Faker's per-call overhead (a person: 70 µs down to 2); timestamps
+    shaped by `growth` or `business_hours` draw their time of day without `randint`'s call
+    overhead.
+  - Each shortcut is checked against Faker's or `random`'s own draws before it is used, so a
+    locale, Faker version or random stream that draws otherwise keeps the old path.
 
 ## [1.10.1] - 2026-10-01
 

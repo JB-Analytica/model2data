@@ -49,9 +49,9 @@ access required.
   `sku ean13`) to pick its generator outright when the name is wrong for the data.
 - **Relationship-preserving.** Foreign keys resolve to real parent rows; tables are generated in
   dependency order.
-- **Deterministic.** Pass `--seed` and the same schema always produces the same data — safe to
-  commit fixtures, safe to diff across CI runs. Add `--as-of` to pin the date the data is anchored
-  on, and the run reproduces on any later day rather than only on the day it first ran.
+- **Deterministic, byte for byte.** The same model, `--seed` and `--as-of` (and the same options)
+  give the same files, byte for byte, on any machine and in every 1.x release — safe to commit
+  fixtures, safe to diff across CI runs and upgrades. See [The determinism promise](#the-determinism-promise).
 - **Re-rollable one table at a time.** `--table-seed orders=7` regenerates a single table and
   leaves every other table byte-identical, so you can keep the four tables that look right.
 - **A real dbt project, not just CSVs.** Seeds, staging models that `ref()` them, schema tests,
@@ -222,14 +222,14 @@ jobs:
 ```
 
 Inputs: `files` (glob, default `**/*.model2data.yml`), `version` (default: the release the tag
-points at, e.g. `1.10.2`; a specifier such as `>=1.10,<2` also works), `python-version` (3.12).
+points at, e.g. `1.10.3`; a specifier such as `>=1.10,<2` also works), `python-version` (3.12).
 
 **pre-commit**
 
 ```yaml
 repos:
   - repo: https://github.com/JB-Analytica/model2data
-    rev: v1.10.2
+    rev: v1.10.3
     hooks:
       - id: model2data-validate
 ```
@@ -243,7 +243,7 @@ model2data:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       changes: ["**/*.model2data.yml"]
   script:
-    - pip install model2data==1.10.2
+    - pip install model2data==1.10.3
     - model2data validate --glob "**/*.model2data.yml"
 ```
 
@@ -308,6 +308,21 @@ fixture safe to commit:
 ```bash
 model2data --file examples/ecommerce.model2data.yml --rows 200 --seed 42 --as-of 2026-01-31
 ```
+
+### The determinism promise
+
+The same model, seed and `--as-of` — with the same options (`--rows`, `--rows-for`,
+`--table-seed`, `--locale`, `--defects`, `--days`, …) — produce the same files, byte for byte:
+
+- on any machine and operating system, and on every supported Python version;
+- with any Faker or pandas version model2data accepts;
+- in every 1.x release. A release may make generation faster or add options, but never changes
+  what an existing model, seed and set of options produce. A fix that cannot keep that waits for
+  a new major version, and the changelog says so.
+
+`tests/test_determinism.py` holds the file hashes of a spread of models, presets, multi-day runs
+and locales, and runs on every pull request — against the newest Faker and pandas too — so a
+change to a single output byte fails the build rather than reaching a release.
 
 If one table comes out wrong and the rest looks right, `--table-seed` re-rolls just that table.
 Every other table's seed CSV stays byte-identical, and children of the re-rolled table still

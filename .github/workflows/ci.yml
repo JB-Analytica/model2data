@@ -84,6 +84,28 @@ jobs:
       working-directory: dbt_floor_ci
       run: uv run dbt build --profiles-dir .
 
+  # The determinism promise (same model + seed + --as-of = same bytes) has two
+  # moving parts we do not control: Faker and pandas. The lockfile hides their
+  # new releases from the matrix above, so run the golden hashes again against
+  # the newest of both. A failure here means a dependency release changes data.
+  determinism-latest-deps:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        enable-cache: true
+    - name: Set up Python
+      run: uv python install 3.12
+    - name: Install dependencies
+      run: uv sync --extra dev
+    - name: Upgrade Faker and pandas to the newest releases
+      run: uv pip install -U faker pandas
+    - name: Run determinism tests
+      run: uv run --no-sync pytest tests/test_determinism.py
+
   postgres-integration:
     runs-on: ubuntu-latest
     services:

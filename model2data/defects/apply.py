@@ -123,6 +123,8 @@ class _Table:
         # so no defect undoes another and every count holds.
         self.claimed: dict[str, set[int]] = {}
         self.patches: list[_Patch] = []
+        # What `referenced` found, by the columns asked about: the clean frames never change.
+        self._referenced: dict[tuple[str, ...], frozenset[int]] = {}
         rows = len(self.frame)
         if results is not None and key not in results[0].tables:
             results = None  # a table the days do not hold: a history table
@@ -162,15 +164,20 @@ class _Table:
 
     def referenced(self, columns: Sequence[str]) -> set[int]:
         """The rows whose value in one of `columns` some child row holds."""
-        found: set[int] = set()
-        for ref in self.refs:
-            if ref["target_table"] != self.key or ref["target_column"] not in columns:
-                continue
-            child = self.frames[ref["source_table"]][ref["source_column"]].tolist()
-            held = {_comparable(v) for v in child if _present(v)}
-            values = self.frame[ref["target_column"]].tolist()
-            found.update(p for p, v in enumerate(values) if _present(v) and _comparable(v) in held)
-        return found
+        asked = tuple(columns)
+        if asked not in self._referenced:
+            found: set[int] = set()
+            for ref in self.refs:
+                if ref["target_table"] != self.key or ref["target_column"] not in asked:
+                    continue
+                child = self.frames[ref["source_table"]][ref["source_column"]].tolist()
+                held = {_comparable(v) for v in child if _present(v)}
+                values = self.frame[ref["target_column"]].tolist()
+                found.update(
+                    p for p, v in enumerate(values) if _present(v) and _comparable(v) in held
+                )
+            self._referenced[asked] = frozenset(found)
+        return set(self._referenced[asked])
 
     def free(self, candidates: list[int], columns: Sequence[str]) -> list[int]:
         """`candidates` without the rows an earlier defect broke one of `columns` in."""
@@ -218,6 +225,9 @@ class _Table:
 
 
 def _present(value: Any) -> bool:
+    kind = type(value)
+    if kind is str or kind is int:
+        return True
     return (
         value is not None
         and not (isinstance(value, float) and math.isnan(value))
@@ -227,6 +237,9 @@ def _present(value: Any) -> bool:
 
 def _comparable(value: Any) -> Any:
     """A value as it compares to the warehouse: 7, 7.0 and numpy's 7 are one value."""
+    kind = type(value)
+    if kind is str or kind is int:
+        return value
     item = getattr(value, "item", None)
     if callable(item):
         value = item()
@@ -290,7 +303,9 @@ def _duplicate_keys(table: _Table, defect: Defect, rng: random.Random, count: in
     if not columns:
         return _Outcome(None, note=f"{table.key} has no primary key to repeat")
     values = {name: table.frame[name].tolist() for name in columns}
-    complete = [p for p in range(len(table.frame)) if all(_present(values[c][p]) for c in columns)]
+    complete = [
+        p for p, row in enumerate(zip(*values.values(), strict=True)) if all(map(_present, row))
+    ]
     avoid = table.referenced(columns)
     wanted = min(count, max(len(complete) - 1, 0))
     targets = _choose(rng, table.free(complete, columns), wanted, avoid)
@@ -668,13 +683,52 @@ def requested_rows(defect: Defect, rows: int) -> int:
 def _patched(
     frame: pd.DataFrame, patches: Sequence[_Patch], day: Optional[int] = None
 ) -> pd.DataFrame:
-    """A copy of `frame` with `patches` set, those from day `day` on when it is given."""
+    """A copy of `frame` with `patches` set, those from day `day` on when it is given.
+
+    A column of objects is set as a list, in one go; any other cell by cell, as
+    `_set` does, for what pandas makes of a value its column's type cannot hold.
+    """
     out = frame.copy()
+    by_column: dict[str, list[_Patch]] = {}
     for patch in patches:
         if patch.position >= len(out) or (day is not None and patch.since > day):
             continue
-        _set(out, patch.position, patch.column, patch.value)
+        by_column.setdefault(patch.column, []).append(patch)
+    for column, cells in by_column.items():
+        if out[column].dtype == object:
+            values = out[column].tolist()
+            for patch in cells:
+                values[patch.position] = patch.value
+            out[column] = pd.Series(values, index=out.index, dtype=object)
+            continue
+        if isinstance(out[column].dtype, _NULLABLE_INTEGERS) and all(
+            type(patch.value) is int for patch in cells
+        ):
+            # What `_set` does to each cell, done to all of them at once.
+            final = {patch.position: patch.value for patch in cells}
+            array = out[column].array.copy()
+            try:
+                array[list(final)] = list(final.values())
+            except (TypeError, ValueError):
+                pass  # too large for the column: cell by cell, as before
+            else:
+                out[column] = pd.Series(array, index=out.index)
+                continue
+        for patch in cells:
+            _set(out, patch.position, column, patch.value)
     return out
+
+
+_NULLABLE_INTEGERS = (
+    pd.Int8Dtype,
+    pd.Int16Dtype,
+    pd.Int32Dtype,
+    pd.Int64Dtype,
+    pd.UInt8Dtype,
+    pd.UInt16Dtype,
+    pd.UInt32Dtype,
+    pd.UInt64Dtype,
+)
 
 
 def _set(frame: pd.DataFrame, position: int, column: str, value: Any) -> None:
@@ -1001,15 +1055,17 @@ def _recount(defect: Defect, outcome: _Outcome, frame: Optional[pd.DataFrame]) -
     by_row: dict[int, list[_Patch]] = {}
     for patch in outcome.patches:
         by_row.setdefault(patch.position, []).append(patch)
+    columns = sorted({patch.column for patch in outcome.patches})
+    cells = {column: frame[column].tolist() for column in columns}
     held = [
         p
         for p in outcome.positions
-        if all(_same(frame[c.column].iloc[p], c.value) for c in by_row.get(p, []))
+        if all(_same(cells[c.column][p], c.value) for c in by_row.get(p, []))
     ]
     if defect.type == "duplicate_keys":
-        columns = sorted({patch.column for patch in outcome.patches})
         keys = [
-            tuple(_comparable(v) for v in row) for row in frame[columns].itertuples(index=False)
+            tuple(map(_comparable, row))
+            for row in zip(*(cells[column] for column in columns), strict=True)
         ]
         counts: dict[tuple, int] = {}
         for key in keys:
@@ -1067,7 +1123,8 @@ def _applied(
     # A defect with no table to break (a history not kept) broke no row.
     primary = primary_key(inputs.tables[key]) if key in inputs.tables else []
     numbers = [position + 1 for position in outcome.positions]
-    keys = [[_native(frame[name].iloc[p]) for name in primary] for p in outcome.positions]
+    held = {name: frame[name].tolist() for name in primary} if outcome.positions else {}
+    keys = [[_native(held[name][p]) for name in primary] for p in outcome.positions]
     rows: list[Any] = [values[0] if len(values) == 1 else values for values in keys]
     row_key: Optional[list[str]] = list(primary) or None
     if not primary:
