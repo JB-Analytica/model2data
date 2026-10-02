@@ -13,6 +13,7 @@ schema asks for is skipped here, having already been reported there.
 
 from __future__ import annotations
 
+import difflib
 import json
 from collections.abc import Mapping
 from functools import lru_cache
@@ -384,6 +385,12 @@ def split_column_path(path: str) -> tuple[str, str]:
     return table, column
 
 
+def _is_whole(value: Any) -> bool:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    return isinstance(value, int) or value.is_integer()
+
+
 def _member_text(member: Any) -> str:
     return str(member) if isinstance(member, int) and not isinstance(member, bool) else member
 
@@ -401,6 +408,7 @@ class _Checks:
                 self.enums[name] = [_member_text(member) for member in members]
         self.issues: list[Issue] = []
         self.minor = _minor(document.get("model2data"))
+        self.fk_columns: dict[str, set] = {}
 
     def run(self) -> list[Issue]:
         self._enum_members()
@@ -509,6 +517,10 @@ class _Checks:
                 )
                 self._foreign_key(key, index, foreign_key)
 
+        # A `when` reads its columns' values, so it needs to know which are foreign keys.
+        self.fk_columns[key] = fk_children | {
+            name for name, column in columns.items() if column.get("references") is not None
+        }
         for name, column in columns.items():
             path = [*base, "columns", name]
             reference = column.get("references")
@@ -1021,6 +1033,10 @@ class _Checks:
                             f"(members: {', '.join(str(m) for m in members)})",
                         )
 
+        when = generate.get("when")
+        if isinstance(when, Mapping) and kind_of["nullable"]:
+            self._when(key, name, column, when, [*gen_path, "when"], is_fk, in_pk or in_key)
+
         after = generate.get("after")
         if temporal and isinstance(after, str):
             other = self.columns[key].get(after)
@@ -1068,6 +1084,113 @@ class _Checks:
                     ),
                 )
 
+    def _when(
+        self,
+        key: str,
+        name: str,
+        column: Mapping,
+        when: Mapping,
+        path: list[PathPart],
+        is_fk: bool,
+        in_key: bool,
+    ) -> None:
+        """The column carrying `when` can be null on the rows it does not match; its columns hold
+        the values it lists."""
+        columns = self.columns[key]
+        if is_fk:
+            self.add(
+                path,
+                "cannot sit on a foreign key: its values are drawn from the parent's rows, and "
+                "a row's parent does not depend on another column of it",
+            )
+        elif in_key or column.get("unique") is True:
+            self.add(
+                path,
+                "cannot sit on a column that is unique or in a key: a key's values are drawn "
+                "distinct row by row, and `when` nulls some rows and fills others",
+            )
+        if column.get("default") is not None:
+            self.add(
+                path,
+                "leaves the rows it does not match null, and a column with a `default` holds "
+                "the default instead of null: drop the default, or the `when`",
+            )
+        incremental = _mapping(_mapping(self.tables.get(key)).get("incremental"))
+        if incremental.get("updated_at") == name:
+            self.add(
+                path,
+                f"cannot sit on {name}, the incremental.updated_at of {key}: it is set on every "
+                "row a day inserts or updates",
+            )
+        for other, values in when.items():
+            target = columns.get(other)
+            at = [*path, other]
+            if other == name:
+                self.add(at, "names the column itself: `when` names another column")
+                continue
+            if target is None:
+                close = difflib.get_close_matches(str(other), list(columns), n=1)
+                self.add(
+                    at,
+                    f"names {_show(other)}, which is not a column of {key}"
+                    + (f" (did you mean {close[0]}?)" if close else ""),
+                )
+                continue
+            if isinstance(_mapping(target.get("generate")).get("when"), Mapping):
+                self.add(
+                    at,
+                    f"names {other}, which has a `when` of its own: a condition names a column "
+                    "generated without one",
+                )
+            elif other in self.fk_columns.get(key, set()):
+                self.add(
+                    at,
+                    f"names {other}, a foreign key: its values are the parent's keys, drawn as "
+                    "the parent's rows come out, not values a model can list",
+                )
+            else:
+                self._when_values(at, other, target, _list(values))
+
+    def _when_values(self, path: list[PathPart], other: str, target: Mapping, values: list) -> None:
+        """Each value a `when` lists for `other` is one the column can hold."""
+        type_name = target.get("type")
+        type_text = type_name if isinstance(type_name, str) else ""
+        enum = self.enum_named(type_name)
+        if enum is not None:
+            enum_name, members = enum
+            for value in values:
+                text = _member_text(value)
+                if text not in members:
+                    self.add(
+                        path,
+                        f"lists {_show(text)}, which is not a member of {enum_name} "
+                        f"(members: {', '.join(str(m) for m in members)})",
+                    )
+            return
+        if kinds.is_temporal_type(type_text):
+            self.add(
+                path,
+                f"names {other}, a date or timestamp column: `when` matches listed values, so "
+                "name an enum, boolean, number or text column",
+            )
+            return
+        if kinds.is_boolean_type(type_text):
+            expected, fits = "true or false", lambda v: isinstance(v, bool)
+        elif kinds.is_integer_type(type_text):
+            expected, fits = "a whole number", _is_whole
+        elif kinds.is_numeric_type(type_text):
+            expected = "a number"
+            fits = lambda v: isinstance(v, (int, float)) and not isinstance(v, bool)  # noqa: E731
+        else:
+            expected, fits = "text", lambda v: isinstance(v, str)
+        for value in values:
+            if not fits(value):
+                self.add(
+                    path,
+                    f"lists {_show(value)}, and {other} ({type_text}) holds {expected}"
+                    + (f": write it as {_show(str(value))}" if expected == "text" else ""),
+                )
+
     @staticmethod
     def _misplaced(
         hint: str,
@@ -1083,6 +1206,11 @@ class _Checks:
         shown = _show(type_text)
         if allowed == ("nullable",):
             why = "in the primary key" if in_pk else "not_null"
+            if hint == "when":
+                return (
+                    f"needs a nullable column, and this one is {why}: `when` leaves the rows "
+                    "it does not match null"
+                )
             return (
                 f"only sits on a nullable column, and this one is {why}: it would have no "
                 "rows to null"

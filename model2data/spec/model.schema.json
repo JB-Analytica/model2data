@@ -521,6 +521,20 @@
           },
           "x-model2data-applies-to": ["enum"],
           "examples": [{ "pending": ["paid", "cancelled"], "paid": ["shipped"], "shipped": ["delivered"] }]
+        },
+        "when": {
+          "description": "The rows this column holds a value on: a mapping of another column of the same table to the values it must hold, every column named having to match. On a row that matches, the column is generated as it is without `when`, and is never null unless it has a `null_rate`, which then counts only those rows: exactly ⌊m × null_rate⌋ of the m matching rows are null. On every other row, one whose named column is null included, it is null. On a later generated day, a row an update brings to match (an order moving to `shipped`) gets a value on that day, and one an update takes out of matching loses it. A named column is another column of the table that is not a date or timestamp, not a foreign key, and has no `when` of its own; each value listed is one it can hold: a member of its enum, `true` or `false` for a boolean, a number for a numeric column (a whole one for an integer column), text otherwise. The column carrying `when` is nullable, has no `default`, and is not in a key, unique, a foreign key, or its table's `incremental.updated_at`.",
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": { "$ref": "#/$defs/name" },
+          "additionalProperties": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": { "type": ["string", "number", "boolean"] }
+          },
+          "x-model2data-applies-to": ["nullable"],
+          "examples": [{ "status": ["done"] }, { "status": ["shipped", "delivered"] }]
         }
       },
       "patternProperties": { "^x-": true },

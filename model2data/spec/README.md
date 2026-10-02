@@ -186,6 +186,24 @@ whatever the enum's name contains (`maintenance_type` contains `int`).
 
 The run's defaults for four hints are under `run.shape`; a column's own `generate` wins.
 
+`when` makes a column depend on another column's value: the column holds a value on the rows
+where the named columns hold one of the listed values, and is null on every other row.
+
+```yaml
+tasks:
+  columns:
+    status: {type: task_status, not_null: true}
+    created_at: {type: timestamp, not_null: true}
+    completed_at:
+      type: timestamp
+      generate: {after: created_at, when: {status: [done]}}
+```
+
+Several columns listed must all match. A row whose named column is null does not match. On the
+matching rows the column is generated as it would be without `when`, and none of them is null
+unless the column has a `null_rate`, which then counts only those rows. How the values a model
+without `when` generates are kept is the engine's (see `model2data.generate.when`).
+
 ### Modelling
 
 `role` and `grain` on a table and `measure` on a column steer what a consumer derives from the
@@ -252,6 +270,10 @@ orders:
 - `updated_at`, when given, is set on a new row to the latest time of the row's own temporal
   columns, and on an updated row to a time on the day no earlier than any temporal column the
   update changed.
+- A column with `when` holds a value on every row that matches, new rows included, and on no
+  other. An update that brings a row to match sets the column on the day (a date column to the
+  day, a timestamp to the row's `updated_at` when the table has one); one that takes a row out
+  of matching makes it null; a row that matched and still does keeps its value.
 - Keys never change (a key column, one that is `pk` or `unique` or in a `keys` entry, is not
   listed in `changes`), and a foreign key keeps pointing at a row that exists.
 - Day *n* is fixed by the seed, `as_of` and *n*: generating days 1 to *n* again gives the same
@@ -380,6 +402,11 @@ reports each failure with the path of the value (`tables.orders.columns.status.g
 15. A table with `incremental.history` has a primary key, no column named `valid_from`,
     `valid_to` or `is_current`, and no table of the model is named `<table>_history`, or
     normalises to the same dbt name.
+16. `when` is on a nullable column with no `default` that is not in a key, `unique`, a foreign
+    key or its table's `incremental.updated_at`. Each column it names is another column of the
+    same table that has no `when`, is not a foreign key and is not temporal; each value listed
+    for it is a member of its enum, `true` or `false` for a boolean, a number for a numeric
+    column (a whole one for an integer column), or text for any other.
 
 ### Warnings
 

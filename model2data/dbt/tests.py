@@ -68,7 +68,8 @@ def generate_dbt_yml(
 
     hinted = _hinted(tables, hint_tests, test_tolerance)
     if hinted:
-        write_hint_macros(dest)
+        when = any(test.hint == "when" for tests in hinted.values() for test in tests)
+        write_hint_macros(dest, when=when)
     if any(_history_entries(table) for table in tables.values()):
         write_history_macros(dest)
     fk_map = _fk_map(tables, refs)

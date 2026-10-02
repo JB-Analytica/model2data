@@ -14,6 +14,10 @@ SQL reads:
   and `model2data_max_distinct`: as their macros in
   `dbt/templates/hint_macros/model2data_hint_tests.sql`, nulls skipped where the
   SQL skips them.
+- `model2data_when` and `model2data_when_max_null_share`: as their macros in
+  `dbt/templates/hint_macros/model2data_when_tests.sql`, a row matching when
+  each named column's text is one of its values (a boolean as `true`/`false`
+  in any case, a number as a number).
 - `model2data_unique_combination` and a composite key's `unique_combination`: a
   combination of values on two rows, nulls grouping together as in `group by`.
 - A history table's `model2data_one_current_row` (a key with other than one
@@ -342,6 +346,49 @@ def _max_null_share(test: DbtTest, frame: pd.DataFrame, seeded: Mapping, cache: 
     return nulls / len(frame) > test.arguments["max_share"]
 
 
+def _matches(test: DbtTest, frame: pd.DataFrame, cache: Columns) -> list[bool]:
+    """Per row: does each column of the test's `conditions` hold one of its values?"""
+    result = [True] * len(frame)
+    for column, values in test.arguments["conditions"].items():
+        texts = {value for value in values if isinstance(value, str)}
+        flags = {str(value).lower() for value in values if isinstance(value, bool)}
+        numbers = {
+            float(value)
+            for value in values
+            if isinstance(value, (int, float)) and not isinstance(value, bool)
+        }
+        for row, text in enumerate(cache.values(frame, column)):
+            if text is None or not (
+                text in texts or text.lower() in flags or _number(text) in numbers
+            ):
+                result[row] = False
+    return result
+
+
+def _when(test: DbtTest, frame: pd.DataFrame, seeded: Mapping, cache: Columns) -> bool:
+    required = test.arguments.get("required", True)
+    values = cache.values(frame, str(test.column))
+    for matches, value in zip(_matches(test, frame, cache), values, strict=True):
+        if (not matches and value is not None) or (required and matches and value is None):
+            return True
+    return False
+
+
+def _when_max_null_share(
+    test: DbtTest, frame: pd.DataFrame, seeded: Mapping, cache: Columns
+) -> bool:
+    values = cache.values(frame, str(test.column))
+    held = [
+        value
+        for matches, value in zip(_matches(test, frame, cache), values, strict=True)
+        if matches
+    ]
+    if not held:
+        return False
+    nulls = sum(value is None for value in held)
+    return nulls / len(held) > test.arguments["max_share"]
+
+
 def _max_distinct(test: DbtTest, frame: pd.DataFrame, seeded: Mapping, cache: Columns) -> bool:
     return len(cache.number_set(frame, str(test.column))) > test.arguments["max_count"]
 
@@ -388,6 +435,8 @@ _CHECKS: dict[str, Callable[[DbtTest, pd.DataFrame, Mapping, Columns], bool]] = 
     "model2data_not_before": _not_before,
     "model2data_max_null_share": _max_null_share,
     "model2data_max_distinct": _max_distinct,
+    "model2data_when": _when,
+    "model2data_when_max_null_share": _when_max_null_share,
     "model2data_unique_combination": _unique_combination,
     "unique_combination": _unique_combination,
     "model2data_one_current_row": _one_current_row,

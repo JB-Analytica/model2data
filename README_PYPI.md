@@ -245,6 +245,7 @@ dbt package, so `dbt build` still works offline):
 | `generate: {after: other}` | `model2data_not_before` (where both are not null) | none |
 | `generate: {null_rate}` | `model2data_max_null_share`: nulls at most `null_rate` + tolerance | `--test-tolerance`, default 0.1 |
 | `generate: {distinct: n}` | `model2data_max_distinct`: at most `n` distinct values | none |
+| `generate: {when}` | `model2data_when`: null exactly where the condition does not hold (with `null_rate`, only there; its null share is then tested among the matching rows) | none |
 | `grain` on a table | `model2data_unique_combination` | none |
 | an enum-typed column | `accepted_values` (always written) | none |
 

@@ -58,7 +58,8 @@ columns. Add `not_null` to every column that must always have a value.
 - Column: `type`, `pk`, `unique`, `not_null`, `increment`, `default`, `description`,
   `references`, `measure`, `generate`.
 - `generate`: `min`, `max`, `distribution`, `null_rate`, `weights`, `true_rate`,
-  `distinct`, `skew`, `after`, `business_hours`, `growth`, `seasonality`, `transitions`.
+  `distinct`, `skew`, `after`, `business_hours`, `growth`, `seasonality`, `transitions`,
+  `when`.
 - Table: `columns`, `description`, `color`, `role`, `grain`, `keys`, `foreign_keys`,
   `incremental`, `defects`.
 - Top level: `model2data` (spec version), `name`, `description`, `enums`, `tables`,
@@ -91,7 +92,7 @@ tables:
         generate: {transitions: {trial: [active, cancelled], active: [cancelled]}}
       seats: {type: integer, generate: {min: 1, max: 500, distribution: {kind: lognormal, median: 10}}}
       started_at: {type: timestamp, not_null: true, generate: {business_hours: true, growth: 0.5}}
-      cancelled_at: {type: timestamp, generate: {after: started_at, null_rate: 0.7}}
+      cancelled_at: {type: timestamp, generate: {after: started_at, when: {status: [cancelled]}}}
       updated_at: {type: timestamp, generate: {after: started_at}}
     defects:
       - {type: nulls, column: account_id, count: 2}
@@ -105,6 +106,17 @@ run:
 ```
 
 `transitions` act only on days after the first: it needs `incremental` and `--days`.
+
+`when` ties a column to another column's value: `cancelled_at` above holds a timestamp on
+every `cancelled` row and is null on every other one, so no `active` subscription has a
+`cancelled_at`. Name another column of the table (an enum, boolean, number or text column)
+and list the values it must hold; several columns must all match. Use it for every
+lifecycle column: `completed_at` with `{status: [done]}`, `shipped_at` with
+`{status: [shipped, delivered]}`, `resolved_at`, `end_date`. The column must be nullable,
+without a `default`, and not a key, unique or a foreign key. A `null_rate` beside it counts
+only the matching rows. On later days a row whose status moves into a listed value gets a
+value that day (its `updated_at` when the table has one), and one moving out loses it. It
+writes the dbt test `model2data_when`.
 The full spec and JSON Schema ship in the package: `model2data/spec/README.md`,
 `model2data/spec/model.schema.json`.
 

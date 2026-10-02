@@ -134,6 +134,7 @@ is_paid boolean [note: '{"true_rate": 0.9}']               ' fraction of non-nul
 shipping_city varchar [note: '{"distinct": 12}']           ' draw from a pool this size (not fk/pk/unique/enum)
 customer_id int [note: '{"skew": 0.9}']                    ' per-column override of --skew (fk columns only)
 updated_at timestamp [note: '{"after": "created_at"}']     ' must fall after another date/timestamp column
+completed_at timestamp [note: '{"when": {"status": ["done"]}}']  ' set only where status is done, null elsewhere
 created_at timestamp [note: '{"business_hours": true}']    ' per-column override of --business-hours
 created_at timestamp [note: '{"growth": 0.4}']             ' per-column override of --growth (date/timestamp only)
 created_at timestamp [note: '{"seasonality": 0.6}']        ' per-column override of --seasonality (date/timestamp only)
@@ -159,6 +160,23 @@ shipped_at timestamp [note: '{"after": "ordered_at"}']
 ```
 A birth-date-style column (`birth_date`, `date_of_birth`, `dob`) is never folded into this chain —
 it describes the person, not the record.
+
+**Tie lifecycle columns to the status they belong to with `when`.** Without it, every nullable
+column is filled or nulled independently of the others, so a `todo` task gets a `completed_at`
+and a `cancelled` subscription has no `cancelled_at`. `when` maps another column of the same
+table to the values it must hold; the column is set on exactly those rows and null on every
+other one (several columns listed must all match). Combine it with `after`:
+```dbml
+shipped_at timestamp [note: '{"after": "order_date", "when": {"status": ["shipped", "delivered"]}}']
+```
+The named column must be an enum, boolean, number or text column of the same table, not a foreign
+key, and each value one it can hold (an enum member, `true`/`false`, a number, text). The column
+carrying `when` must be nullable, without a default, and not a key, unique or a foreign key. A
+`null_rate` on it counts only the matching rows (`0.1`: a tenth of the shipped orders have no
+`shipped_at`); without one, every matching row has a value. On days after the first, a row an
+update moves into a listed value gets its value that day (the row's `updated_at` when the table
+has one) and a row moved out loses it. Each `when` writes a `model2data_when` dbt test: the column
+is null exactly where the condition does not hold.
 
 **Declare relationships** — either syntax is fully supported and produces identical behavior:
 ```dbml
@@ -255,7 +273,7 @@ model2data --file SCHEMA.dbml [OPTIONS]
 --adapter, -a    TEXT      duckdb (default) or postgres
 --unit-tests               Also generate dbt unit test fixtures
 --hint-tests     TEXT      error, warn (default) or off: severity of the dbt tests written from
-                           min/max, after, null_rate, distinct and grain hints
+                           min/max, after, null_rate, distinct, when and grain hints
 --test-tolerance FLOAT     Absolute slack of the null_rate test (default 0.1)
 --defects        TEXT      clean (default), messy or training: break the data on purpose, so dbt
                            tests are seen to fail; writes defects_report.json and

@@ -371,7 +371,7 @@ def main(
         "--hint-tests",
         help=(
             "Write the model's generation hints as dbt tests (min/max range, after, "
-            "null_rate, distinct, grain) at this severity: error, warn or off. They "
+            "null_rate, distinct, when, grain) at this severity: error, warn or off. They "
             "describe intent, so they warn by default rather than break a first dbt "
             "build on real data."
         ),

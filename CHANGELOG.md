@@ -15,6 +15,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   current directory holds a `*.model2data.yml` or `*.dbml` file, else `setup`, and says so on
   its first line. The pages ship in the package, so they match the installed version; the
   command reads only file names in the current directory and writes nothing.
+- **A column can depend on another column's value: `when`.** `completed_at` with
+  `generate: {after: created_at, when: {status: [done]}}` holds a timestamp on every `done` task
+  and is null on every other one, where a `todo` task used to get a `completed_at` and a
+  `cancelled` subscription none. `when` maps another column of the table (an enum, boolean,
+  number or text column) to the values it must hold; several columns must all match, and a row
+  whose named column is null does not. On the matching rows the column is generated as before
+  and never null, unless it has a `null_rate`, which then counts only those rows. It composes
+  with `after`, the time shape hints and `distribution`. On days after the first, a row an update
+  moves into a listed status gets its value that day (its `updated_at` when the table has one),
+  and a row moved out loses it. Each `when` writes a dbt test, `model2data_when` (and a
+  `null_rate` beside it `model2data_when_max_null_share`, over the matching rows), shipped in
+  `macros/model2data_when_tests.sql`, and the defects report checks it like any other. The
+  model's checks say what is wrong with one: a column that is not there (and which one was
+  meant), a value its enum does not have, a `not_null`, keyed, unique, foreign-key or defaulted
+  column carrying it. In DBML it is a note hint like the others:
+  `[note: '{"when": {"status": ["done"]}}']`. The schema, the spec README, `model2data guide
+  tune` and LLMS.md describe it.
 
 ### Fixed
 - **A foreign key cycle with a nullable link is generated, not flagged.** Tables were ordered by
@@ -23,6 +40,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   side pointed at rows that did not exist. A cycle is now broken at a table whose foreign keys
   into it are all nullable: that table is generated first, and those columns are drawn once
   their parent exists, from its rows. Only a cycle of required foreign keys is still reported.
+- **Determinism:** models without `when` generate exactly what they did before, dbt project
+  included. In a model with `when`, only its columns change: what `when` decides is drawn from
+  streams of its own, so every other column comes out as it does without the hint, except a date
+  or timestamp that follows a `when` column (`after` it, or a later stage), which moves on a row
+  where it would otherwise be earlier than the value `when` filled in.
 - **Determinism:** a model without an FK cycle generates exactly what it did before. A model
   whose cycle had a nullable link now writes different foreign key values in that cycle's tables
   (valid ones, where some used to dangle), and different columns mirrored from them.

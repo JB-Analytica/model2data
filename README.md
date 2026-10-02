@@ -401,6 +401,23 @@ shipped_at:
   generate: {after: ordered_at}
 ```
 
+A column that only has a value in some states says which with `when`: it holds a value on
+exactly the rows whose named column holds one of the listed values, and is null on every other
+row — no `pending` order with a `shipped_at`, no `cancelled` subscription without a
+`cancelled_at`:
+
+```yaml
+shipped_at:
+  type: timestamp
+  generate: {after: ordered_at, when: {status: [shipped, delivered]}}
+```
+
+The named column is another column of the table (an enum, boolean, number or text column; several
+named must all match), and the column carrying `when` is nullable. On the matching rows it is
+never null, unless it has a `null_rate`, which then counts only those rows. On days after the
+first (`--days`), a row that moves into a listed status gets its value that day and a row that
+moves out loses it. Every other column comes out exactly as it would without the hint.
+
 The flags above (or `run.shape` in the model) shape every date and timestamp column the same
 way, run-wide. `business_hours`, `growth`, and `seasonality` column hints override that for one
 column at a time — the whole point being a run can be uniform everywhere except the one column
@@ -532,6 +549,7 @@ dbt package, so `dbt build` still works offline):
 | `generate: {after: other}` | `model2data_not_before` (where both are not null) | none |
 | `generate: {null_rate}` | `model2data_max_null_share`: nulls at most `null_rate` + tolerance | `--test-tolerance`, default 0.1 |
 | `generate: {distinct: n}` | `model2data_max_distinct`: at most `n` distinct values | none |
+| `generate: {when}` | `model2data_when`: null exactly where the condition does not hold (with `null_rate`, only there; its null share is then tested among the matching rows) | none |
 | `grain` on a table | `model2data_unique_combination` | none |
 | an enum-typed column | `accepted_values` (always written) | none |
 
