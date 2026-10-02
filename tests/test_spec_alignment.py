@@ -124,3 +124,112 @@ def test_a_unique_foreign_key_with_too_few_parents_is_reported():
     )
     assert sorted(values[:3]) == parents
     assert get_duplicate_unique_columns() == ["p.user_id: 2 duplicate value(s)"]
+
+
+# ---------------------------------------------------------
+# PostgreSQL serial pseudo-types are integers
+# ---------------------------------------------------------
+_SERIAL_AND_INTEGER = [
+    ("serial", "integer"),
+    ("serial4", "integer"),
+    ("bigserial", "bigint"),
+    ("serial8", "bigint"),
+    ("smallserial", "smallint"),
+    ("serial2", "smallint"),
+    ("BIGSERIAL", "bigint"),
+]
+
+
+@pytest.mark.parametrize(("serial", "_integer"), _SERIAL_AND_INTEGER)
+def test_a_serial_type_is_an_integer_and_so_numeric(serial, _integer):
+    assert kinds.is_integer_type(serial)
+    assert kinds.is_numeric_type(serial)
+    assert not kinds.is_decimal_type(serial)
+    assert not kinds.is_boolean_type(serial)
+    assert kinds.temporal_kind(serial) is None
+
+
+def test_a_type_that_only_looks_like_serial_is_not_an_integer():
+    assert not kinds.is_integer_type("serialized")
+    assert not kinds.is_integer_type("text")
+
+
+def test_a_serial_column_is_not_free_text():
+    from model2data.generate.faker import is_free_text_type
+
+    assert not is_free_text_type("bigserial")
+    assert is_free_text_type("varchar(20)")
+
+
+def _serial_tables(parent_type: str):
+    return {
+        "a": TableDef(name="a", columns=[ColumnDef("id", parent_type, {"pk"})]),
+        "b": TableDef(
+            name="b",
+            columns=[ColumnDef("id", "int", {"pk"}), ColumnDef("a_id", "bigint")],
+        ),
+    }
+
+
+_SERIAL_REFS = [
+    {
+        "source_table": "b",
+        "source_column": "a_id",
+        "target_table": "a",
+        "target_column": "id",
+    }
+]
+
+
+@pytest.mark.parametrize(("serial", "integer"), _SERIAL_AND_INTEGER[:6])
+def test_a_serial_key_generates_what_its_integer_counterpart_does(serial, integer):
+    as_of = datetime(2026, 1, 1)
+    got = generate_data_from_dbml(
+        _serial_tables(serial), _SERIAL_REFS, base_rows=25, seed=3, as_of=as_of
+    )
+    want = generate_data_from_dbml(
+        _serial_tables(integer), _SERIAL_REFS, base_rows=25, seed=3, as_of=as_of
+    )
+    for table in ("a", "b"):
+        pd.testing.assert_frame_equal(got[table], want[table])
+    assert str(got["a"]["id"].dtype) == "Int64"
+    assert got["b"]["a_id"].dropna().isin(got["a"]["id"]).all()
+    assert got["b"]["a_id"].notna().any()
+
+
+def test_a_bigserial_key_and_its_bigint_foreign_key_from_a_model_document():
+    from model2data.model import from_dict, to_engine
+
+    document = {
+        "model2data": "0.2.0",
+        "tables": {
+            "a": {"columns": {"id": {"type": "bigserial", "pk": True}}},
+            "b": {
+                "columns": {
+                    "id": {"type": "int", "pk": True},
+                    "a_id": {"type": "bigint", "references": "a.id"},
+                }
+            },
+        },
+    }
+    engine = to_engine(from_dict(document))
+    frames = generate_data_from_dbml(
+        engine.tables, engine.refs, base_rows=20, seed=1, as_of=datetime(2026, 1, 1)
+    )
+    assert frames["a"]["id"].map(type).eq(int).all()
+    assert frames["b"]["a_id"].dropna().isin(frames["a"]["id"]).all()
+
+
+def test_a_bigserial_key_and_its_bigint_foreign_key_from_dbml(tmp_path):
+    from model2data.parse.dbml import parse_dbml
+
+    path = tmp_path / "serial.dbml"
+    path.write_text(
+        "Table a {\n  id bigserial [pk]\n}\n"
+        "Table b {\n  id int [pk]\n  a_id bigint [ref: > a.id]\n}\n"
+    )
+    tables, refs = parse_dbml(path)
+    frames = generate_data_from_dbml(tables, refs, base_rows=20, seed=1, as_of=datetime(2026, 1, 1))
+    assert frames["a"]["id"].map(type).eq(int).all()
+    assert frames["b"]["a_id"].dropna().isin(frames["a"]["id"]).all()
+    assert frames["b"]["a_id"].notna().any()

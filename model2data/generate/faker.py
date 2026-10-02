@@ -498,7 +498,7 @@ def is_free_text_type(data_type: str) -> bool:
     silently strip meaningful leading zeros.
     """
     base_type = data_type.lower().split("(")[0].strip()
-    if is_decimal_type(base_type):
+    if is_decimal_type(base_type) or is_integer_type(base_type):
         return False
     return not any(key in base_type for key in _STRUCTURED_TYPE_KEYS)
 

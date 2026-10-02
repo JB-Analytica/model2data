@@ -6,7 +6,9 @@ accepts always lands on a generator branch that reads it. The rules are the
 spec's (model2data/spec/README.md, "Generation hints"):
 
 - the **base type** is the type lower-cased, cut at the first `(`, trimmed;
-- **integer**: the base type contains `int`;
+- **integer**: the base type contains `int`, or is one of PostgreSQL's serial
+  pseudo-types (`serial`, `serial2`, `serial4`, `serial8`, `smallserial`, `bigserial`),
+  which are integers with a sequence default and none of them contain `int`;
 - **decimal**: it contains `decimal`, `numeric`, `float`, `double` or `real`,
   or is `money` or `number`;
 - **numeric**: integer or decimal;
@@ -22,6 +24,7 @@ from typing import Literal, Optional
 
 _DECIMAL_WORDS = ("decimal", "numeric", "float", "double", "real")
 _DECIMAL_NAMES = frozenset({"money", "number"})
+_SERIAL_NAMES = frozenset({"serial", "serial2", "serial4", "serial8", "smallserial", "bigserial"})
 
 
 def base_type(data_type: str) -> str:
@@ -30,7 +33,8 @@ def base_type(data_type: str) -> str:
 
 
 def is_integer_type(data_type: str) -> bool:
-    return "int" in base_type(data_type)
+    base = base_type(data_type)
+    return "int" in base or base in _SERIAL_NAMES
 
 
 def is_decimal_type(data_type: str) -> bool:
