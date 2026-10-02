@@ -23,7 +23,9 @@ says it created the project. Fix the **model file**, never the generated project
 
 Take the first rule that applies to each line:
 
-1. `❌ Destination ... already exists`: re-run with `--force`.
+1. `❌ Destination ... already exists`: if that `dbt_<name>/` came from this model, re-run
+   with `--force`. If it belongs to another model (two models with the same `name:`),
+   give this one its own `name:` or pass `--name`; `--force` would delete the other.
 2. Any other `❌` line: a model mistake the schema check could not see. Fix what it names.
 3. `Columns using generic fallback text: N` above 0: each listed column gets lorem text.
    Give it a generator type (`{type: company}`, `{type: job}`; the list is in

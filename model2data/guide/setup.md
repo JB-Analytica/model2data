@@ -45,6 +45,11 @@ run:
   realistic values. A type may also be a generator name: `email`, `country`, `company`
   (the list: `model2data guide tune`).
 - Mark every key: `pk`, `unique`, `not_null`, `references`. Each one becomes a dbt test.
+- Put `not_null` on every column that must always have a value: a column without it gets
+  nulls in up to a fifth of its rows, enums and generator types included.
+- A lookup table with one row per value (priorities, plan tiers): an enum column with
+  `unique: true`, and that table's rows set to the number of members:
+  `run: {rows_per_table: {priorities: 3}}`. It may go below the 10-row minimum.
 - Keep `run.seed` and `run.as_of`: without them the output changes every run and every day.
 - Already have DBML? `model2data convert <name>.dbml -o <name>.model2data.yml` and edit that.
 

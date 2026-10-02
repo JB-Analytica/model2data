@@ -1,6 +1,7 @@
 import pandas as pd
 
 from model2data.generate.core import (
+    _mirror_attributes,
     _topological_table_order,
     generate_data_from_dbml,
     get_cyclic_tables,
@@ -914,6 +915,24 @@ def test_nullable_fk_breaks_a_cycle_and_still_points_at_real_rows():
     assert set(data["users"]["account_id"]) <= set(data["accounts"]["id"])
     again = generate_data_from_dbml(tables, refs, base_rows=30, seed=3)
     pd.testing.assert_frame_equal(data["accounts"], again["accounts"])
+
+
+def test_mirroring_needs_a_foreign_key_to_the_parent():
+    """An attribute ref onto a parent the child has no foreign key to copies nothing."""
+    child = pd.DataFrame({"id": [1, 2], "region": ["x", "y"]})
+    parents = {"accounts": pd.DataFrame({"id": [1, 2], "region": ["eu", "us"]})}
+    attribute_refs = [
+        {
+            "source_table": "users",
+            "source_column": "region",
+            "target_table": "accounts",
+            "target_column": "region",
+        }
+    ]
+
+    out = _mirror_attributes(child.copy(), "users", attribute_refs, [], parents)
+
+    pd.testing.assert_frame_equal(out, child)
 
 
 def test_composite_ref_produces_fk_aware_values_for_both_columns():

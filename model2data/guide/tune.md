@@ -24,7 +24,7 @@ Every option overrides the model's `run` setting of the same meaning.
 | Option | `run` key | Default |
 |---|---|---|
 | `--rows N` (min 10) | `rows` | 100 |
-| `--rows-for TABLE=N` (repeatable) | `rows_per_table` | |
+| `--rows-for TABLE=N` (repeatable, may go below 10) | `rows_per_table` | |
 | `--seed N` | `seed` | random |
 | `--table-seed TABLE=N` (needs a seed) | `table_seeds` | |
 | `--as-of YYYY-MM-DD` | `as_of` | today |
@@ -35,7 +35,7 @@ Every option overrides the model's `run` setting of the same meaning.
 | `--adapter duckdb\|postgres` | | duckdb |
 | `--hint-tests error\|warn\|off`, `--test-tolerance X` | | warn, 0.1 |
 | `--unit-tests` | | off |
-| `--name NAME` (project becomes `dbt_NAME`) | `name` (top level) | file stem |
+| `--name NAME` (project becomes `dbt_NAME`) | `name` (top level) | the model's `name`, else the file stem |
 | `--force` (replace `dbt_<name>/`) | | off |
 
 ## Generator types
@@ -48,6 +48,10 @@ always work: `name`, `first_name`, `last_name`, `user_name`, `email`, `phone_num
 arguments works too. A plain `varchar` gets realistic text only when its name contains a
 known pattern (`email`, `phone`, `city`, `company`, `first_name`, ...); there is no generic
 `name` pattern.
+
+A column without `not_null` (or `pk`) is nullable, and gets nulls in up to a fifth of
+its rows unless it sets `generate: {null_rate: X}`; that includes enum and generator
+columns. Add `not_null` to every column that must always have a value.
 
 ## Model keys
 
@@ -109,5 +113,15 @@ The full spec and JSON Schema ship in the package: `model2data/spec/README.md`,
 `dbt_<name>/` in the current directory: `seeds/raw/<table>.csv`, `models/staging/`,
 `profiles.yml`, a copy of the model, and with defects `defects_report.json` and
 `EXPECTED_FAILURES.md`. Same model, `run`, options and engine version give the same bytes.
+
+With `--days N` the seeds hold the state after the last day, and `--days-format` adds:
+
+- `batches` (default): `dbt_<name>/days/<table>/day_000.csv` is the whole table on the
+  first day; each later `day_NNN.csv` holds that day's inserted rows, then its updated
+  rows with their new values. Loading the days in order is an upsert on the key.
+- `changelog`: `dbt_<name>/changelog/<table>.csv`, every row version with `_day` and `_op`.
+- `final`: nothing beyond the seeds.
+
+Only tables with `incremental` change after the first day.
 
 next: `model2data guide triage`
