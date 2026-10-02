@@ -429,6 +429,32 @@ def test_a_unique_foreign_key_runs_out_of_parents_and_says_so():
     assert days[1].tables["passports"].state["person_id"].dropna().is_unique
 
 
+def test_a_unique_enum_takes_free_members_across_days_and_says_when_none_are_left():
+    members = ["a", "b", "c", "d", "e", "f"]
+    data = {
+        "model2data": "0.2.0",
+        "enums": {"slot": members},
+        "tables": {
+            "slots": {
+                "incremental": {"new_per_day": 2},
+                "columns": {
+                    "id": {"type": "bigint", "pk": True},
+                    "name": {"type": "slot", "unique": True, "not_null": True},
+                },
+            },
+        },
+    }
+    days = generate_days(from_dict(data), 2, base_rows=3, seed=4, as_of=AS_OF)
+    # Never a suffixed value the enum does not have.
+    for day in days:
+        assert set(day.tables["slots"].state["name"]) <= set(members)
+    # Day 1 still has three free members for its two rows.
+    assert days[1].tables["slots"].state["name"].is_unique
+    assert not days[1].warnings
+    # Day 2 has one free member for two rows: one repeat, said.
+    assert days[2].warnings == ["slots.name: 1 duplicate value(s) on day 2"]
+
+
 def test_the_model_roundtrips_with_incremental():
     model = load(DAILY)
     assert model.tables["orders"].incremental == Incremental(

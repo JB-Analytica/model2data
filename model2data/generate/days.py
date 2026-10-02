@@ -598,17 +598,26 @@ class _Engine:
             lone_country=lone,
         )
         if unique and pool is None and len(state):
-            values = self._avoid(values, set(state[column.name].dropna().tolist()), column)
+            values = self._avoid(values, set(state[column.name].dropna().tolist()), column, key)
         return values
 
-    def _avoid(self, values: list, taken: set, column: ColumnDef) -> list:
+    def _avoid(self, values: list, taken: set, column: ColumnDef, key: str) -> list:
         """Replace values that repeat one the table already holds."""
         taken = set(taken)
         out = []
+        repeats = 0
         for value in values:
             candidate = value
             if candidate is not None and candidate in taken:
-                if isinstance(value, str):
+                if column.enum_values:
+                    # A suffix would make it a value the enum does not have:
+                    # take a member no row holds yet, or keep the repeat.
+                    free = [m for m in column.enum_values if m not in taken]
+                    if free:
+                        candidate = random.choice(free)
+                    else:
+                        repeats += 1
+                elif isinstance(value, str):
                     counter = 1
                     while candidate in taken:
                         counter += 1
@@ -623,6 +632,10 @@ class _Engine:
             if candidate is not None:
                 taken.add(candidate)
             out.append(candidate)
+        if repeats:
+            self.warnings.append(
+                f"{key}.{column.name}: {repeats} duplicate value(s) on day {self.day}"
+            )
         return out
 
     # -- time ---------------------------------------------------------------

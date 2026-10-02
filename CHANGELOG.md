@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.10.4] - 2026-10-02
+
+### Fixed
+- **A `unique` enum column gets distinct members.** It was drawn like any enum, with replacement,
+  so `plan: [free, starter, pro, enterprise]` on a four-row table could write `starter` twice and
+  leave out `pro`, and the summary said nothing until dbt's `unique` test failed. A repeated
+  member is now swapped for one no row holds yet. With fewer members than rows the remaining
+  repeats are listed under "Unique columns left with duplicate values", like a numeric range too
+  narrow for its rows. On days after the first, a new row that repeats a member the table already
+  holds takes a free one instead of a suffixed value the enum does not have (`starter2`); with
+  none left it keeps the repeat and the day's warnings say so.
+- **Determinism:** only a repeat is drawn again, so a seeded run whose unique enum columns already
+  came out distinct writes the same files as 1.10.3. A run that had repeats in one, whose
+  generated `unique` test therefore failed, now writes different values from that column on.
+
 ## [1.10.3] - 2026-10-02
 
 ### Added

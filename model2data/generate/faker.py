@@ -796,6 +796,8 @@ def generate_column_values(
         # when it carried an explicit `null_rate`.
         if not force_not_null and "not null" not in column.settings and "pk" not in column.settings:
             _null_out(values, _null_fraction_for(column, row_count), column.default, row_count)
+        if ensure_unique:
+            values = _distinct_members(values, column.enum_values, unique_label)
         return values
 
     dtype = column.data_type.lower()
@@ -1148,6 +1150,33 @@ def _distinct_parent_values(fk_values: list, row_count: int, unique_label: str) 
         f"{unique_label}: {row_count - len(parents)} duplicate value(s)"
     )
     return values
+
+
+def _distinct_members(values: list, members: list, unique_label: str) -> list:
+    """A unique enum column's values, each repeated member swapped for a free one.
+
+    Only a repeat is drawn again, after the ordinary draw and the null pass, so
+    a draw that already came out distinct keeps every byte (the determinism
+    promise); one with repeats used to fail its generated dbt `unique` test.
+    With fewer members than rows the rest stay repeated and are reported the
+    way `_deduplicate` reports a unique column it could not keep unique.
+    """
+    held = set(values)
+    free = [member for member in members if member not in held]
+    seen: set = set()
+    result = []
+    unresolved = 0
+    for value in values:
+        if value is not None and value in seen:
+            if free:
+                value = free.pop(random.randrange(len(free)))
+            else:
+                unresolved += 1
+        seen.add(value)
+        result.append(value)
+    if unresolved:
+        _duplicate_unique_columns.append(f"{unique_label}: {unresolved} duplicate value(s)")
+    return result
 
 
 # Faker's `text` reaches each word through five layers of provider methods,
