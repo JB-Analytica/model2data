@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.10.4] - 2026-10-02
+
 ### Fixed
 - **A `unique` enum column gets distinct members.** It was drawn like any enum, with replacement,
   so `plan: [free, starter, pro, enterprise]` on a four-row table could write `starter` twice and
