@@ -42,7 +42,8 @@ run:
 ```
 
 - Name columns for what they hold (`customer_email`, not `field3`): names and types pick
-  realistic values. A type may also be a generator name: `email`, `country`, `company`.
+  realistic values. A type may also be a generator name: `email`, `country`, `company`
+  (the list: `model2data guide tune`).
 - Mark every key: `pk`, `unique`, `not_null`, `references`. Each one becomes a dbt test.
 - Keep `run.seed` and `run.as_of`: without them the output changes every run and every day.
 - Already have DBML? `model2data convert <name>.dbml -o <name>.model2data.yml` and edit that.

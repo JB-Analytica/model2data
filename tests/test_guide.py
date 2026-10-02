@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
+import json
 import re
 from importlib import resources
+from pathlib import Path
 
 import click
 import pytest
 import typer
 from typer.testing import CliRunner
 
+from model2data import cli
 from model2data.cli import GuideTopic, app
+from model2data.generate.faker import _infer_by_type
+from model2data.model import SPEC_VERSION, validate
 
 runner = CliRunner()
 TOPICS = [topic.value for topic in GuideTopic]
@@ -104,3 +109,78 @@ def test_every_option_a_page_names_exists(topic):
     } | {"--help"}
     named = set(re.findall(r"(?<![\w-])(--[a-z][a-z-]*)", _code(topic))) - NOT_OURS
     assert named <= options, named - options
+
+
+def _spans(topic: str) -> list[str]:
+    """Inline code spans, single- or double-backticked, outside fenced blocks."""
+    prose = re.sub(r"```.*?```", "", _page(topic), flags=re.S)
+    return [
+        (double or single).strip() for double, single in re.findall(r"``(.+?)``|`([^`\n]+)`", prose)
+    ]
+
+
+def test_quoted_output_is_what_the_cli_prints():
+    """Every ❌ / ⚠️ / summary line a page quotes appears in the CLI's source, piece by piece.
+
+    `<placeholders>`, `N` and `...` stand for what varies; the text between them must not.
+    """
+    source = Path(cli.__file__).read_text("utf-8")
+    quoted = [
+        span
+        for topic in TOPICS
+        for span in _spans(topic)
+        if span.startswith(("❌", "⚠️", "✅", "Columns using"))
+    ]
+    assert len(quoted) >= 8
+    for span in quoted:
+        for piece in re.split(r"<[^>]+>[\w.]*|\.\.\.|\bN\b|\b\d+(?:\.\d+)*\b", span):
+            piece = piece.strip(" .:")
+            if len(piece) > 2:
+                assert piece in source, f"{span!r}: {piece!r} is not in cli.py"
+
+
+def test_spec_version_the_pages_name_is_current():
+    for topic in TOPICS:
+        for version in re.findall(r"spec (\d+\.\d+\.\d+)", _page(topic)):
+            assert version == SPEC_VERSION, topic
+        for version in re.findall(r"^model2data: (\S+)$", _page(topic), flags=re.M):
+            assert version == SPEC_VERSION, topic
+
+
+def test_model_keys_in_tune_are_the_schemas():
+    schema = json.loads(
+        resources.files("model2data").joinpath("spec/model.schema.json").read_text("utf-8")
+    )
+    defs = schema["$defs"]
+    expected = {
+        "Column": defs["column"]["properties"],
+        "`generate`": defs["generate"]["properties"],
+        "Table": defs["table"]["properties"],
+        "Top level": schema["properties"],
+    }
+    section = _page("tune").split("## Model keys", 1)[1].split("```", 1)[0]
+    for item in re.split(r"\n- ", section):
+        label, _, keys = item.partition(":")
+        label = label.strip().lstrip("- ")
+        if label in expected:
+            named = set(re.findall(r"`([a-z_0-9]+)`", keys))
+            wanted = {key for key in expected.pop(label) if not key.startswith("x-")}
+            assert named == wanted, (label, wanted - named, named - wanted)
+    assert not expected, f"tune lists no keys for {sorted(expected)}"
+
+
+@pytest.mark.parametrize("topic", ["setup", "tune"])
+def test_example_models_validate(topic, tmp_path):
+    (block,) = re.findall(r"```yaml\n(.*?)```", _page(topic), flags=re.S)
+    path = tmp_path / f"{topic}.model2data.yml"
+    path.write_text(block, encoding="utf-8")
+    assert [issue for issue in validate(path) if issue.is_error] == []
+
+
+def test_generator_types_tune_lists_all_work():
+    section = _page("tune").split("## Generator types", 1)[1].split("##", 1)[0]
+    listed = re.findall(
+        r"`([a-z_0-9]+)`", section.split("always work:", 1)[1].split("Any other", 1)[0]
+    )
+    assert len(listed) > 20
+    assert [name for name in listed if _infer_by_type(name) is None] == []

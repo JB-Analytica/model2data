@@ -25,7 +25,7 @@ from model2data.generate.relationships import (
     classify_refs,
 )
 from model2data.generate.timeline import order_row_times
-from model2data.parse.dbml import TableDef
+from model2data.parse.dbml import ColumnDef, TableDef
 
 # Tables the most recent generate_data_from_dbml() call found stuck in an
 # unresolved FK cycle (never reached indegree 0 during the topological
@@ -153,7 +153,7 @@ def generate_data_from_dbml(
     # ---------------------------------------------------------
     # Generate tables in dependency order
     # ---------------------------------------------------------
-    ordered_tables = _topological_table_order(tables, fk_refs)
+    ordered_tables, deferred_edges = _table_order(tables, fk_refs)
     generated: dict[str, pd.DataFrame] = {}
 
     for table_name in ordered_tables:
@@ -270,38 +270,7 @@ def generate_data_from_dbml(
         # -----------------------------------------------------
         # Second pass: attribute mirroring (non-FK refs)
         # -----------------------------------------------------
-        for ref in attribute_refs:
-            if ref["source_table"] != table_name:
-                continue
-
-            parent_table = ref["target_table"]
-            parent_column = ref["target_column"]
-            child_column = ref["source_column"]
-
-            parent_df = generated.get(parent_table)
-            if parent_df is None:
-                continue
-
-            # find FK linking child → parent
-            fk_ref = next(
-                (
-                    r
-                    for r in fk_refs
-                    if r["source_table"] == table_name and r["target_table"] == parent_table
-                ),
-                None,
-            )
-            if fk_ref is None:
-                continue
-
-            fk_column = fk_ref["source_column"]
-            parent_key = fk_ref["target_column"]
-            if fk_column not in df.columns or parent_key not in parent_df.columns:
-                continue
-
-            lookup = parent_df.groupby(parent_key)[parent_column].first().to_dict()
-
-            df[child_column] = df[fk_column].map(lookup)
+        df = _mirror_attributes(df, table_name, attribute_refs, fk_refs, generated)
 
         df = _coerce_integer_dtypes(df, table_def)
         generated[table_name] = df
@@ -309,7 +278,82 @@ def generate_data_from_dbml(
         # again, and on a million-row table they are worth tens of megabytes.
         release_row_pools(table_name)
 
+    # ---------------------------------------------------------
+    # Nullable foreign keys that broke an FK cycle: their parent was generated
+    # after them, so they are drawn now, from the rows it ended up holding.
+    # ---------------------------------------------------------
+    for table_name, column in _deferred_fk_columns(tables, fk_refs, deferred_edges):
+        table_def = tables[table_name]
+        parent_table, parent_column = fk_lookup[(table_name, column.name)]
+        if seed is not None:
+            stream_seed = _table_stream_seed(
+                seed,
+                f"{table_name}.{column.name}",
+                table_seeds.get(table_name) if table_seeds else None,
+            )
+            random.seed(stream_seed)
+            Faker.seed(stream_seed)
+        reset_row_pools()
+        df = generated[table_name]
+        df[column.name] = generate_column_values(
+            column=column,
+            row_count=len(df),
+            fk_series=generated[parent_table][parent_column],
+            ensure_unique="unique" in column.settings,
+            table_name=table_name,
+            as_of=as_of,
+            time_profile=profile,
+            skew=skew,
+        )
+        df = _mirror_attributes(df, table_name, attribute_refs, fk_refs, generated)
+        generated[table_name] = _coerce_integer_dtypes(df, table_def)
+        release_row_pools(table_name)
+
     return generated
+
+
+def _mirror_attributes(
+    df: pd.DataFrame,
+    table_name: str,
+    attribute_refs: list[dict],
+    fk_refs: list[dict],
+    generated: dict[str, pd.DataFrame],
+) -> pd.DataFrame:
+    """Copy each non-FK referenced attribute from the parent row the FK points at."""
+    for ref in attribute_refs:
+        if ref["source_table"] != table_name:
+            continue
+
+        parent_table = ref["target_table"]
+        parent_column = ref["target_column"]
+        child_column = ref["source_column"]
+
+        parent_df = generated.get(parent_table)
+        if parent_df is None:
+            continue
+
+        # find FK linking child → parent
+        fk_ref = next(
+            (
+                r
+                for r in fk_refs
+                if r["source_table"] == table_name and r["target_table"] == parent_table
+            ),
+            None,
+        )
+        if fk_ref is None:
+            continue
+
+        fk_column = fk_ref["source_column"]
+        parent_key = fk_ref["target_column"]
+        if fk_column not in df.columns or parent_key not in parent_df.columns:
+            continue
+
+        lookup = parent_df.groupby(parent_key)[parent_column].first().to_dict()
+
+        df[child_column] = df[fk_column].map(lookup)
+
+    return df
 
 
 # ---------------------------------------------------------
@@ -572,11 +616,38 @@ def _topological_table_order(
     tables: dict[str, TableDef],
     fk_refs: list[dict],
 ) -> list[str]:
+    """Order tables so parent tables are generated before children."""
+    return _table_order(tables, fk_refs)[0]
+
+
+def _nullable_fk(table: TableDef, column_name: str) -> bool:
+    """Whether a foreign key column may be null: no `pk`, no `not null`, in no pk key."""
+    column = next((c for c in table.columns if c.name == column_name), None)
+    if column is None or "pk" in column.settings or "not null" in column.settings:
+        return False
+    return not any(
+        key.get("type") == "pk" and column_name in (key.get("columns") or [])
+        for key in table.composite_keys
+    )
+
+
+def _table_order(
+    tables: dict[str, TableDef],
+    fk_refs: list[dict],
+) -> tuple[list[str], set[tuple[str, str]]]:
     """
-    Order tables so parent tables are generated before children.
+    Order tables so parent tables are generated before children, and name the
+    (parent, child) edges that had to be broken to get there.
+
+    An FK cycle is broken at a table whose every remaining incoming edge is
+    made only of nullable foreign keys: that table goes first, and those
+    columns are drawn once their parents exist (see `_deferred_fk_columns`). A
+    schema without a cycle breaks nothing, so its order is what it always was.
     """
     graph: dict[str, set[str]] = defaultdict(set)
     indegree: dict[str, int] = dict.fromkeys(tables.keys(), 0)
+    # An edge is breakable when every reference along it is a nullable FK.
+    breakable: dict[tuple[str, str], bool] = {}
 
     for ref in fk_refs:
         parent = ref["target_table"]
@@ -587,32 +658,73 @@ def _topological_table_order(
         if parent not in tables or child not in tables:
             continue
 
+        nullable = _nullable_fk(tables[child], ref["source_column"])
+        breakable[(parent, child)] = breakable.get((parent, child), True) and nullable
         if child not in graph[parent]:
             graph[parent].add(child)
             indegree[child] += 1
 
     queue = deque(sorted(name for name, deg in indegree.items() if deg == 0))
     order: list[str] = []
+    broken: set[tuple[str, str]] = set()
 
-    while queue:
-        node = queue.popleft()
-        order.append(node)
-        for neighbor in sorted(graph.get(node, [])):
-            indegree[neighbor] -= 1
-            if indegree[neighbor] == 0:
-                queue.append(neighbor)
+    while True:
+        while queue:
+            node = queue.popleft()
+            order.append(node)
+            for neighbor in sorted(graph.get(node, [])):
+                indegree[neighbor] -= 1
+                if indegree[neighbor] == 0:
+                    queue.append(neighbor)
 
-    # Any table not reached by the Kahn's-algorithm pass above never had its
-    # indegree reduced to 0, which (unlike a genuinely disconnected table,
-    # which starts at indegree 0 and is processed by the loop above) can only
-    # happen if it sits inside -- or depends on -- an unresolved multi-table
-    # FK cycle. Append it to the order anyway (still generate *something*
-    # rather than crash on an unusual-but-not-invalid schema), but record it
-    # so the CLI can warn the user their generated FK data may not respect
-    # every relationship.
+        remaining = sorted(name for name in tables if name not in order)
+        if not remaining:
+            break
+        placed = set(order)
+        candidate = None
+        for name in remaining:
+            incoming = [
+                parent
+                for parent in remaining
+                if name in graph.get(parent, ()) and parent not in placed
+            ]
+            if incoming and all(breakable[(parent, name)] for parent in incoming):
+                candidate = (name, incoming)
+                break
+        if candidate is None:
+            break
+        name, incoming = candidate
+        for parent in incoming:
+            graph[parent].discard(name)
+            broken.add((parent, name))
+        indegree[name] = 0
+        queue.append(name)
+
+    # Any table still not reached sits inside -- or depends on -- an FK cycle
+    # of required foreign keys, which no order can satisfy. Append it to the
+    # order anyway (still generate *something* rather than crash on an
+    # unusual-but-not-invalid schema), but record it so the CLI can warn the
+    # user their generated FK data may not respect every relationship.
     leftover = sorted(name for name in tables if name not in order)
     if leftover:
         _cycle_state["cyclic_tables"] = leftover
     order.extend(leftover)
 
-    return order
+    return order, broken
+
+
+def _deferred_fk_columns(
+    tables: dict[str, TableDef],
+    fk_refs: list[dict],
+    broken: set[tuple[str, str]],
+) -> list[tuple[str, ColumnDef]]:
+    """The (table, column) foreign keys along broken edges, in schema order."""
+    columns: list[tuple[str, ColumnDef]] = []
+    for ref in fk_refs:
+        child, parent = ref["source_table"], ref["target_table"]
+        if (parent, child) not in broken:
+            continue
+        column = next(c for c in tables[child].columns if c.name == ref["source_column"])
+        if (child, column) not in columns:
+            columns.append((child, column))
+    return columns

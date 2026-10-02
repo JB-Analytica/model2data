@@ -4,10 +4,14 @@
 
 | Command | Does | Exit |
 |---|---|---|
-| `model2data --file M` | same as `model2data generate --file M` | 0 ok, 1 model error or destination exists, 2 bad option |
+| `model2data --file M` | same as `model2data generate --file M` | see below |
 | `model2data validate M...` | check models against spec 0.3.0 | 0 conforms (warnings allowed), 1 any error |
-| `model2data convert M` | print M as `.model2data.yml`; `-o FILE` writes it, `--force` overwrites | 0 ok, 1 unreadable model |
+| `model2data convert M` | print M as `.model2data.yml`; `-o FILE` writes it, `--force` overwrites | 0 ok, 1 unreadable model or output exists |
 | `model2data guide [TOPIC]` | this page; topics `setup`, `triage`, `tune` | 0 |
+
+`generate` exits 0 on success; 1 on a model error, an existing `dbt_<name>/` without
+`--force`, or a bad `--adapter` / `--hint-tests` value; 2 on a value the option parser
+rejects (`--rows 5`, an unknown table in `--rows-for`, a bad `--defects` or `--days-format`).
 
 `validate` also takes `--glob '**/*.model2data.yml'` (repeatable, no shell globstar
 needed), `--format github` (pull-request annotations) and `--require-files` (exit 1 when
@@ -34,16 +38,69 @@ Every option overrides the model's `run` setting of the same meaning.
 | `--name NAME` (project becomes `dbt_NAME`) | `name` (top level) | file stem |
 | `--force` (replace `dbt_<name>/`) | | off |
 
+## Generator types
+
+A column's `type` may name a generator instead of an SQL type: `{type: company}`. These
+always work: `name`, `first_name`, `last_name`, `user_name`, `email`, `phone_number`,
+`company`, `job`, `catch_phrase`, `address`, `street_address`, `city`, `state`, `country`,
+`postcode`, `url`, `domain_name`, `ipv4`, `color_name`, `currency_code`, `iban`, `ean13`,
+`license_plate`, `uuid4`, `word`, `sentence`. Any other Faker provider name that takes no
+arguments works too. A plain `varchar` gets realistic text only when its name contains a
+known pattern (`email`, `phone`, `city`, `company`, `first_name`, ...); there is no generic
+`name` pattern.
+
 ## Model keys
 
-- Column: `type`, `pk`, `unique`, `not_null`, `references`, `default`, `description`,
-  `measure`, `generate`.
+- Column: `type`, `pk`, `unique`, `not_null`, `increment`, `default`, `description`,
+  `references`, `measure`, `generate`.
 - `generate`: `min`, `max`, `distribution`, `null_rate`, `weights`, `true_rate`,
   `distinct`, `skew`, `after`, `business_hours`, `growth`, `seasonality`, `transitions`.
-- Table: `description`, `role`, `grain`, `keys`, `foreign_keys`, `incremental`, `defects`.
-- Top level: `model2data` (spec version), `name`, `enums`, `tables`, `relationships`,
-  `groups`, `run`.
+- Table: `columns`, `description`, `color`, `role`, `grain`, `keys`, `foreign_keys`,
+  `incremental`, `defects`.
+- Top level: `model2data` (spec version), `name`, `description`, `enums`, `tables`,
+  `relationships`, `groups`, `run`.
 
+Each key in use (this model validates):
+
+```yaml
+model2data: 0.3.0
+name: saas
+enums:
+  plan_tier: [free, pro, enterprise]
+  sub_status: [trial, active, cancelled]
+tables:
+  accounts:
+    columns:
+      id: {type: bigint, pk: true}
+      company: company
+      tier: {type: plan_tier, generate: {weights: {free: 5, pro: 3, enterprise: 1}}}
+      is_verified: {type: boolean, generate: {true_rate: 0.8}}
+      region: {type: city, generate: {distinct: 4}}
+  subscriptions:
+    incremental: {new_per_day: 5, update_rate: 0.1, changes: [status], updated_at: updated_at}
+    keys: [{unique: [account_id, started_at]}]
+    columns:
+      id: {type: bigint, pk: true}
+      account_id: {type: bigint, not_null: true, references: accounts.id, generate: {skew: 0.7}}
+      status:
+        type: sub_status
+        generate: {transitions: {trial: [active, cancelled], active: [cancelled]}}
+      seats: {type: integer, generate: {min: 1, max: 500, distribution: {kind: lognormal, median: 10}}}
+      started_at: {type: timestamp, not_null: true, generate: {business_hours: true, growth: 0.5}}
+      cancelled_at: {type: timestamp, generate: {after: started_at, null_rate: 0.7}}
+      updated_at: {type: timestamp, generate: {after: started_at}}
+    defects:
+      - {type: nulls, column: account_id, count: 2}
+run:
+  rows: 100
+  rows_per_table: {accounts: 20}
+  seed: 7
+  table_seeds: {subscriptions: 2}
+  as_of: 2026-01-01
+  shape: {seasonality: 0.3}
+```
+
+`transitions` act only on days after the first: it needs `incremental` and `--days`.
 The full spec and JSON Schema ship in the package: `model2data/spec/README.md`,
 `model2data/spec/model.schema.json`.
 

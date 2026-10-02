@@ -7,13 +7,6 @@
 
 Built and maintained by [JB Analytica](https://www.jbanalytica.com/) — data platform architecture and analytics engineering.
 
-Driving model2data from a coding agent? Have it start here; the instructions ship with the
-installed version and pick a topic from the current directory:
-
-```bash
-uvx model2data@latest guide
-```
-
 **Turn a data model into a running analytics stack in one command.**
 
 Give `model2data` a data model — a `.model2data.yml` file, or a [DBML](https://dbml.dbdiagram.io/docs/)
@@ -22,6 +15,13 @@ relationship-preserving synthetic data
 *and* a complete, runnable dbt project around it: seeds, staging models, tests, and a
 DuckDB or Postgres profile. No sample data to hunt down, no dbt boilerplate to hand-write, no
 production data to risk exposing.
+
+Driving model2data from a coding agent? Have it start here; the instructions ship with the
+installed version and pick a topic from the current directory:
+
+```bash
+uvx model2data@latest guide
+```
 
 A working analytics stack — real (synthetic) data, tested dbt models, queryable in
 DuckDB — from a schema file, in seconds:

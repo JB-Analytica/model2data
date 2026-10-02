@@ -26,14 +26,17 @@ Take the first rule that applies to each line:
 1. `❌ Destination ... already exists`: re-run with `--force`.
 2. Any other `❌` line: a model mistake the schema check could not see. Fix what it names.
 3. `Columns using generic fallback text: N` above 0: each listed column gets lorem text.
-   Rename it for its content (`customer_email`), or give it a generator type
-   (`{type: company}`), or an enum.
-4. `⚠️  Unique columns left with duplicate values` / `Composite keys left with duplicate
-   rows`: the value space is too small for the rows. Widen it (`generate: {min:, max:}`,
-   more enum members) or lower that table's rows (`run.rows_per_table`).
-5. `⚠️  Tables in an unresolved FK cycle`: make one `references` column in the cycle
-   nullable (drop `not_null`), so one side can be generated first.
-6. `⚠️  No table has incremental` after `--days`: add `incremental` to the tables that
+   Give it a generator type (`{type: company}`, `{type: job}`; the list is in
+   `model2data guide tune`), or make it an enum. Renaming works only for the patterns
+   listed there; `name` or `team_name` alone matches nothing.
+4. `⚠️  Unique columns left with duplicate values` or
+   `⚠️  Composite keys left with duplicate rows`: the value space is too small for the
+   rows. Widen it (`generate: {min: 1, max: 100000}`, more enum members) or lower that
+   table's rows (`run: {rows_per_table: {<table>: 20}}`).
+5. `⚠️  Tables in an unresolved FK cycle`: every foreign key in the cycle is required.
+   Make one `references` column in it nullable (drop `not_null`): that table is generated
+   first, and the column is filled once its parent exists.
+6. `` ⚠️  No table has `incremental` `` after `--days`: add `incremental` to the tables that
    should change, or drop `--days`.
 7. One table looks wrong and the rest is right: `--table-seed <table>=N` re-rolls only it.
 
