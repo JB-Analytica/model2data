@@ -4,6 +4,10 @@ This file is written for an LLM or coding agent (Claude, GPT, etc.) that has fil
 shell access and has been asked to turn a description of a data model into a demo-ready dbt
 project. Read this before authoring a DBML file for `model2data`.
 
+With model2data installed, `model2data guide` prints the instructions for the version you have:
+how to set it up here, what its output means and what to do about it (`guide triage`), and every
+option (`guide tune`). Run it first.
+
 ## What model2data does
 
 `model2data` takes a [DBML](https://dbml.dbdiagram.io/docs/) schema file and generates, in one

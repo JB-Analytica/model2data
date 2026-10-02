@@ -2,6 +2,8 @@ import random
 import shutil
 from collections.abc import Iterable
 from datetime import date, datetime
+from enum import Enum
+from importlib import resources
 from pathlib import Path
 from typing import Any, Optional
 
@@ -169,7 +171,7 @@ app = typer.Typer(
         "• A runnable dbt project scaffold\n"
         "• dbt seeds, staging models, and profiles\n\n"
         "`model2data --file MODEL` generates; `validate` and `convert` check and\n"
-        "convert a model."
+        "convert a model. Agents: run `model2data guide` first."
     ),
     add_completion=False,
 )
@@ -891,3 +893,47 @@ def convert_command(
         raise typer.Exit(1)
     output.write_text(text, encoding="utf-8")
     typer.echo(f"✅ Wrote {output}")
+
+
+class GuideTopic(str, Enum):
+    setup = "setup"
+    triage = "triage"
+    tune = "tune"
+
+
+_MODEL_PATTERNS = ("*.model2data.yml", "*.model2data.yaml", "*.model2data.json", "*.dbml")
+
+
+def _detect_topic(cwd: Path) -> tuple[GuideTopic, str]:
+    """`triage` when the current directory holds a model, else `setup`, and why.
+
+    Reads file names in `cwd` only: no subdirectories, no network.
+    """
+    models = sorted(path.name for pattern in _MODEL_PATTERNS for path in cwd.glob(pattern))
+    if models:
+        return GuideTopic.triage, f"found {', '.join(models)}"
+    return GuideTopic.setup, "no *.model2data.yml or *.dbml in this directory"
+
+
+@app.command("guide")
+def guide_command(
+    topic: Optional[GuideTopic] = typer.Argument(  # noqa: B008
+        None,
+        help=(
+            "setup: no model here yet -- install, write one, first run. "
+            "triage: what validate, generate and dbt build printed, and what to do. "
+            "tune: every option, model key and exit code. "
+            "Default: picked from the current directory (a *.model2data.yml or *.dbml "
+            "file in it means triage)."
+        ),
+    ),
+):
+    """Print instructions for an agent about to use model2data, as Markdown.
+
+    Reads nothing but file names in the current directory and writes nothing.
+    """
+    if topic is None:
+        topic, reason = _detect_topic(Path.cwd())
+        typer.echo(f"# model2data guide: {reason} -> {topic.value}\n")
+    page = resources.files("model2data").joinpath(f"guide/{topic.value}.md")
+    typer.echo(page.read_text("utf-8"), nl=False)

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **`model2data guide [setup|triage|tune]`** prints one page of Markdown written for a coding
+  agent about to use model2data: `setup` (install, a starter model, the first run), `triage`
+  (what `validate`, `generate` and `dbt build` print and what to do about each, in order) and
+  `tune` (every option, model key and exit code). Without a topic it picks `triage` when the
+  current directory holds a `*.model2data.yml` or `*.dbml` file, else `setup`, and says so on
+  its first line. The pages ship in the package, so they match the installed version; the
+  command reads only file names in the current directory and writes nothing.
+
 ## [1.10.3] - 2026-10-02
 
 ### Added
