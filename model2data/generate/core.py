@@ -4,6 +4,7 @@ import hashlib
 import random
 from collections import defaultdict, deque
 from collections.abc import Mapping
+from datetime import datetime
 from typing import Optional
 
 import pandas as pd
@@ -25,7 +26,8 @@ from model2data.generate.relationships import (
     build_fk_lookup,
     classify_refs,
 )
-from model2data.generate.timeline import order_row_times
+from model2data.generate.timeline import _resolve_anchor, order_row_times
+from model2data.generate.when import SeedFor, apply_when
 from model2data.parse.dbml import ColumnDef, TableDef
 
 # Tables the most recent generate_data_from_dbml() call found stuck in an
@@ -273,6 +275,17 @@ def generate_data_from_dbml(
         # -----------------------------------------------------
         df = _mirror_attributes(df, table_name, attribute_refs, fk_refs, generated)
 
+        # `when` last, once every column it reads holds its final value, and
+        # from streams of its own: see generate.when.
+        apply_when(
+            df,
+            table_def,
+            cap=_midnight(as_of),
+            seed_for=_when_seed(seed, table_name, table_seeds),
+            as_of=as_of,
+            time_profile=profile,
+        )
+
         df = _coerce_integer_dtypes(df, table_def)
         generated[table_name] = df
         # This table is finished: nothing will read its people or addresses
@@ -360,6 +373,26 @@ def _mirror_attributes(
 # ---------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------
+def _midnight(as_of: AsOf) -> datetime:
+    """Midnight of the run's anchor day: the latest moment a first-day timestamp takes."""
+    anchor = _resolve_anchor(as_of)
+    return datetime(anchor.year, anchor.month, anchor.day)
+
+
+def _when_seed(
+    seed: Optional[int], table_name: str, table_seeds: Optional[Mapping[str, int]]
+) -> SeedFor:
+    """The seed of each `when` column's own stream: the table's, told apart by the column."""
+
+    def seed_for(column: str) -> Optional[int]:
+        if seed is None:
+            return None
+        table_seed = table_seeds.get(table_name) if table_seeds else None
+        return _table_stream_seed(seed, f"{table_name}.{column}|when", table_seed)
+
+    return seed_for
+
+
 def _lone_country_columns(table_def: TableDef) -> set[str]:
     """Names of this table's *lone* country columns.
 

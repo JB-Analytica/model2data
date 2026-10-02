@@ -26,6 +26,7 @@ or a downstream dbt test failure.
 | `stddev`    | numeric columns, with `distribution: normal`   | normal: the spread |
 | `median`    | numeric columns, with `distribution: lognormal`| lognormal: the typical value, `exp(mu)`   |
 | `spread`    | numeric columns, with `distribution: lognormal`| lognormal: sigma of the underlying normal (0.3 mild, 1.0 heavy tail) |
+| `when`      | nullable columns that are no key, unique or FK | other column -> values: null on the rows that don't match (see generate.when) |
 """
 
 from __future__ import annotations
@@ -201,6 +202,14 @@ def _validate_column_hints(
             raise ValueError(f'{label}: "seasonality" only applies to date/timestamp columns.')
         _check_fraction(label, "seasonality", note["seasonality"])
 
+    if "when" in note:
+        if not is_nullable or is_fk or is_unique:
+            raise ValueError(
+                f'{label}: "when" needs a nullable column that is not a key, unique or a '
+                "foreign key."
+            )
+        _check_when(label, table_name, column.name, note["when"], columns_by_name)
+
     if "distribution" in note:
         if not is_numeric:
             raise ValueError(f'{label}: "distribution" only applies to numeric columns.')
@@ -293,3 +302,21 @@ def _check_after(
         raise ValueError(
             f'{label}: "after" names {after!r}, which is not a date or timestamp column.'
         )
+
+
+def _check_when(
+    label: str,
+    table_name: str,
+    name: str,
+    when: object,
+    columns_by_name: dict[str, ColumnDef],
+) -> None:
+    if not isinstance(when, dict) or not when:
+        raise ValueError(f'{label}: "when" must map another column to the values it must hold.')
+    for other, values in when.items():
+        if other == name or other not in columns_by_name:
+            raise ValueError(
+                f'{label}: "when" names {other!r}, which is not another column of {table_name}.'
+            )
+        if not isinstance(values, list) or not values:
+            raise ValueError(f'{label}: "when" must list the values {other!r} must hold.')

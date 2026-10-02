@@ -237,15 +237,28 @@ def uses_0_3(model: Model) -> bool:
     )
 
 
+def uses_0_4(model: Model) -> bool:
+    """Whether the model uses what spec 0.4.0 added: a column's `when`."""
+    return any(
+        "when" in column.generate
+        for table in model.tables.values()
+        for column in table.columns.values()
+    )
+
+
 def document_version(model: Model) -> Any:
     """The version the model's document is written against.
 
-    The version the model was read with, unless it is a 0.2 one and the model
-    uses `defects` or `incremental.history`, which 0.2 does not have: then
-    0.3.0. A 0.2.0 document without them is written as 0.2.0, as it always was.
+    The version the model was read with, unless the model uses what that
+    version does not have: 0.4.0 when it uses `when` and was read as 0.2 or
+    0.3, 0.3.0 when it uses `defects` or `incremental.history` and was read as
+    0.2. A document without them is written as the version it was, as always.
     """
     version = model.version
-    if uses_0_3(model) and str(version).split(".")[:2] == ["0", "2"]:
+    minor = str(version).split(".")[:2]
+    if uses_0_4(model) and minor in (["0", "2"], ["0", "3"]):
+        return "0.4.0"
+    if uses_0_3(model) and minor == ["0", "2"]:
         return "0.3.0"
     return version
 

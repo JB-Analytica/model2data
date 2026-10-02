@@ -1,18 +1,18 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://www.jbanalytica.com/model2data/spec/0.3.0/model.schema.json",
+  "$id": "https://www.jbanalytica.com/model2data/spec/0.4.0/model.schema.json",
   "title": "model2data model",
   "description": "A data model: its tables, their columns and keys, the relationships between them, the enums a column can be typed as, and how each column's values are generated. Written as YAML (the `.model2data.yml` file) or as JSON; both are the same document. This schema is normative together with model2data/spec/README.md, which defines the YAML profile a reader must apply and the checks that depend on more than one part of the document.",
   "type": "object",
   "required": ["model2data", "tables"],
   "properties": {
     "model2data": {
-      "description": "The spec version the document is written against, `MAJOR.MINOR` or `MAJOR.MINOR.PATCH`. Write it as `0.3.0`. A 0.2 document is still read, and reads as it did: 0.3.0 only adds `defects`, which a 0.2 document cannot use. A reader that met the YAML number 0.3 reads it as `0.3`.",
+      "description": "The spec version the document is written against, `MAJOR.MINOR` or `MAJOR.MINOR.PATCH`. Write it as `0.4.0`. A 0.2 or 0.3 document is still read, and reads as it did: 0.3.0 only adds `defects` and `incremental.history`, which a 0.2 document cannot use, and 0.4.0 only a column's `when`, which a 0.2 or 0.3 document cannot use. A reader that met the YAML number 0.4 reads it as `0.4`.",
       "oneOf": [
-        { "type": "string", "pattern": "^0\\.[23](\\.(0|[1-9][0-9]*))?$" },
-        { "enum": [0.2, 0.3] }
+        { "type": "string", "pattern": "^0\\.[234](\\.(0|[1-9][0-9]*))?$" },
+        { "enum": [0.2, 0.3, 0.4] }
       ],
-      "examples": ["0.3.0"]
+      "examples": ["0.4.0"]
     },
     "name": {
       "description": "The model's name. Names the generated dbt project, normalised to `[a-z0-9_]`. Defaults to the file's name without `.model2data.yml`.",
@@ -521,6 +521,20 @@
           },
           "x-model2data-applies-to": ["enum"],
           "examples": [{ "pending": ["paid", "cancelled"], "paid": ["shipped"], "shipped": ["delivered"] }]
+        },
+        "when": {
+          "description": "The rows this column holds a value on: a mapping of another column of the same table to the values it must hold, every column named having to match. On a row that matches, the column is generated as it is without `when`, and is never null unless it has a `null_rate`, which then counts only those rows: exactly ⌊m × null_rate⌋ of the m matching rows are null. On every other row, one whose named column is null included, it is null. On a later generated day, a row an update brings to match (an order moving to `shipped`) gets a value on that day, and one an update takes out of matching loses it. A named column is another column of the table that is not a date or timestamp, not a foreign key, and has no `when` of its own; each value listed is one it can hold: a member of its enum, `true` or `false` for a boolean, a number for a numeric column (a whole one for an integer column), text otherwise. The column carrying `when` is nullable, has no `default`, and is not in a key, unique, a foreign key, or its table's `incremental.updated_at`. Spec 0.4.0.",
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": { "$ref": "#/$defs/name" },
+          "additionalProperties": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": { "type": ["string", "number", "boolean"] }
+          },
+          "x-model2data-applies-to": ["nullable"],
+          "examples": [{ "status": ["done"] }, { "status": ["shipped", "delivered"] }]
         }
       },
       "patternProperties": { "^x-": true },

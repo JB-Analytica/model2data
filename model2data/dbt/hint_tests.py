@@ -14,7 +14,12 @@ What becomes a test, and what does not:
 | `generate.after: other`   | `model2data_not_before`                | none      |
 | `generate.null_rate`      | `model2data_max_null_share`            | yes       |
 | `generate.distinct: n`    | `model2data_max_distinct`              | none      |
+| `generate.when`           | `model2data_when`                      | none      |
 | table `grain`             | `model2data_unique_combination`        | none      |
+
+A column with `when` and `null_rate` has its null share tested among the rows
+`when` matches (`model2data_when_max_null_share`), since only those rows can
+hold a value, and its `model2data_when` test lets those rows be null.
 
 Enum columns keep the `accepted_values` test `generate_dbt_yml` always wrote.
 `true_rate`, `weights`, `skew`, `distribution` and the temporal shape hints
@@ -22,11 +27,14 @@ Enum columns keep the `accepted_values` test `generate_dbt_yml` always wrote.
 constraint a row can break, so they produce no test.
 
 The generic tests live in `macros/model2data_hint_tests.sql` of the generated
-project (see `write_hint_macros`): plain SQL, no dbt package.
+project (see `write_hint_macros`), and the `when` ones in
+`macros/model2data_when_tests.sql`, written only for a model that has one, so
+a project without `when` is what it was: plain SQL, no dbt package.
 """
 
 from __future__ import annotations
 
+import copy
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -43,6 +51,8 @@ DEFAULT_TOLERANCE = 0.1
 
 MACROS_FILE = "model2data_hint_tests.sql"
 _MACROS_SOURCE = Path(__file__).parent / "templates" / "hint_macros" / MACROS_FILE
+WHEN_MACROS_FILE = "model2data_when_tests.sql"
+_WHEN_MACROS_SOURCE = Path(__file__).parent / "templates" / "hint_macros" / WHEN_MACROS_FILE
 
 
 @dataclass(frozen=True)
@@ -53,7 +63,7 @@ class HintTest:
     `column` is None for a table-level test (grain). `test` is the generic
     test's name, `arguments` its parameters as dbt's `arguments:` block, and
     `hint` the hint it comes from (`min`, `max`, `after`, `null_rate`,
-    `distinct`, `grain`). `min` and `max` of one column share one test.
+    `distinct`, `when`, `grain`). `min` and `max` of one column share one test.
     """
 
     table: str
@@ -148,14 +158,39 @@ def _column_tests(
         tests.append(HintTest(table, column.name, "model2data_not_before", arguments, "after"))
 
     null_rate = note.get("null_rate")
-    if isinstance(null_rate, (int, float)) and not isinstance(null_rate, bool):
+    if not isinstance(null_rate, (int, float)) or isinstance(null_rate, bool):
+        null_rate = None
+    conditions = _when_conditions(note.get("when"), kinds_of)
+    if conditions is not None:
+        when_arguments: dict[str, Any] = {"conditions": conditions}
+        if null_rate is not None:
+            when_arguments["required"] = False
+        tests.append(HintTest(table, column.name, "model2data_when", when_arguments, "when"))
+
+    if null_rate is not None:
         # Rounded so 0.1 + 0.1 reaches the YAML as 0.2, not 0.2000000000000001.
         limit = round(min(1.0, null_rate + tolerance), 10)
-        tests.append(
-            HintTest(
-                table, column.name, "model2data_max_null_share", {"max_share": limit}, "null_rate"
+        if conditions is None:
+            tests.append(
+                HintTest(
+                    table,
+                    column.name,
+                    "model2data_max_null_share",
+                    {"max_share": limit},
+                    "null_rate",
+                )
             )
-        )
+        else:
+            tests.append(
+                HintTest(
+                    table,
+                    column.name,
+                    "model2data_when_max_null_share",
+                    # Its own copy, or the YAML would share the mapping as an anchor.
+                    {"conditions": copy.deepcopy(conditions), "max_share": limit},
+                    "null_rate",
+                )
+            )
 
     distinct = note.get("distinct")
     if isinstance(distinct, int) and not isinstance(distinct, bool) and distinct > 0:
@@ -167,14 +202,28 @@ def _column_tests(
     return tests
 
 
-def write_hint_macros(dest: Path) -> Path:
+def _when_conditions(when: Any, kinds_of: dict[str, ColumnDef]) -> Optional[dict[str, list]]:
+    """A `when` hint as the test's `conditions`: an enum's values as the member text it holds."""
+    if not isinstance(when, dict) or not when or not all(name in kinds_of for name in when):
+        return None
+    return {
+        name: [str(value) for value in values] if kinds_of[name].enum_values else list(values)
+        for name, values in when.items()
+    }
+
+
+def write_hint_macros(dest: Path, *, when: bool = False) -> Path:
     """Write the generic tests into `dest/macros/`, and return the file's path.
 
     A project whose YAML holds `hint_tests_for` tests needs this file next to
-    it; `generate_dbt_yml` writes it itself when it emits any.
+    it; `generate_dbt_yml` writes it itself when it emits any. With `when`, the
+    file of the `when` tests is written beside it (`WHEN_MACROS_FILE`), which a
+    project holding a `model2data_when` test needs too.
     """
     macros = dest / "macros"
     macros.mkdir(parents=True, exist_ok=True)
     target = macros / MACROS_FILE
     target.write_text(_MACROS_SOURCE.read_text())
+    if when:
+        (macros / WHEN_MACROS_FILE).write_text(_WHEN_MACROS_SOURCE.read_text())
     return target

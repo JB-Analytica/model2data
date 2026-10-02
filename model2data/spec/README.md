@@ -1,4 +1,4 @@
-# The model2data model — spec 0.3.0
+# The model2data model — spec 0.4.0
 
 A model2data model is one document: the tables of a data model, their columns and keys, the
 relationships between them, the enums a column can be typed as, and how every column's values
@@ -73,7 +73,7 @@ The spec is versioned on its own, apart from the engine and the studio, with
 [semantic versioning](https://semver.org). The version is in the schema's `$id`:
 
 ```
-https://www.jbanalytica.com/model2data/spec/0.3.0/model.schema.json
+https://www.jbanalytica.com/model2data/spec/0.4.0/model.schema.json
 ```
 
 A patch release changes wording only. A minor release adds something optional. A major release
@@ -86,6 +86,12 @@ document is a 0.3.0 document that uses neither, and a reader of 0.3.0 reads it a
 Such a document keeps saying `model2data: 0.2.0` and pointing at the 0.2.0 schema; a document
 that uses either says `model2data: 0.3.0`, and either in a document that says 0.2 is an error. A
 writer writes the version the document was read with, and 0.3.0 once it uses either.
+
+0.4.0 adds a column's [`when`](#generation-hints), and nothing else: a 0.2 or 0.3 document is a
+0.4.0 document that does not use it, and a reader of 0.4.0 reads it as it always read. Such a
+document keeps saying the version it says and pointing at that version's schema; a document that
+uses `when` says `model2data: 0.4.0`, and `when` in a document that says 0.2 or 0.3 is an error. A
+writer writes the version the document was read with, and 0.4.0 once it uses `when`.
 
 0.2.0 replaced 0.1.0, which carried hints as JSON inside DBML notes. See
 [From 0.1](#from-01).
@@ -186,6 +192,24 @@ whatever the enum's name contains (`maintenance_type` contains `int`).
 
 The run's defaults for four hints are under `run.shape`; a column's own `generate` wins.
 
+`when` (spec 0.4.0) makes a column depend on another column's value: the column holds a value on the rows
+where the named columns hold one of the listed values, and is null on every other row.
+
+```yaml
+tasks:
+  columns:
+    status: {type: task_status, not_null: true}
+    created_at: {type: timestamp, not_null: true}
+    completed_at:
+      type: timestamp
+      generate: {after: created_at, when: {status: [done]}}
+```
+
+Several columns listed must all match. A row whose named column is null does not match. On the
+matching rows the column is generated as it would be without `when`, and none of them is null
+unless the column has a `null_rate`, which then counts only those rows. How the values a model
+without `when` generates are kept is the engine's (see `model2data.generate.when`).
+
 ### Modelling
 
 `role` and `grain` on a table and `measure` on a column steer what a consumer derives from the
@@ -252,6 +276,10 @@ orders:
 - `updated_at`, when given, is set on a new row to the latest time of the row's own temporal
   columns, and on an updated row to a time on the day no earlier than any temporal column the
   update changed.
+- A column with `when` holds a value on every row that matches, new rows included, and on no
+  other. An update that brings a row to match sets the column on the day (a date column to the
+  day, a timestamp to the row's `updated_at` when the table has one); one that takes a row out
+  of matching makes it null; a row that matched and still does keeps its value.
 - Keys never change (a key column, one that is `pk` or `unique` or in a `keys` entry, is not
   listed in `changes`), and a foreign key keeps pointing at a row that exists.
 - Day *n* is fixed by the seed, `as_of` and *n*: generating days 1 to *n* again gives the same
@@ -367,7 +395,7 @@ reports each failure with the path of the value (`tables.orders.columns.status.g
 11. Every key and every target of `transitions` is a member of the column's enum.
 12. A `measure` aggregating by `sum`, `average`, `min`, `max` or `median` is on a numeric column.
 13. `defects`, `run.defects` and `incremental.history` only in a document of spec 0.3.0 or
-    later.
+    later, and `when` only in a document of spec 0.4.0 or later.
 14. Every defect has exactly one of `count` and `share`, names a column of its table, and gives a
     `type` and `column` no other entry of the table gives. `duplicate_keys` names a primary key
     or a unique column, or its table has a primary key; when `run` gives the table's rows, its
@@ -380,6 +408,11 @@ reports each failure with the path of the value (`tables.orders.columns.status.g
 15. A table with `incremental.history` has a primary key, no column named `valid_from`,
     `valid_to` or `is_current`, and no table of the model is named `<table>_history`, or
     normalises to the same dbt name.
+16. `when` is on a nullable column with no `default` that is not in a key, `unique`, a foreign
+    key or its table's `incremental.updated_at`. Each column it names is another column of the
+    same table that has no `when`, is not a foreign key and is not temporal; each value listed
+    for it is a member of its enum, `true` or `false` for a boolean, a number for a numeric
+    column (a whole one for an integer column), or text for any other.
 
 ### Warnings
 

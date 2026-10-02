@@ -62,7 +62,7 @@ import math
 import random
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Optional, Union
 
@@ -91,6 +91,7 @@ from model2data.generate.hints import validate_hints
 from model2data.generate.options import UNIFORM, TimeProfile, validate_skew
 from model2data.generate.relationships import build_fk_lookup, classify_refs
 from model2data.generate.timeline import HOUR_WEIGHTS, _build_dependencies, _topological_order
+from model2data.generate.when import SeedFor, apply_when, end_of_day, update_when
 from model2data.model.engine import EngineInputs, to_engine
 from model2data.model.types import Incremental, Model, Shape
 from model2data.parse.dbml import ColumnDef, TableDef
@@ -427,7 +428,32 @@ class _Engine:
         frame = self._mirror(key, frame)
         self._composite_keys(key, table, frame, state)
         self._place_in_day(table, frame, inc, list(names), only_updated_at=False)
+        start = self._day_start()
+        apply_when(
+            frame,
+            table,
+            cap=end_of_day(start),
+            floor=start,
+            seed_for=self._when_seed(key, "insert"),
+            held=lambda name: state[name].dropna().tolist(),
+            as_of=self.anchor,
+            time_profile=self.profile,
+        )
         return _coerce_integer_dtypes(frame, table)
+
+    def _day_start(self) -> datetime:
+        return datetime(self.day_date.year, self.day_date.month, self.day_date.day)
+
+    def _when_seed(self, key: str, step: str) -> SeedFor:
+        """The seed of a `when` column's own stream on this day: see generate.when."""
+
+        def seed_for(column: str) -> Optional[int]:
+            if self.seed is None:
+                return None
+            label = f"{key}.{column}|when-{step}"
+            return _day_stream_seed(self.seed, label, self.table_seeds.get(key), self.day)
+
+        return seed_for
 
     def _parent_pool(self, target: tuple[str, str]) -> pd.Series:
         parent, column = target
@@ -546,6 +572,17 @@ class _Engine:
         ]
         if temporal:
             self._place_in_day(table, frame, inc, temporal, only_updated_at=True)
+        update_when(
+            table,
+            current,
+            frame,
+            day_start=self._day_start(),
+            updated_at=inc.updated_at,
+            seed_for=self._when_seed(key, "update"),
+            held=lambda name: state[name].dropna().tolist(),
+            as_of=self.anchor,
+            time_profile=self.profile,
+        )
         for name in frame.columns:
             if state[name].dtype == "Int64":
                 frame[name] = pd.array(frame[name].tolist(), dtype="Int64")
