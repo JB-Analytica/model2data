@@ -50,13 +50,16 @@ from model2data.metrics import (
     SPEC_VERSION as METRICS_SPEC_VERSION,
 )
 from model2data.metrics import (
+    LightdashExport,
     Metrics,
     MetricsError,
     is_metrics_file,
     known_values,
     metrics_stem,
     sibling_model,
+    to_lightdash,
     to_ossie,
+    write_lightdash,
     write_metric_tests,
 )
 from model2data.metrics import load as load_metrics
@@ -471,6 +474,16 @@ def main(
             "without it. Not picked up from beside the model: pass it."
         ),
     ),
+    lightdash: bool = typer.Option(
+        False,
+        "--lightdash",
+        help=(
+            "Add Lightdash metrics and dimensions to the staging models' YAML\n"
+            "(models/staging/stg_*.yml, under config.meta): the --metrics file's metrics,\n"
+            "or without one the metrics the model implies. Without it those files are\n"
+            "unchanged."
+        ),
+    ),
 ):
     """
     Generate synthetic data and a dbt project from a model.
@@ -726,6 +739,13 @@ def main(
     # Metrics: only added files, computed from what the seeds hold
     # -------------------------
     metrics_count: Optional[int] = None
+    lightdash_export = None
+    if _given(lightdash):
+        typer.echo("🔦 Adding Lightdash metrics and dimensions to the staging models...")
+        lightdash_export = to_lightdash(
+            resolve_metrics(model, metrics_doc, model_name=_model_stem(file))
+        )
+        write_lightdash(dest, lightdash_export)
     if metrics_doc is not None and metrics_file is not None:
         typer.echo("📏 Computing each metric's known value and its dbt test...")
         semantic = resolve_metrics(model, metrics_doc, model_name=_model_stem(file))
@@ -796,6 +816,13 @@ def main(
             f"  Metrics:                 {metrics_count} (metric_values.json, "
             f"osi/{project_name}.yml, data-tests/metrics/)"
         )
+
+    if lightdash_export is not None:
+        typer.echo(
+            f"  Lightdash:               {len(lightdash_export.metrics)} metrics "
+            "(models/staging/stg_*.yml, config.meta)"
+        )
+        _print_losses("Not expressible in Lightdash, left out", lightdash_export.lossiness)
 
     if report is not None:
         _print_defects(report)
@@ -1074,7 +1101,14 @@ metrics_app = typer.Typer(
 )
 app.add_typer(metrics_app, name="metrics")
 
-_METRICS_EXPORTS = ("ossie",)
+_METRICS_EXPORTS = ("ossie", "lightdash")
+
+
+def _print_losses(heading: str, losses: list) -> None:
+    if losses:
+        typer.echo(f"ℹ️  {heading}:")
+        for loss in losses:
+            typer.echo(f"  - {loss}")
 
 
 def _metrics_inputs(file: Path, metrics_file: Optional[Path]) -> Any:
@@ -1138,7 +1172,14 @@ def metrics_list_command(
 def metrics_export_command(
     file: Path = _MODEL_OPTION,
     metrics_file: Optional[Path] = _METRICS_OPTION,
-    to: str = typer.Option("ossie", "--to", help="The format: 'ossie' (Apache Ossie 0.1.1, YAML)."),
+    to: str = typer.Option(
+        "ossie",
+        "--to",
+        help=(
+            "The format: 'ossie' (Apache Ossie 0.1.1, YAML) or 'lightdash' (dbt model "
+            "properties with Lightdash's config.meta, YAML)."
+        ),
+    ),
     output: Optional[Path] = typer.Option(  # noqa: B008
         None,
         "--output",
@@ -1153,6 +1194,11 @@ def metrics_export_command(
     Ossie datasets read the staging models of the dbt project `generate` writes
     (staging.stg_<table>). What Ossie 0.1.1 cannot say is listed at the top of the file,
     and carried in custom_extensions.
+
+    Lightdash's file describes those staging models (stg_<table>) as a dbt properties
+    file. dbt reads a model's properties from one file only, so in a project `generate`
+    wrote, use `generate --lightdash` instead: it merges the same meta into the staging
+    models' own YAML. What Lightdash cannot say is listed at the top of the file.
     """
     to = (_given(to) or "ossie").lower()
     if to not in _METRICS_EXPORTS:
@@ -1160,7 +1206,7 @@ def metrics_export_command(
             f"Choose one of: {', '.join(_METRICS_EXPORTS)}.", param_hint="--to"
         )
     semantic = _metrics_inputs(file, _given(metrics_file))
-    export = to_ossie(semantic)
+    export = to_ossie(semantic) if to == "ossie" else to_lightdash(semantic)
     text = export.to_yaml()
     output = _given(output)
     if output is None:
@@ -1170,8 +1216,11 @@ def metrics_export_command(
         typer.echo(f"❌ {output} already exists. Use --force to overwrite it.")
         raise typer.Exit(1)
     output.write_text(text, encoding="utf-8")
+    if isinstance(export, LightdashExport):
+        typer.echo(f"✅ Wrote {output} (Lightdash, dbt YAML, {len(export.metrics)} metrics)")
+        _print_losses("Not expressible in Lightdash, left out", export.lossiness)
+        return
     typer.echo(f"✅ Wrote {output} (Apache Ossie 0.1.1, {len(semantic.metrics)} metrics)")
-    if export.lossiness:
-        typer.echo("ℹ️  Not expressible in Ossie 0.1.1 itself, carried in custom_extensions:")
-        for loss in export.lossiness:
-            typer.echo(f"  - {loss}")
+    _print_losses(
+        "Not expressible in Ossie 0.1.1 itself, carried in custom_extensions", export.lossiness
+    )
