@@ -245,6 +245,18 @@ generated project), a `TableGroup` its `groups`.
 - For a source that keeps its own history (an SCD2 table to snapshot or join point-in-time),
   set `history: true` in the table's `incremental` and generate with `--days N`:
   `<table>_history` gets every version with `valid_from`, `valid_to` and `is_current`.
+- When the user names the numbers that matter (revenue, orders, conversion), write them in a
+  metrics file beside the model, `<stem>.metrics.yml` (metrics spec 0.1.0,
+  `model2data/spec/metrics/README.md`): `measure: table.column` with `agg`, `count: table`,
+  `ratio: {numerator, denominator}` or `expression: a - b` over metric names, and `where` filters
+  (`table.column: value`, a list, or `{ne|in|not_in|gt|gte|lt|lte|between|is_null: ...}`, combined
+  with `any`/`all`). `format: percent` means the value is a fraction (0.6 shows as 60%): write
+  shares as `a / b`, never `* 100`. A filter column must be on the metric's table or reachable through foreign
+  keys child-to-parent along one path. Run `model2data validate <stem>.metrics.yml`, then generate
+  with `--metrics <stem>.metrics.yml`: `metric_values.json` holds each metric's known value, and
+  `dbt build` runs a test per metric that must pass. A failing metric test means the metric's SQL
+  and the data disagree; never edit `metric_values.json` to make it pass. The file must be passed;
+  `generate` does not pick it up from beside the model.
 - model2data requires dbt-core >= 1.11 (tracking dbt's own supported-version policy). Everything
   here, `--unit-tests` included, works with a plain `pip install model2data`.
 
@@ -280,6 +292,14 @@ model2data --file SCHEMA.dbml [OPTIONS]
                            tests are seen to fail; writes defects_report.json and
                            EXPECTED_FAILURES.md into the project. none: ignore every defect,
                            the model's own too
+--metrics        PATH      The model's metrics file: adds metric_values.json (known values),
+                           osi/NAME.yml (Apache Ossie 0.1.1) and data-tests/metrics/ (a dbt test
+                           per metric). Changes no other file
+
+model2data validate FILE... [--model MODEL]   a metrics file (*.metrics.yml) is checked against
+                                              --model, or the model beside it with its stem
+model2data metrics list   -f MODEL [--metrics FILE]                      every metric, inferred too
+model2data metrics export -f MODEL [--metrics FILE] --to ossie [-o FILE]  without generating
 ```
 
 For anything not covered here, see [README.md](README.md) — this file exists to make a schema

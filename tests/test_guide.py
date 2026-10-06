@@ -101,9 +101,14 @@ def test_every_command_a_page_names_exists(topic):
 
 @pytest.mark.parametrize("topic", TOPICS)
 def test_every_option_a_page_names_exists(topic):
+    commands = list(_commands().values())
+    # `metrics` is a group: its subcommands' options count too.
+    for command in list(commands):
+        if isinstance(command, click.Group):
+            commands.extend(command.commands.values())
     options = {
         opt
-        for command in _commands().values()
+        for command in commands
         for param in command.params
         for opt in [*param.opts, *param.secondary_opts]
     } | {"--help"}

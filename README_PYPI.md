@@ -339,6 +339,41 @@ orders:
   incremental: {new_per_day: 20, update_rate: 0.1, updated_at: updated_at, history: true}
 ```
 
+### Metrics next to the model
+
+What the numbers mean goes in a second, optional file beside the model, `<stem>.metrics.yml`,
+defined by the [metrics spec 0.1.0](https://github.com/JB-Analytica/model2data/blob/main/model2data/spec/metrics/README.md):
+
+```yaml
+model2data-metrics: 0.1.0
+model: coffee_webshop
+metrics:
+  revenue:
+    measure: orders.total_amount
+    where:
+      orders.status: [paid, shipped, delivered]
+    format: currency
+  orders:
+    measure: orders.id
+    agg: count_distinct
+  average_order_value:
+    ratio: {numerator: revenue, denominator: orders}
+```
+
+A metric is a column aggregated (`measure`), a row count (`count`), a `ratio` of two metrics'
+totals, or arithmetic over metrics (`expression`); filters reach other tables through many-to-one
+foreign keys, and every `measure` column of the model yields a metric of its own. The generator
+never reads the file. `model2data validate x.metrics.yml` checks it against the model beside it.
+`--metrics FILE` on `generate` adds, and changes nothing else:
+
+- `metric_values.json`: each metric's known value over the generated data, overall and per month;
+- `data-tests/metrics/`: a dbt test per metric checking the warehouse gets that value;
+- `osi/<project>.yml`: the model and its metrics as an [Apache Ossie](https://github.com/apache/ossie)
+  0.1.1 semantic model, with what Ossie cannot say listed at the top.
+
+`model2data metrics list` and `model2data metrics export --to ossie` do the same without
+generating. The [README](https://github.com/JB-Analytica/model2data/blob/main/README.md#metrics-next-to-the-model) has the details.
+
 ## Generated dbt project structure
 
 The generated dbt project includes:
@@ -357,7 +392,10 @@ dbt_{project_name}/
 │       ├── ut_stg_table1.yml  # only with --unit-tests
 │       └── ...
 ├── data-tests/
-│   └── unique_combination_stg_table1_col_a_col_b.sql  # only for composite pk/unique keys
+│   ├── unique_combination_stg_table1_col_a_col_b.sql  # only for composite pk/unique keys
+│   └── metrics/metric_revenue.sql  # only with --metrics: one per metric
+├── osi/{project_name}.yml  # only with --metrics: Apache Ossie 0.1.1
+├── metric_values.json  # only with --metrics: each metric's known value
 ├── macros/
 │   ├── generate_schema_name.sql
 │   └── model2data_hint_tests.sql  # only when the model's hints write tests

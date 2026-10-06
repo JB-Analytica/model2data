@@ -18,6 +18,12 @@ says it created the project. Fix the **model file**, never the generated project
   (`tables.orders.columns.status.generate.weights`). Fix that value. Exit 1 until all are gone.
 - `⚠️  <file>: N warnings`: it conforms. A reference to a parent column that is not a key:
   make the parent `pk` or `unique`. A `grain` without a key: add the key, or drop `grain`.
+- A metrics file (`<stem>.metrics.yml`) is checked against the model beside it. An error
+  naming two paths: the filter's table is reached twice (two foreign keys to one table);
+  filter on a column of the table in between instead. `cannot be reached`: the column is on
+  a child table; put the metric on that table, or drop the filter. `compares by order`: list
+  the values with `in`. A warning `no date or timestamp column`: set `time`. A warning
+  `can never match`: the value is outside what the model generates; fix the value or the hint.
 
 ## generate
 
@@ -51,9 +57,13 @@ Take the first rule that applies to each line:
 3. Any other failing `not_null`, `unique`, `relationships`, `accepted_values` test: the
    generated data broke a key the model declares. Re-read the generate summary; rule 4 or 5
    above applies.
-4. A WARN from a hint test (`min`/`max`, `after`, `null_rate`, `distinct`, `grain`): the hint
+4. A failing `metric_<name>` test (with `--metrics`): the warehouse computed the metric
+   differently from `metric_values.json`. Regenerate with `--force` first (the test and the
+   seeds must come from the same run); if it still fails, report it with both files. Never
+   edit `metric_values.json` or the test to make it pass.
+5. A WARN from a hint test (`min`/`max`, `after`, `null_rate`, `distinct`, `grain`): the hint
    and the data disagree. Fix the hint in the model.
-5. Still failing after the model is fixed: report it with the model file and the output.
+6. Still failing after the model is fixed: report it with the model file and the output.
 
 Done looks like: `validate` exits 0, the summary has no ⚠️ lines, `dbt build` ends `ERROR=0`
 (and `WARN=0` unless the model asks for defects).

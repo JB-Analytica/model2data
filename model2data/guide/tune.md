@@ -5,8 +5,10 @@
 | Command | Does | Exit |
 |---|---|---|
 | `model2data --file M` | same as `model2data generate --file M` | see below |
-| `model2data validate M...` | check models against spec 0.4.0 | 0 conforms (warnings allowed), 1 any error |
+| `model2data validate M...` | check models against spec 0.4.0, and `*.metrics.yml` files against the metrics spec and their model (`--model M`, else the model beside it with the same stem) | 0 conforms (warnings allowed), 1 any error |
 | `model2data convert M` | print M as `.model2data.yml`; `-o FILE` writes it, `--force` overwrites | 0 ok, 1 unreadable model or output exists |
+| `model2data metrics list -f M [--metrics F]` | every metric: the file's, then the inferred ones | 0, 1 on a model or metrics error |
+| `model2data metrics export -f M [--metrics F] --to ossie` | the model and its metrics as Apache Ossie 0.1.1; `-o FILE` writes it, `--force` overwrites | 0, 1 on an error or an existing output, 2 on another `--to` |
 | `model2data guide [TOPIC]` | this page; topics `setup`, `triage`, `tune` | 0 |
 
 `generate` exits 0 on success; 1 on a model error, an existing `dbt_<name>/` without
@@ -37,6 +39,7 @@ Every option overrides the model's `run` setting of the same meaning.
 | `--unit-tests` | | off |
 | `--name NAME` (project becomes `dbt_NAME`) | `name` (top level) | the model's `name`, else the file stem |
 | `--force` (replace `dbt_<name>/`) | | off |
+| `--metrics FILE` (the model's `*.metrics.yml`; never picked up on its own) | | none |
 
 ## Generator types
 
@@ -135,5 +138,30 @@ With `--days N` the seeds hold the state after the last day, and `--days-format`
 - `final`: nothing beyond the seeds.
 
 Only tables with `incremental` change after the first day.
+
+With `--metrics FILE`, and nothing else changed: `metric_values.json` (each metric's known
+value over the seeds, overall and by month), `data-tests/metrics/metric_<name>.sql` (a dbt
+test per metric that fails unless the warehouse gets that value) and `osi/<name>.yml`
+(Apache Ossie 0.1.1).
+
+## Metrics file
+
+`<stem>.metrics.yml` beside the model, version 0.1.0 of its own spec
+(`model2data/spec/metrics/README.md`, `metrics.schema.json` in the package). Top level:
+`model2data-metrics` (0.1.0), `model` (the model's `name`), `metrics`, `dimensions`, `infer`.
+A metric (name `[a-z][a-z0-9_]*`) has exactly one of `measure` (`table.column`, aggregated
+by `agg`: `sum`, `average`, `min`, `max`, `median`, `count`, `count_distinct`, or else by
+the column's own `measure`), `count` (a table: its rows), `ratio` (`{numerator, denominator}`,
+two metric names) or `expression` (metric names, numbers, `+ - * /`, parentheses), and may
+have `label`, `description`, `ai_context`, `format` (`number`, `currency`, `percent`: a fraction, 0.6 shows as 60%, never `* 100`), and,
+with `measure` or `count`, `time` (a date or timestamp column) and `where`. `where` maps
+`table.column` to a value (equals), a list (one of) or operators `eq`, `ne`, `in`,
+`not_in`, `gt`, `gte`, `lt`, `lte`, `between: [a, b]`, `is_null: true`; `any: [...]` and
+`all: [...]` combine filters. A null fails every condition but `is_null: true`. A filter
+column is on the metric's table or reached through `references` child to parent along
+exactly one path. Order operators only on numbers, dates and timestamps. Every `measure`
+column also yields a metric `<table>_<column>` and a fact `<table>_count`, unless
+`infer: false`; a metric of the same name in the file replaces it. `dimensions` maps a
+column to `false` (never a dimension), `true`, or `{label, description}`.
 
 next: `model2data guide triage`
