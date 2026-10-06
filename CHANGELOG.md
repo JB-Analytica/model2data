@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.13.0] - 2026-10-06
+
+### Added
+- **Metrics next to the model.** A second, optional file beside the model,
+  `<stem>.metrics.yml`, says what the model's numbers mean, defined by its own spec, [metrics
+  spec 0.1.0](model2data/spec/metrics/README.md), with a JSON Schema at
+  `https://www.jbanalytica.com/model2data/spec/metrics/0.1.0/metrics.schema.json`. A metric is a
+  column aggregated (`measure: orders.total_amount`, by `agg` or the column's own `measure`), a
+  row count (`count: orders`), a ratio of two metrics' totals (`ratio: {numerator, denominator}`),
+  or arithmetic over metrics (`expression: revenue - refunds`). Simple metrics and row counts take
+  a `where` filter (a value, a list, or `eq`, `ne`, `in`, `not_in`, `gt`, `gte`, `lt`, `lte`,
+  `between`, `is_null`, combined with `any` and `all`, with nulls as in SQL) and a `time` column;
+  a filter may name a column of any table the metric's table reaches through its foreign keys,
+  many-to-one, along exactly one path. Every `measure` column of the model also yields a metric of
+  its own (`orders_total_amount`) and every fact a row count (`orders_count`), named as model2data
+  studio's semantic export names them; `infer: false` turns that off, and a metric of the same
+  name in the file replaces the inferred one. `format: percent` expects a fraction (0.6 shows as
+  60%) and is passed on as a percent format, never multiplied. `dimensions:` offers a column as a dimension, with a
+  label, or never. **The generator never reads the file**: a model generates the same data with
+  or without one.
+- **`model2data validate` checks metrics files** (`*.metrics.yml`): the schema, then against the
+  model, `--model`, or else the model beside it with the same stem. It names every unknown table
+  or column, an aggregation that does not fit its column, an unknown metric in a ratio or
+  expression, a cycle between metrics, a filter column no path reaches or two paths reach (naming
+  both), a value that is not a member of its enum or not of its column's type, and a comparison
+  on an enum, boolean or text column; it warns about a metric with no date to report it by and a
+  filter that can never match the generated data (a `gt` above a column's `max`).
+- **`generate --metrics FILE`** adds, and changes no other file:
+  `metric_values.json`, each metric's **known value** over the generated data, overall and per
+  calendar month (counts exact, everything else rounded to 6 decimal places, half to even; the
+  same seed gives the same bytes); a singular dbt test per metric,
+  `data-tests/metrics/metric_<name>.sql`, that computes it over the project's staging models and
+  fails unless it gets that value, so `dbt build` proves the metric logic on the warehouse, with
+  defects and `--days` too; and `osi/<project>.yml`, the model and its metrics as an Apache Ossie
+  (Open Semantic Interchange) 0.1.1 semantic model, as tagged `osi-0.1.1-rc1` in apache/ossie (no
+  final 0.1.1 tag exists yet; 0.2.0 is an unreleased draft). A
+  metrics file beside the model is not picked up on its own: an unchanged command keeps writing
+  the same files.
+- **`model2data metrics list`** shows every metric, inferred ones included, and **`model2data
+  metrics export --to ossie`** writes the Ossie file without generating. What Ossie 0.1.1 has no
+  field for (a metric's label, format and time, an enum's members, a table's role and grain) goes
+  in `custom_extensions` and is listed at the top of the file.
+- **`model2data.metrics`**, the Python API: `load` and `validate` a metrics file, `resolve` it with
+  its model into one semantic representation (entities, relationships, dimensions, measures and
+  metrics with their join paths), `known_values` over a run's frames, `to_ossie`, and
+  `write_metric_tests`.
+
+### Changed
+- The spec's example model, `model2data/spec/examples/coffee_webshop.model2data.yml`, marks
+  `orders.total_amount` and `order_items.quantity` as measures, for the metrics example beside
+  it. No example under `examples/` changed, and no output changed for any model.
+
 ## [1.12.0] - 2026-10-06
 
 ### Changed
