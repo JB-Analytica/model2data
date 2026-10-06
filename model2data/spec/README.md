@@ -54,6 +54,10 @@ a description prose. Nothing is encoded inside a string.
 The [model2data](https://github.com/JB-Analytica/model2data) engine reads this document and
 nothing else. DBML, dbt YAML and other formats are read by converting them into it.
 
+What the model's numbers mean -- revenue, orders, average order value -- is written in a second,
+optional document beside it, `<name>.metrics.yml`, defined by the [metrics
+spec](metrics/README.md) and versioned on its own. The generator never reads it.
+
 ## What is normative
 
 This README and `model.schema.json`, including every `description` in the schema. A document
@@ -221,7 +225,8 @@ they sit beside `generate`, not in it, because they are about the model rather t
   model.
 - `measure` is `true` (a measure, aggregated by `sum`), `false` (not a measure), or how it
   aggregates: `sum`, `average`, `min`, `max`, `median`, `count`, `count_distinct`. The last two
-  apply to any column, the rest to numeric ones.
+  apply to any column, the rest to numeric ones. Each measure also implies a metric, and a
+  [metrics file](metrics/README.md) adds named, filtered, derived ones.
 
 ```yaml
 orders:

@@ -1,0 +1,75 @@
+# A small model for the metrics tests: every column kind, a two-step path
+# (lines -> orders -> customers), two paths to one table (transfers), a
+# composite foreign key (visits -> slots) and a table no metric can date (logs).
+model2data: 0.4.0
+name: shop
+
+enums:
+  status: [open, paid, cancelled]
+  level: [1, 2]
+
+tables:
+  customers:
+    columns:
+      id: {type: bigint, pk: true}
+      email: {type: email, unique: true}
+      country: text
+      vip: boolean
+      tier: level
+      joined_on: date
+
+  stores:
+    columns:
+      id: {type: bigint, pk: true}
+      region: text
+
+  orders:
+    role: fact
+    columns:
+      id: {type: bigint, pk: true}
+      customer_id: {type: bigint, references: customers.id}
+      store_id: {type: bigint, references: stores.id}
+      status: status
+      amount:
+        type: numeric
+        not_null: true
+        measure: true
+        generate: {min: 10, max: 100}
+      placed_at: timestamp
+      note: text
+
+  lines:
+    columns:
+      id: {type: bigint, pk: true}
+      order_id: {type: bigint, not_null: true, references: orders.id}
+      qty: {type: int, measure: sum}
+      price: {type: numeric, measure: average}
+
+  transfers:
+    columns:
+      id: {type: bigint, pk: true}
+      sender_id: {type: bigint, references: customers.id}
+      receiver_id: {type: bigint, references: customers.id}
+      amount: numeric
+
+  slots:
+    keys:
+      - {pk: [store_id, day]}
+    columns:
+      store_id: {type: bigint, references: stores.id}
+      day: date
+      capacity: int
+
+  visits:
+    foreign_keys:
+      - {columns: [store_id, day], references: slots, to_columns: [store_id, day]}
+    columns:
+      id: {type: bigint, pk: true}
+      store_id: bigint
+      day: date
+      people: int
+
+  logs:
+    columns:
+      id: int
+      level: int

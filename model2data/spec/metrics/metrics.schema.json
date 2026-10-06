@@ -1,0 +1,177 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://www.jbanalytica.com/model2data/spec/metrics/0.1.0/metrics.schema.json",
+  "title": "model2data metrics 0.1.0",
+  "description": "The metrics of a model2data model: a `<stem>.metrics.yml` file beside `<stem>.model2data.yml`. Normative together with README.md in this directory, which says what a document means and the checks a reader makes beyond this schema (against the model, among others).",
+  "type": "object",
+  "required": ["model2data-metrics", "model"],
+  "properties": {
+    "model2data-metrics": {
+      "description": "The version of the metrics spec the document is written against. A reader refuses a minor version it does not implement (the spec is before 1.0.0).",
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "model": {
+      "description": "The `name` of the model the metrics are for. A metrics file read against a model of another name is an error.",
+      "type": "string",
+      "minLength": 1
+    },
+    "metrics": {
+      "description": "The metrics, by name. Order is significant: consumers list them in document order.",
+      "type": "object",
+      "propertyNames": {"$ref": "#/$defs/metricName"},
+      "additionalProperties": {"$ref": "#/$defs/metric"}
+    },
+    "dimensions": {
+      "description": "Which columns are offered as dimensions, beyond the default (every enum, boolean, date and timestamp column that is not a key), by column path. `false`: never offered. `true` or a mapping: offered, with its label and description.",
+      "type": "object",
+      "propertyNames": {"$ref": "#/$defs/columnPath"},
+      "additionalProperties": {"$ref": "#/$defs/dimension"}
+    },
+    "infer": {
+      "description": "Whether every `measure` column of the model also yields a metric (default true). false: only the metrics written here.",
+      "type": "boolean"
+    }
+  },
+  "patternProperties": {"^x-": {}},
+  "additionalProperties": false,
+  "$defs": {
+    "metricName": {
+      "description": "A metric name: a lower-case letter, then lower-case letters, digits and underscores.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "columnPath": {
+      "description": "A column of the model: `table.column`, or `schema.table.column`. The last `.` separates the column.",
+      "type": "string",
+      "pattern": "^[^.]+(\\.[^.]+)?\\.[^.]+$"
+    },
+    "tableKey": {
+      "description": "A table of the model: its name, or `schema.name`.",
+      "type": "string",
+      "pattern": "^[^.]+(\\.[^.]+)?$"
+    },
+    "metric": {
+      "type": "object",
+      "description": "One metric. Exactly one of `measure` (simple), `count` (a row count), `ratio` and `expression` (derived) says its kind.",
+      "properties": {
+        "label": {"type": "string", "description": "The metric's name for people.", "minLength": 1},
+        "description": {"type": "string", "description": "What the metric is, in prose."},
+        "ai_context": {"type": "string", "description": "Prose for an AI tool: when to use the metric, what it is called, what it is not."},
+        "format": {
+          "description": "How a value is shown. It changes no value: `percent` expects a fraction (0.6 is shown as 60%), and a consumer passes it on as a percent format without multiplying.",
+          "enum": ["number", "currency", "percent"]
+        },
+        "measure": {
+          "$ref": "#/$defs/columnPath",
+          "description": "A simple metric: this column, aggregated by `agg`, or without it by the column's own `measure` in the model (`true` is sum)."
+        },
+        "agg": {
+          "description": "How a simple metric aggregates its column. `count` and `count_distinct` apply to any column; the rest to numeric ones.",
+          "enum": ["sum", "average", "min", "max", "median", "count", "count_distinct"]
+        },
+        "count": {
+          "$ref": "#/$defs/tableKey",
+          "description": "A row count: the rows of this table (that pass `where`)."
+        },
+        "ratio": {
+          "description": "The numerator metric's total divided by the denominator metric's: a ratio of totals, null when the denominator is zero or null.",
+          "type": "object",
+          "required": ["numerator", "denominator"],
+          "properties": {
+            "numerator": {"$ref": "#/$defs/metricName"},
+            "denominator": {"$ref": "#/$defs/metricName"}
+          },
+          "patternProperties": {"^x-": {}},
+          "additionalProperties": false
+        },
+        "expression": {
+          "description": "A derived metric: arithmetic over metric names and numbers, with + - * / and parentheses (the grammar is in README.md). Division by zero is null.",
+          "type": "string",
+          "minLength": 1
+        },
+        "time": {
+          "$ref": "#/$defs/columnPath",
+          "description": "The date or timestamp column a simple metric or row count is dated by: on its table, or reachable through many-to-one references. Default: the table's first date or timestamp column, else the first one reachable."
+        },
+        "where": {"$ref": "#/$defs/where"}
+      },
+      "patternProperties": {"^x-": {}},
+      "additionalProperties": false,
+      "oneOf": [
+        {"required": ["measure"], "not": {"anyOf": [{"required": ["count"]}, {"required": ["ratio"]}, {"required": ["expression"]}]}},
+        {"required": ["count"], "not": {"anyOf": [{"required": ["measure"]}, {"required": ["ratio"]}, {"required": ["expression"]}, {"required": ["agg"]}]}},
+        {"required": ["ratio"], "not": {"anyOf": [{"required": ["measure"]}, {"required": ["count"]}, {"required": ["expression"]}, {"required": ["agg"]}, {"required": ["time"]}, {"required": ["where"]}]}},
+        {"required": ["expression"], "not": {"anyOf": [{"required": ["measure"]}, {"required": ["count"]}, {"required": ["ratio"]}, {"required": ["agg"]}, {"required": ["time"]}, {"required": ["where"]}]}}
+      ]
+    },
+    "where": {
+      "description": "A filter on a simple metric or a row count: every entry must hold. A key containing a `.` is a column path and maps to its condition; `any` holds when one of its filters does, `all` when every one does. A column must be on the metric's table or reachable through many-to-one references along exactly one path.",
+      "type": "object",
+      "minProperties": 1,
+      "properties": {
+        "any": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/where"}},
+        "all": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/where"}}
+      },
+      "patternProperties": {
+        "^x-[^.]*$": {},
+        "\\.": {"$ref": "#/$defs/condition"}
+      },
+      "additionalProperties": false
+    },
+    "value": {
+      "description": "A value a column is compared with: an enum member, true or false for a boolean column, a number for a numeric one, an ISO 8601 date or timestamp string for a date or timestamp one, text for any other.",
+      "type": ["string", "number", "boolean"]
+    },
+    "values": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/value"}
+    },
+    "condition": {
+      "description": "What a column must hold. A value: equal to it. A list: one of them. A mapping of operators: every one must hold. A null fails every condition but `is_null: true`, as in SQL.",
+      "oneOf": [
+        {"$ref": "#/$defs/value"},
+        {"$ref": "#/$defs/values"},
+        {
+          "type": "object",
+          "minProperties": 1,
+          "properties": {
+            "eq": {"$ref": "#/$defs/value"},
+            "ne": {"$ref": "#/$defs/value"},
+            "in": {"$ref": "#/$defs/values"},
+            "not_in": {"$ref": "#/$defs/values"},
+            "gt": {"$ref": "#/$defs/value"},
+            "gte": {"$ref": "#/$defs/value"},
+            "lt": {"$ref": "#/$defs/value"},
+            "lte": {"$ref": "#/$defs/value"},
+            "between": {
+              "description": "[low, high], both inclusive.",
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "items": {"$ref": "#/$defs/value"}
+            },
+            "is_null": {"type": "boolean"}
+          },
+          "patternProperties": {"^x-": {}},
+          "additionalProperties": false
+        }
+      ]
+    },
+    "dimension": {
+      "oneOf": [
+        {"type": "boolean"},
+        {
+          "type": "object",
+          "properties": {
+            "label": {"type": "string", "minLength": 1},
+            "description": {"type": "string"}
+          },
+          "patternProperties": {"^x-": {}},
+          "additionalProperties": false
+        }
+      ]
+    }
+  }
+}

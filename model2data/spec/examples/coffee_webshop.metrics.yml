@@ -1,0 +1,58 @@
+# yaml-language-server: $schema=https://www.jbanalytica.com/model2data/spec/metrics/0.1.0/metrics.schema.json
+model2data-metrics: 0.1.0
+model: coffee_webshop
+
+metrics:
+  revenue:
+    label: Revenue
+    description: Order value of the orders that were not cancelled or left unpaid.
+    ai_context: >
+      What customers paid for. Use it for sales and turnover questions; it leaves out pending
+      and cancelled orders.
+    measure: orders.total_amount        # summed: the column's own `measure` is true
+    where:
+      orders.status: [paid, shipped, delivered]
+    time: orders.order_date
+    format: currency
+
+  orders:
+    label: Orders
+    measure: orders.id
+    agg: count_distinct
+
+  order_lines:
+    label: Order lines
+    count: order_items                  # the rows of a table
+
+  average_order_value:
+    label: Average order value
+    ratio: {numerator: revenue, denominator: orders}
+    format: currency
+
+  web_revenue:
+    label: Web revenue
+    measure: orders.total_amount
+    where:
+      orders.status: [paid, shipped, delivered]
+      orders.channel: web
+
+  web_share:
+    label: Web share of revenue
+    expression: web_revenue / revenue    # a fraction: 0.6 shows as 60%
+    format: percent
+
+  coffee_units_sold:
+    label: Coffee units sold
+    description: Bags and capsules on orders that were not cancelled, sold online or in bulk.
+    measure: order_items.quantity       # dated by orders.order_date, through order_id
+    where:
+      orders.status: {ne: cancelled}
+      products.category: [beans, ground, capsules]
+      customers.phone: {is_null: false} # two steps away: order_items -> orders -> customers
+      any:
+        - orders.channel: web
+        - order_items.quantity: {gte: 3}
+
+dimensions:
+  products.name: {label: Product}
+  customers.email: false

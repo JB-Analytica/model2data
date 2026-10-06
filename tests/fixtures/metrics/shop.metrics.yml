@@ -1,0 +1,40 @@
+# Every kind of metric, column and join over shop.model2data.yml, for the dbt tests.
+model2data-metrics: 0.1.0
+model: shop
+
+metrics:
+  paid_amount:
+    measure: orders.amount
+    where:
+      orders.status: paid
+  vip_lines:
+    count: lines
+    where:
+      customers.vip: true
+      customers.joined_on: {gte: "2020-01-01"}
+  tier_two_qty:
+    measure: lines.qty
+    where:
+      customers.tier: [2]
+      orders.placed_at: {lt: "2100-01-01 00:00:00"}
+  visitors_north:
+    measure: visits.people
+    agg: sum
+    where:
+      any:
+        - stores.region: {is_null: false}
+        - slots.capacity: {between: [0, 50]}
+  median_price:
+    measure: lines.price
+    agg: median
+  distinct_notes:
+    measure: orders.note
+    agg: count_distinct
+  log_max:
+    measure: logs.level
+    agg: max
+  paid_share:
+    ratio: {numerator: paid_amount, denominator: orders_amount}
+    format: percent
+  spread:
+    expression: (orders_amount - paid_amount) / orders_count

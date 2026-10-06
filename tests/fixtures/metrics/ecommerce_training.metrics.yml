@@ -1,0 +1,66 @@
+# Every aggregation and operator, over the training model: defects (orphans, nulls,
+# invalid enum values, messy text, duplicate keys) and three days of changes.
+model2data-metrics: 0.1.0
+model: ecommerce_training
+
+metrics:
+  delivered_revenue:
+    measure: orders.total_amount
+    agg: sum
+    where:
+      orders.status: delivered
+  open_orders:
+    count: orders
+    where:
+      orders.status: {in: [pending, processing], ne: cancelled}
+  average_order:
+    measure: orders.total_amount
+    agg: average
+    where:
+      orders.status: {not_in: [cancelled], is_null: false}
+  median_order:
+    measure: orders.total_amount
+    agg: median
+  smallest_order:
+    measure: orders.total_amount
+    agg: min
+    where:
+      orders.total_amount: {between: [100, 4000]}
+  largest_quantity:
+    measure: order_items.quantity
+    agg: max
+  rows_with_a_status:
+    measure: orders.status
+    agg: count
+  customers_ordering:
+    measure: orders.customer_id
+    agg: count_distinct
+    where:
+      customers.last_name: {ne: Smith}
+  items_of_recent_orders:
+    count: order_items
+    where:
+      orders.order_date: {gte: "2025-06-01", lt: "2026-01-01 00:00:00"}
+      products.price: {gt: 20.5}
+      any:
+        - customers.phone: {is_null: true}
+        - all:
+            - customers.country: {not_in: [United States]}
+            - order_items.quantity: {lte: 5}
+  item_value:
+    measure: order_items.unit_price
+    agg: sum
+    time: orders.updated_at
+  orders_count:
+    count: orders
+  order_items_quantity:
+    measure: order_items.quantity
+    agg: sum
+  per_order:
+    ratio: {numerator: item_value, denominator: orders_count}
+  odd_mix:
+    expression: (item_value - delivered_revenue) / (open_orders - open_orders) + -2 * 1.5
+  units_per_order:
+    expression: order_items_quantity / orders_count
+
+infer: true
