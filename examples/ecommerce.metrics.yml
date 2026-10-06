@@ -1,0 +1,33 @@
+# yaml-language-server: $schema=https://www.jbanalytica.com/model2data/spec/metrics/0.1.0/metrics.schema.json
+model2data-metrics: 0.1.0
+model: ecommerce
+
+metrics:
+  revenue:
+    label: Revenue
+    description: Order value of the orders that were not cancelled.
+    measure: orders.total_amount
+    agg: sum
+    where:
+      orders.status: [processing, shipped, delivered]
+    time: orders.order_date
+    format: currency
+
+  orders:
+    label: Orders
+    count: orders
+    where:
+      orders.status: [processing, shipped, delivered]
+    time: orders.order_date
+
+  average_order_value:
+    label: Average order value
+    ratio: {numerator: revenue, denominator: orders}
+    format: currency
+
+  units_sold:
+    label: Units sold
+    measure: order_items.quantity       # dated by orders.order_date, through order_id
+    agg: sum
+    where:
+      orders.status: {ne: cancelled}

@@ -236,7 +236,8 @@ generated project), a `TableGroup` its `groups`.
   for parsing and generate independent per-column FK values, but — same caveat as above — the
   combination isn't guaranteed to match a real parent row unless separately enforced.
 - Only DuckDB (default, zero-config) and Postgres (`--adapter postgres`, needs
-  `pip install "model2data[postgres]"` and connection env vars — see README.md) are supported
+  `pip install "model2data[postgres]"` and connection env vars — see
+  [docs/dbt-project.md](docs/dbt-project.md)) are supported
   targets today.
 - To show that a project's tests fire (or to teach dbt), generate with `--defects training`,
   or list defects per table in a `.model2data.yml` (`defects: [{type: nulls, column: x, count:
@@ -302,5 +303,5 @@ model2data metrics list   -f MODEL [--metrics FILE]                      every m
 model2data metrics export -f MODEL [--metrics FILE] --to ossie [-o FILE]  without generating
 ```
 
-For anything not covered here, see [README.md](README.md) — this file exists to make a schema
+For anything not covered here, see [README.md](README.md) and [docs/](docs/README.md) — this file exists to make a schema
 → demo turnaround fast, not to duplicate the full documentation.

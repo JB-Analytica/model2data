@@ -79,6 +79,17 @@ dbt seed && dbt run
 - **Unique constraints**: Email uniqueness per customer
 - **Realistic data generation**: Names, emails, phone numbers generated via Faker library
 
+**Metrics**: `ecommerce.metrics.yml` beside it ([metrics spec 0.1.0](../model2data/spec/metrics/README.md))
+defines revenue, orders, average order value and units sold. Pass it with `--metrics` and the run
+also writes each metric's known value (`metric_values.json`), a dbt test per metric and an Apache
+Ossie file; the data is the same with or without it:
+
+```bash
+model2data --file examples/ecommerce.model2data.yml --metrics examples/ecommerce.metrics.yml \
+  --rows 200 --seed 42 --as-of 2026-01-31
+cd dbt_ecommerce && dbt build
+```
+
 **Use case**: Perfect for learning how to model transactional systems. Run this to generate realistic e-commerce data for testing, analytics, or building dbt pipelines.
 
 **Try it**:

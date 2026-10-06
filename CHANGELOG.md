@@ -53,11 +53,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   its model into one semantic representation (entities, relationships, dimensions, measures and
   metrics with their join paths), `known_values` over a run's frames, `to_ossie`, and
   `write_metric_tests`.
+- **`examples/ecommerce.metrics.yml`**: revenue, orders, average order value and units sold for
+  the e-commerce example, for `--metrics`.
 
 ### Changed
 - The spec's example model, `model2data/spec/examples/coffee_webshop.model2data.yml`, marks
   `orders.total_amount` and `order_items.quantity` as measures, for the metrics example beside
-  it. No example under `examples/` changed, and no output changed for any model.
+  it. No model under `examples/` changed, and no output changed for any model.
+- **The README and the PyPI page were rewritten** to show what model2data does today: what you
+  get, one capability per line with a link; a before and after of a real run with metrics; who
+  it is for; and how it works, with a new demo GIF. The reference that was in the README moved to
+  `docs/`, one page per topic (the model file, generating, the dbt project, days, history, time
+  shapes, distributions, defects, metrics, CI, agents), worded as it was.
 
 ## [1.12.0] - 2026-10-06
 
