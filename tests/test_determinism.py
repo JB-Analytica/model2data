@@ -62,6 +62,22 @@ _case("table-seed", _ECOM, "--table-seed", "orders=4")
 _case("skew", EXAMPLES / "saas_platform.model2data.yml", "--skew", "0.8")
 _case("incremental-history", FIXTURES / "defects" / "hcol.model2data.yml", "--days", "3")
 _case("composite-keys", FIXTURES / "composite_only.dbml")
+# Metrics add files (known values, Ossie, a dbt test per metric) and change none.
+_SPEC = ROOT / "model2data" / "spec" / "examples"
+_case(
+    "metrics",
+    _SPEC / "coffee_webshop.model2data.yml",
+    "--metrics",
+    str(_SPEC / "coffee_webshop.metrics.yml"),
+)
+_case(
+    "metrics-defects-days",
+    _TRAIN,
+    "--metrics",
+    str(FIXTURES / "metrics" / "ecommerce_training.metrics.yml"),
+    "--days",
+    "2",
+)
 for _locale in ("en_US", "nl_BE", "de_DE", "fr_FR", "ja_JP"):
     _case(f"locale-{_locale}", _ECOM, "--locale", _locale)
 
