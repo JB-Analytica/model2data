@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "model2data"
-version = "1.13.0"
+version = "1.14.0"
 description = "Turn a data model into realistic synthetic data, a runnable dbt project and metrics with known values"
 readme = "README_PYPI.md"
 requires-python = ">=3.10"
