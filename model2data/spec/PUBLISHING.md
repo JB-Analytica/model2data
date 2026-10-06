@@ -96,5 +96,3 @@ added to offer the older ones too.
 
 - Open a `.model2data.yml` in VS Code with the Red Hat YAML extension (or any editor using
   yaml-language-server): completion on `generate:` keys and an error on `nul_rate` mean it works.
-- Flip the Notion row "Publish the spec's JSON Schema at its $id URL and register
-  *.model2data.yml in SchemaStore" to Done.
