@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [1.14.0] - 2026-10-07
+## [1.14.0] - 2026-10-06
 
 ### Added
 - **Lightdash metrics in the generated dbt project.** `generate --lightdash` writes the model's
