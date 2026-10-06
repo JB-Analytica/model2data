@@ -65,13 +65,88 @@ With `--metrics`, the run also writes, and changes nothing else:
   as ANSI SQL expressions. What Ossie 0.1.1 has no field for (a metric's label, format and time,
   enum members) is carried in `custom_extensions` and listed at the top of the file.
 
+## Lightdash
+
+`--lightdash` puts the metrics where [Lightdash](https://docs.lightdash.com/references/metrics)
+reads them: in the dbt project's own YAML, under `config.meta` of each staging model
+(`models/staging/stg_<table>.yml`), next to the tests already there. dbt reads a model's
+properties from one file only, so the meta is merged into those files rather than written beside
+them; with or without `--metrics`, and without `--lightdash` they are byte for byte what they were.
+
+```bash
+model2data --file coffee_webshop.model2data.yml --metrics coffee_webshop.metrics.yml --lightdash
+cd dbt_coffee_webshop && dbt parse
+lightdash compile --no-warehouse-credentials --no-partial-compilation   # every explore compiles
+```
+
+Lightdash queries a warehouse it can reach, Postgres for one (`--adapter postgres`), or
+MotherDuck; it does not open a local DuckDB file, so `lightdash deploy` needs one of those.
+
+```yaml
+- name: stg_orders
+  config:
+    meta:
+      label: Orders
+      primary_key: id
+      joins:
+      - join: stg_customers
+        sql_on: ${stg_orders.customer_id} = ${stg_customers.id}
+        relationship: many-to-one
+      metrics:
+        average_order_value:
+          type: number
+          sql: ${revenue} / NULLIF(${orders}, 0)
+          label: Average order value
+          format: '#,##0.00'
+  columns:
+  - name: total_amount
+    config:
+      meta:
+        dimension:
+          hidden: true
+        metrics:
+          revenue:
+            type: sum
+            label: Revenue
+            ai_hint: What customers paid for. ...
+            format: '#,##0.00'
+            filters:
+            - status: [paid, shipped, delivered]
+            default_time_dimension: {field: order_date, interval: MONTH}
+```
+
+Each table becomes a Lightdash table, joined many-to-one to every table it reaches along exactly
+one path, as a metric's filter reaches them. A dimension gets its label; a column that is not one
+(a key, an amount) is hidden, as `dimensions: {customers.email: false}` asks. A simple metric sits
+on its column with its aggregation as its `type`; a row count is a `count_distinct` of the
+one-column primary key (the same number, and still right where another table joins this one); a
+ratio or an expression is a `type: number` metric over its inputs. `ai_context` becomes
+Lightdash's `ai_hint`, `percent` and `currency` its `'0.00%'` and `'#,##0.00'`.
+
+A filter becomes the metric's `filters` where Lightdash's filter grammar says exactly the same:
+values and lists, `ne` and `not_in` (with `'!null'`, since Lightdash's not-equal lets nulls
+through and model2data's does not), `is_null`, and comparisons and `between` on numbers.
+Anything else, an `any` group or a date comparison, goes into the metric's `sql` as a
+`CASE WHEN`, so the metric still counts exactly the rows its known value counts.
+
+What Lightdash has no place for is listed in the summary and at the top of the exported file: an
+enum's members, a table's role and grain, a currency, a metric dated by a column of another table
+(Lightdash's default time dimension is a field of the metric's own table), and a ratio whose
+inputs are on two tables, which is left out: a Lightdash metric belongs to one table and sees
+another only through a join from it, which would drop or repeat rows.
+
+## Without generating
+
 `model2data metrics list -f MODEL [--metrics FILE]` shows every metric, and `model2data metrics
-export -f MODEL [--metrics FILE] --to ossie [-o FILE]` writes the Ossie file without generating.
+export -f MODEL [--metrics FILE] --to ossie|lightdash [-o FILE]` writes the Ossie file, or the
+Lightdash meta as one dbt properties file for the staging models, without generating. In a
+project `generate` wrote, use `--lightdash` instead: a second properties file for the same models
+would not parse.
 Without `--metrics`, both use the model's inferred metrics. A sibling metrics file is not picked up
 by `generate` on its own: a file appearing beside a model must not change what an unchanged
 command writes. From Python, `model2data.metrics` loads and checks a file (`load`, `validate`),
 resolves it with the model into one semantic representation (`resolve`), and computes
-(`known_values`) and exports (`to_ossie`) from it.
+(`known_values`) and exports (`to_ossie`, `to_lightdash`, `write_lightdash`) from it.
 
 The e-commerce example has a metrics file too, [`examples/ecommerce.metrics.yml`](../examples/ecommerce.metrics.yml)
 (revenue, orders, average order value, units sold); the [README](../README.md#before-and-after)

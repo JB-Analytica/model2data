@@ -304,5 +304,6 @@ Read against its model, a conforming document also meets these:
 This spec fixes what a metric means. How a consumer computes and publishes metrics is its own
 business; the [model2data engine](https://github.com/JB-Analytica/model2data) computes each one's
 known value over a generated run (`metric_values.json`), writes a dbt test per metric that checks
-the warehouse gets the same number, and exports Apache Ossie 0.1.1 as tagged `osi-0.1.1-rc1` in
-apache/ossie (no final 0.1.1 tag exists yet). Its README says how.
+the warehouse gets the same number, exports Apache Ossie 0.1.1 as tagged `osi-0.1.1-rc1` in
+apache/ossie (no final 0.1.1 tag exists yet), and writes Lightdash metrics into the dbt project's
+YAML. Its README says how.

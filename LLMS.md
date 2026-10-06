@@ -296,11 +296,13 @@ model2data --file SCHEMA.dbml [OPTIONS]
 --metrics        PATH      The model's metrics file: adds metric_values.json (known values),
                            osi/NAME.yml (Apache Ossie 0.1.1) and data-tests/metrics/ (a dbt test
                            per metric). Changes no other file
+--lightdash                Add Lightdash metrics and dimensions (config.meta) to the staging
+                           models' YAML, from --metrics or the inferred metrics
 
 model2data validate FILE... [--model MODEL]   a metrics file (*.metrics.yml) is checked against
                                               --model, or the model beside it with its stem
 model2data metrics list   -f MODEL [--metrics FILE]                      every metric, inferred too
-model2data metrics export -f MODEL [--metrics FILE] --to ossie [-o FILE]  without generating
+model2data metrics export -f MODEL [--metrics FILE] --to ossie|lightdash [-o FILE]  without generating
 ```
 
 For anything not covered here, see [README.md](README.md) and [docs/](docs/README.md) — this file exists to make a schema

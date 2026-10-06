@@ -8,7 +8,7 @@
 | `model2data validate M...` | check models against spec 0.4.0, and `*.metrics.yml` files against the metrics spec and their model (`--model M`, else the model beside it with the same stem) | 0 conforms (warnings allowed), 1 any error |
 | `model2data convert M` | print M as `.model2data.yml`; `-o FILE` writes it, `--force` overwrites | 0 ok, 1 unreadable model or output exists |
 | `model2data metrics list -f M [--metrics F]` | every metric: the file's, then the inferred ones | 0, 1 on a model or metrics error |
-| `model2data metrics export -f M [--metrics F] --to ossie` | the model and its metrics as Apache Ossie 0.1.1; `-o FILE` writes it, `--force` overwrites | 0, 1 on an error or an existing output, 2 on another `--to` |
+| `model2data metrics export -f M [--metrics F] --to ossie\|lightdash` | the model and its metrics as Apache Ossie 0.1.1, or as Lightdash meta in one dbt properties file for the staging models; `-o FILE` writes it, `--force` overwrites | 0, 1 on an error or an existing output, 2 on another `--to` |
 | `model2data guide [TOPIC]` | this page; topics `setup`, `triage`, `tune` | 0 |
 
 `generate` exits 0 on success; 1 on a model error, an existing `dbt_<name>/` without
@@ -142,7 +142,9 @@ Only tables with `incremental` change after the first day.
 With `--metrics FILE`, and nothing else changed: `metric_values.json` (each metric's known
 value over the seeds, overall and by month), `data-tests/metrics/metric_<name>.sql` (a dbt
 test per metric that fails unless the warehouse gets that value) and `osi/<name>.yml`
-(Apache Ossie 0.1.1).
+(Apache Ossie 0.1.1). With `--lightdash` (with or without `--metrics`), the staging models'
+`stg_<table>.yml` also carry Lightdash metrics, dimensions and joins under `config.meta`; what
+Lightdash cannot say is listed in the summary.
 
 ## Metrics file
 

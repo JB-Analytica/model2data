@@ -84,6 +84,9 @@ orphans, nulls, invalid values, messy text, late-arriving rows. Every run with d
 orders, average order value. The run writes each metric's value over the generated data to
 `metric_values.json`, overall and per month, a dbt test per metric that must reproduce it on the
 warehouse, and an [Apache Ossie](https://github.com/apache/ossie) semantic model under `osi/`.
+New in 1.14.0: `--lightdash` writes the same metrics into the staging models' YAML as
+[Lightdash](https://www.lightdash.com/) reads them, filters, joins and ratios included, so the
+dashboard's revenue can be checked against the number the run already knows.
 → [Metrics with known values](docs/metrics.md)
 
 **Validate in CI.** `model2data validate` checks models and metrics files and prints GitHub
@@ -225,7 +228,7 @@ definition goes in; nothing but synthetic data comes out.
   `accepted_values` fail for the right reason.
 - **A team defining metrics once.** Write revenue in one metrics file, check every number the
   semantic layer or dashboard shows against `metric_values.json`, let `dbt build` prove the SQL,
-  and hand the definitions on as Apache Ossie.
+  and hand the definitions on as Apache Ossie or straight to Lightdash.
 
 ## How it works
 
@@ -281,7 +284,8 @@ flowchart LR
    model's hints, table and column `description:` fields from the model, and a profile for
    DuckDB (zero-config, file-based) or Postgres.
 4. **Compute metrics.** With `--metrics`, computes each metric over the generated data and writes
-   its known value, a dbt test that checks it, and the Apache Ossie file.
+   its known value, a dbt test that checks it, and the Apache Ossie file; with `--lightdash`,
+   Lightdash metrics and dimensions in the staging models' YAML.
 
 ---
 
