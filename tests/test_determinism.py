@@ -1,15 +1,16 @@
-"""The same model, seed and `--as-of` write byte-identical files in every 1.x release.
+"""The same model, seed and `--as-of` write byte-identical files on the same version.
 
 That is the product's promise: a committed dataset, a diffed CI run and a teaching
 exercise all lean on it. This module enforces it. Each case runs the real CLI
 in-process, hashes every file it writes, and compares against the hashes in
-`fixtures/determinism.json`, which were recorded from a published release.
+`fixtures/determinism.json`.
 
-If a case fails, output changed for the same seed. That is a breaking change and
-needs a major version; it is not a snapshot to refresh. Faker or pandas releases
-that change the data show up here too (CI runs this file against the newest of both).
+If a case fails, output changed for the same seed. That is not a snapshot to
+refresh: either the change is unintended (find it), or it is deliberate and the
+changelog says which models it affects and why. Faker or pandas releases that
+change the data show up here too (CI runs this file against the newest of both).
 
-Re-recording is for adding or deliberately versioned changes only:
+Re-recording is for adding cases or deliberate, changelogged changes only:
 
     MODEL2DATA_RECORD_DETERMINISM=1 uv run pytest tests/test_determinism.py
 
@@ -123,9 +124,9 @@ def test_same_seed_same_bytes(case_id, tmp_path, recorded):
         f"DETERMINISM BROKEN in case {case_id!r}: the same model, seed and --as-of no "
         "longer write the same files.\n"
         f"  changed files: {changed}\n  new files: {added}\n  missing files: {missing}\n"
-        "Changing output for the same seed breaks model2data's promise of byte-identical "
-        "output across 1.x releases and needs a MAJOR version. Do not just re-record the "
-        "hashes. If the change comes from a Faker or pandas release, pin or work around it."
+        "Do not just re-record the hashes: re-record only for a deliberate change the "
+        "CHANGELOG describes (which models, and why). If the change comes from a Faker or "
+        "pandas release, pin or work around it."
     )
 
 

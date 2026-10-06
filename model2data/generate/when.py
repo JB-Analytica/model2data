@@ -45,12 +45,12 @@ from model2data.generate import kinds
 from model2data.generate.faker import AsOf, generate_column_values
 from model2data.generate.options import TimeProfile
 from model2data.generate.timeline import (
-    _DATE_GAP_SCALE_DAYS,
-    _TIMESTAMP_GAP_SCALE_SECONDS,
     _build_dependencies,
     _format_value,
     _parse_value,
     _topological_order,
+    column_business_hours,
+    place_after,
 )
 from model2data.parse.dbml import ColumnDef, TableDef
 
@@ -123,7 +123,13 @@ def _temporal_kind(column: ColumnDef) -> Optional[str]:
 class _Order:
     """What a filled date or timestamp of one table must sit between, row by row."""
 
-    def __init__(self, table_def: TableDef, frame: pd.DataFrame):
+    def __init__(
+        self,
+        table_def: TableDef,
+        frame: pd.DataFrame,
+        time_profile: Optional[TimeProfile] = None,
+    ):
+        self.time_profile = time_profile
         self.by_name = {column.name: column for column in table_def.columns}
         temporal = [
             column
@@ -154,6 +160,11 @@ class _Order:
         found = self._moments(followers, row)
         return min(found) if found else None
 
+    def place(self, name: str, lower: datetime, kind: str, upper: datetime) -> datetime:
+        """A moment for `name` a random gap after `lower`, in the column's shape."""
+        business_hours = column_business_hours(self.by_name[name], self.time_profile)
+        return place_after(lower, kind, upper, business_hours)
+
     def settle(self, name: str, row: int, cap: datetime) -> None:
         """Move what follows `name` in this row to no earlier than what it follows, in order.
 
@@ -172,15 +183,8 @@ class _Order:
             lower = self.after(other, row)
             if value is None or lower is None or value >= lower:
                 continue
-            self.frame.iat[row, column] = _format_value(min(lower + _gap(kind), cap), kind)
+            self.frame.iat[row, column] = _format_value(self.place(other, lower, kind, cap), kind)
             moved.add(other)
-
-
-def _gap(kind: str) -> timedelta:
-    """How far after what it follows a filled value lands: the ordering pass's own gap."""
-    if kind == "timestamp":
-        return timedelta(seconds=round(random.expovariate(1 / _TIMESTAMP_GAP_SCALE_SECONDS)))
-    return timedelta(days=max(0, round(random.expovariate(1 / _DATE_GAP_SCALE_DAYS))))
 
 
 def _draw_like(
@@ -223,7 +227,7 @@ def apply_when(
     columns = when_columns(table_def)
     if not columns:
         return
-    order = _Order(table_def, frame)
+    order = _Order(table_def, frame, time_profile)
     for column in columns:
         name = column.name
         match = matching(frame, order.by_name, conditions(column) or {})
@@ -274,7 +278,7 @@ def _moment(
         span = max(0, int((upper - start).total_seconds()))
         moment = start + timedelta(seconds=random.randint(0, span))
     elif lower is not None:
-        moment = lower + _gap(kind)
+        moment = order.place(name, lower, kind, upper)
     else:
         held = [
             parsed

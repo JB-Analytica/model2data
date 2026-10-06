@@ -729,7 +729,7 @@
   "dbt_det/seeds/raw/feature_limits.csv": "c991751064bf749aa1277c53eca6ba4e5941566f6ab1b083d3e49d14eb4ffab2",
   "dbt_det/seeds/raw/invoices.csv": "19489a185cd13149b16f76e62e6b508de437d67648c30f7e6d753bd305ec6268",
   "dbt_det/seeds/raw/organizations.csv": "bb9019c41083da011f0512d4a5ea4225fa766a8c9d3feaabdfb6713d19a412e0",
-  "dbt_det/seeds/raw/subscriptions.csv": "de43c0cacdd8589a8c26c5a65b8b3efbc6e12874ad7ed19bf4d4bbcf0880dcf3",
+  "dbt_det/seeds/raw/subscriptions.csv": "02bb173269e98ca870de3cfc875f23b54630cc11a6162d35d0640ae4193d0296",
   "dbt_det/seeds/raw/users.csv": "d55263c0ea25908f11d2a300106749af4022e2f05b0a7e452ef171f2e707ea46"
  },
  "table-seed": {

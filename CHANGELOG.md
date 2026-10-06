@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- **The determinism promise is per version.** The same model, seed, `--as-of` and options still
+  give the same files, byte for byte, on any machine and any day, with the same model2data
+  version. A new release may change what a seed produces, and when it does this changelog says
+  which models are affected and why. Pin the version to keep fixtures the same across upgrades.
+  (The README promised the same bytes across every 1.x release.)
+
+### Fixed
+- **A column placed after another keeps its time shape.** A date or timestamp column with an
+  `after`, or one a created/updated/closed name pair places after another, was set to that
+  column plus a random gap, which threw away the draw its `business_hours` had shaped:
+  appointments `after` a booking with `business_hours: true` came out at 3am as often as at
+  10am. The gap still decides roughly when; `business_hours` (the column's own, or the run's)
+  now decides the weekday and hour. The share of such a column in weekday working hours goes
+  from about 29%, the rate of a uniform draw, to about 72%, the same as a column drawn on its
+  own. The column's growth and seasonality still come from the column it follows.
+- **No pile-up at `--as-of` midnight.** A gap that ran past the end of the window set the value
+  to exactly `--as-of` midnight, so about 1% of a dependent column's rows shared that one
+  timestamp. Such a gap is now drawn again, and after 20 tries the value is drawn evenly
+  between the column it follows and the window's end. A `when` column filled in on day 0 is
+  placed the same way.
+- **Output changes for the same seed** in a model with a column placed after another, wherever
+  either fix applies: a dependent column with business hours (its own or the run's), and every
+  table where a row's gap ran past `--as-of` (about 1 row in 100, so most such tables beyond a
+  few hundred rows). The values drawn after the first such row in a table change too. A table
+  with no column placed after another writes the same bytes as in 1.11.0.
+
 ## [1.11.0] - 2026-10-02
 
 ### Added

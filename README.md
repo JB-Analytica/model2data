@@ -57,8 +57,9 @@ access required.
 - **Relationship-preserving.** Foreign keys resolve to real parent rows; tables are generated in
   dependency order.
 - **Deterministic, byte for byte.** The same model, `--seed` and `--as-of` (and the same options)
-  give the same files, byte for byte, on any machine and in every 1.x release — safe to commit
-  fixtures, safe to diff across CI runs and upgrades. See [The determinism promise](#the-determinism-promise).
+  give the same files, byte for byte, on any machine and any day with the same model2data
+  version — safe to commit fixtures, safe to diff across CI runs. See
+  [The determinism promise](#the-determinism-promise).
 - **Re-rollable one table at a time.** `--table-seed orders=7` regenerates a single table and
   leaves every other table byte-identical, so you can keep the four tables that look right.
 - **A real dbt project, not just CSVs.** Seeds, staging models that `ref()` them, schema tests,
@@ -323,13 +324,15 @@ The same model, seed and `--as-of` — with the same options (`--rows`, `--rows-
 
 - on any machine and operating system, and on every supported Python version;
 - with any Faker or pandas version model2data accepts;
-- in every 1.x release. A release may make generation faster or add options, but never changes
-  what an existing model, seed and set of options produce. A fix that cannot keep that waits for
-  a new major version, and the changelog says so.
+- with the same model2data version, whenever you run it.
+
+A new release may change what a seed produces, to fix a bug or make the data more realistic.
+When it does, the changelog says which models are affected and why. Pin the version
+(`model2data==1.11.0`) when fixtures must stay the same across upgrades.
 
 `tests/test_determinism.py` holds the file hashes of a spread of models, presets, multi-day runs
 and locales, and runs on every pull request — against the newest Faker and pandas too — so a
-change to a single output byte fails the build rather than reaching a release.
+change to a single output byte fails the build unless it is deliberate and in the changelog.
 
 If one table comes out wrong and the rest looks right, `--table-seed` re-rolls just that table.
 Every other table's seed CSV stays byte-identical, and children of the re-rolled table still

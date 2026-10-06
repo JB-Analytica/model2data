@@ -248,7 +248,7 @@ def generate_data_from_dbml(
         # composite-key retry regenerates a temporal column's value into a
         # frame that already respects created/updated/closed ordering, rather
         # than one where only the untouched columns do.
-        df = order_row_times(df, table_def, as_of=as_of)
+        df = order_row_times(df, table_def, as_of=as_of, time_profile=profile)
         df = _resolve_self_referencing_fks(
             df,
             table_def,

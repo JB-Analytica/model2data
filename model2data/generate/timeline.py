@@ -197,6 +197,60 @@ def weighted_timestamps(row_count: int, profile: TimeProfile, anchor: date) -> l
 _TIMESTAMP_GAP_SCALE_SECONDS = 3 * 86400
 _DATE_GAP_SCALE_DAYS = 3
 
+# How many gaps `place_after` draws for a moment inside the window, in the
+# column's shape, before it settles for one drawn evenly between the bounds.
+_PLACE_TRIES = 20
+
+# A weekend day's weight against a weekday's under `business_hours`, as
+# `_day_weight` weighs it.
+_WEEKEND_WEIGHT = 0.3
+
+
+def gap(kind: str) -> timedelta:
+    """How far after what it follows a dependent column lands: 3 days on average."""
+    if kind == "timestamp":
+        return timedelta(seconds=round(random.expovariate(1 / _TIMESTAMP_GAP_SCALE_SECONDS)))
+    return timedelta(days=max(0, round(random.expovariate(1 / _DATE_GAP_SCALE_DAYS))))
+
+
+def place_after(lower: datetime, kind: str, upper: datetime, business_hours: bool) -> datetime:
+    """A moment a random gap after `lower`, in the column's shape, before `upper`.
+
+    The gap decides roughly when; `business_hours` then decides the weekday
+    and the hour, as it does for a column drawn on its own: a weekend day is
+    kept 3 times in 10, and a timestamp's time of day is redrawn from
+    `HOUR_WEIGHTS` on the gap's day (a time before `lower` is drawn again).
+    A timestamp lands before `upper`, a date on or before it. A draw past
+    `upper` is drawn again, so a short window does not pile rows up on its
+    last moment; after `_PLACE_TRIES` the moment is drawn evenly between the
+    bounds, and a window with no room at all returns `lower`: the column
+    never lands before what it follows.
+    """
+
+    def inside(moment: datetime) -> bool:
+        return moment < upper if kind == "timestamp" else moment.date() <= upper.date()
+
+    for _ in range(_PLACE_TRIES):
+        moment = lower + gap(kind)
+        if business_hours:
+            if moment.weekday() >= 5 and random.random() >= _WEEKEND_WEIGHT:
+                continue
+            if kind == "timestamp":
+                hour = random.choices(range(24), weights=HOUR_WEIGHTS)[0]
+                moment = datetime(moment.year, moment.month, moment.day, hour) + timedelta(
+                    seconds=random.randrange(3600)
+                )
+                if moment < lower:
+                    continue
+        if inside(moment):
+            return moment
+    if kind == "timestamp":
+        span = int((upper - lower).total_seconds())
+        return lower + timedelta(seconds=random.randrange(span)) if span > 0 else lower
+    span = (upper.date() - lower.date()).days
+    return lower + timedelta(days=random.randint(0, span)) if span > 0 else lower
+
+
 # Column-name stems that place a column at a stage in the created -> updated ->
 # closed chain. A column matches a stage by tokenizing its name on non-
 # alphanumeric characters and looking for the stem as a contiguous run of
@@ -330,6 +384,14 @@ def _format_value(moment: datetime, kind: str) -> Union[str, date]:
     return moment.date()
 
 
+def column_business_hours(column: ColumnDef, time_profile: Optional[TimeProfile]) -> bool:
+    """Whether `column` is drawn in business hours: its own hint, else the run's."""
+    note = column.note or {}
+    if "business_hours" in note:
+        return bool(note["business_hours"])
+    return bool(time_profile and time_profile.business_hours)
+
+
 def _build_dependencies(
     table_def: TableDef, columns_by_name: dict, temporal_columns: list[ColumnDef]
 ) -> dict[str, set[str]]:
@@ -413,15 +475,20 @@ def _topological_order(table_def: TableDef, deps: dict[str, set[str]]) -> list[s
     return order
 
 
-def order_row_times(df, table_def: TableDef, as_of: AsOf = None):
+def order_row_times(
+    df, table_def: TableDef, as_of: AsOf = None, time_profile: Optional[TimeProfile] = None
+):
     """Fix up temporal columns so an earlier-stage column never lands later.
 
     Runs unconditionally (every profile, not just non-uniform ones): a row
     updated before it was created is wrong regardless of how the timestamps
     were drawn. A column with dependencies is set, per row, to the latest of
-    those dependencies plus a random gap (capped at the window's end), unless
-    either side is null for that row -- a nullable column that happened to
-    come back null keeps its null, rather than this pass forcing a value in.
+    those dependencies plus a random gap, inside the window and in the
+    column's business-hours shape (see `place_after`; `time_profile` is the
+    run's, a column's own `business_hours` hint replacing it), unless either
+    side is null for that row -- a nullable column that happened to come back
+    null keeps its null, rather than this pass forcing a value in. The run's
+    growth and seasonality reach the column through the one it follows.
 
     Leaves `df` untouched when the table holds no `after` hint and no
     recognisable created/updated/closed-style name pair, and never modifies a
@@ -456,7 +523,7 @@ def order_row_times(df, table_def: TableDef, as_of: AsOf = None):
             other_kind = _column_kind(columns_by_name[name].data_type)
             assert other_kind is not None
             required_kinds[name] = other_kind
-        scale = _TIMESTAMP_GAP_SCALE_SECONDS if kind == "timestamp" else _DATE_GAP_SCALE_DAYS
+        business_hours = column_business_hours(columns_by_name[column_name], time_profile)
 
         for idx in df.index:
             if _parse_value(df.at[idx, column_name], kind) is None:
@@ -475,14 +542,7 @@ def order_row_times(df, table_def: TableDef, as_of: AsOf = None):
                 continue
             latest_required = max(earlier)
 
-            gap = random.expovariate(1 / scale)
-            if kind == "timestamp":
-                moment = latest_required + timedelta(seconds=round(gap))
-            else:
-                moment = latest_required + timedelta(days=max(0, round(gap)))
-            if moment > cap:
-                moment = cap
-
+            moment = place_after(latest_required, kind, cap, business_hours)
             df.at[idx, column_name] = _format_value(moment, kind)
 
     return df

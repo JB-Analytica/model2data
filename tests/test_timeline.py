@@ -10,13 +10,15 @@ change is deliberate and is called out in CHANGELOG.md, but it still needs a
 fixed expectation so a future refactor can't silently drift it further.
 """
 
+import random
 from datetime import date, datetime, timedelta
 
+import pandas as pd
 import pytest
 
 from model2data.generate.core import generate_data_from_dbml
 from model2data.generate.options import TimeProfile
-from model2data.generate.timeline import order_row_times
+from model2data.generate.timeline import order_row_times, place_after
 from model2data.parse.dbml import ColumnDef, TableDef
 
 ANCHOR = date(2026, 3, 15)
@@ -313,6 +315,68 @@ def test_after_hint_is_honoured():
     for ordered, shipped in zip(df["ordered_at"], df["shipped_at"], strict=True):
         if shipped is not None:
             assert datetime.fromisoformat(ordered) <= datetime.fromisoformat(shipped)
+
+
+def _bookings(scheduled_note: dict, rows: int = 2000, profile=None) -> pd.DataFrame:
+    tables = {
+        "bookings": TableDef(
+            name="bookings",
+            columns=[
+                ColumnDef("id", "bigint", {"pk"}),
+                ColumnDef("booked_at", "timestamp", {"not null"}),
+                ColumnDef("scheduled_for", "timestamp", {"not null"}, note=scheduled_note),
+            ],
+        )
+    }
+    return generate_data_from_dbml(
+        tables, [], base_rows=rows, seed=1, as_of=ANCHOR, time_profile=profile
+    )["bookings"]
+
+
+def _working_share(values) -> float:
+    moments = [datetime.fromisoformat(v) for v in values]
+    return sum(1 for t in moments if t.weekday() < 5 and 8 <= t.hour < 18) / len(moments)
+
+
+def test_a_column_with_after_keeps_its_business_hours():
+    """The gap decides roughly when; the column's `business_hours` decides the hour."""
+    df = _bookings({"after": "booked_at", "business_hours": True})
+
+    assert _working_share(df["scheduled_for"]) >= 0.65
+    assert _working_share(df["booked_at"]) < 0.4
+    for booked, scheduled in zip(df["booked_at"], df["scheduled_for"], strict=True):
+        assert datetime.fromisoformat(booked) <= datetime.fromisoformat(scheduled)
+
+
+def test_the_runs_business_hours_reach_a_column_with_after():
+    df = _bookings({"after": "booked_at"}, profile=TimeProfile(business_hours=True))
+
+    assert _working_share(df["scheduled_for"]) >= 0.65
+
+
+def test_a_column_with_after_does_not_pile_up_on_as_of_midnight():
+    """A gap past the window is drawn again, not set to the window's end."""
+    df = _bookings({"after": "booked_at"})
+    cap = datetime(ANCHOR.year, ANCHOR.month, ANCHOR.day)
+
+    scheduled = [datetime.fromisoformat(v) for v in df["scheduled_for"]]
+    assert max(scheduled) < cap
+    # Two rows may share a second by chance; the old clamp put dozens on one.
+    assert max(scheduled.count(moment) for moment in scheduled) <= 2
+
+
+def test_place_after_stays_between_its_bounds():
+    random.seed(0)
+    lower = datetime(2026, 3, 14, 23, 0)
+    upper = datetime(2026, 3, 15)
+    for business_hours in (False, True):
+        moments = [place_after(lower, "timestamp", upper, business_hours) for _ in range(200)]
+        assert all(lower <= moment < upper for moment in moments)
+        assert len(set(moments)) > 150
+
+    dates = [place_after(lower, "date", upper, True) for _ in range(50)]
+    assert {moment.date() for moment in dates} <= {date(2026, 3, 14), date(2026, 3, 15)}
+    assert place_after(upper, "timestamp", upper, False) == upper
 
 
 def test_start_end_suffix_pair_is_honoured():
