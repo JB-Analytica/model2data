@@ -12,6 +12,7 @@ generator never reads it: a model generates the same data with or without one.
     >>> values = metrics.known_values(semantic, frames)     # over a run's generated tables
     >>> export = metrics.to_ossie(semantic)                 # Apache Ossie 0.1.1
     >>> export.to_yaml(), export.lossiness
+    >>> metrics.to_lightdash(semantic).to_yaml()           # Lightdash meta, dbt YAML
 
 `resolve(model)` with no metrics file gives the metrics the model implies on
 its own: one per `measure` column, and a row count per fact.
@@ -23,6 +24,7 @@ from model2data.metrics.expression import ExpressionError
 from model2data.metrics.expression import parse as parse_expression
 from model2data.metrics.graph import Graph, Join
 from model2data.metrics.infer import inferred_metrics
+from model2data.metrics.lightdash import LightdashExport, to_lightdash, write_lightdash
 from model2data.metrics.ossie import OSSIE_VERSION, Loss, OssieExport, to_ossie
 from model2data.metrics.reader import (
     MetricsError,
@@ -71,6 +73,7 @@ __all__ = [
     "Join",
     "KnownValue",
     "KnownValues",
+    "LightdashExport",
     "Loss",
     "Measure",
     "Metric",
@@ -94,7 +97,9 @@ __all__ = [
     "parse_expression",
     "resolve",
     "sibling_model",
+    "to_lightdash",
     "to_ossie",
     "validate",
+    "write_lightdash",
     "write_metric_tests",
 ]
