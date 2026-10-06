@@ -46,6 +46,22 @@ from model2data.generate.faker import (
 )
 from model2data.generate.history import history_tables
 from model2data.generate.options import TimeProfile
+from model2data.metrics import (
+    SPEC_VERSION as METRICS_SPEC_VERSION,
+)
+from model2data.metrics import (
+    Metrics,
+    MetricsError,
+    is_metrics_file,
+    known_values,
+    metrics_stem,
+    sibling_model,
+    to_ossie,
+    write_metric_tests,
+)
+from model2data.metrics import load as load_metrics
+from model2data.metrics import resolve as resolve_metrics
+from model2data.metrics import validate as validate_metrics
 from model2data.model import (
     DEFECT_PRESETS,
     Issue,
@@ -196,6 +212,18 @@ def _read_model(file: Path) -> Model:
     if model.warnings:
         _print_issues(file, model.warnings)
     return model
+
+
+def _read_metrics(file: Path, model: Model, model_file: Path) -> Metrics:
+    """The metrics in `file`, checked against `model`, or exit 1 listing every issue."""
+    try:
+        found = load_metrics(file, model, model_name=_model_stem(model_file))
+    except MetricsError as error:
+        _print_issues(file, [*error.issues, *error.warnings])
+        raise typer.Exit(1) from None
+    if found.warnings:
+        _print_issues(file, found.warnings)
+    return found
 
 
 def _print_issues(file: Path, issues: list[Issue], label: Optional[str] = None) -> None:
@@ -428,6 +456,21 @@ def main(
             "(changelog/TABLE.csv, every row with _day and _op), or 'final' (only the seeds)."
         ),
     ),
+    metrics_file: Optional[Path] = typer.Option(  # noqa: B008
+        None,
+        "--metrics",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+        resolve_path=True,
+        help=(
+            "The model's metrics file (<stem>.metrics.yml). Adds metric_values.json (each\n"
+            "metric's known value over the generated data), osi/NAME.yml (Apache Ossie 0.1.1)\n"
+            "and a dbt test per metric (data-tests/metrics/). The data is the same with or\n"
+            "without it. Not picked up from beside the model: pass it."
+        ),
+    ),
 ):
     """
     Generate synthetic data and a dbt project from a model.
@@ -474,6 +517,8 @@ def main(
     # Read the model (names untouched)
     # -------------------------
     model = _read_model(file)
+    metrics_file = _given(metrics_file)
+    metrics_doc = _read_metrics(metrics_file, model, file) if metrics_file is not None else None
     inputs = to_engine(model)
     tables, refs = inputs.tables, inputs.refs
     run = inputs.run
@@ -678,6 +723,28 @@ def main(
         write_expected_failures(report, dest)
 
     # -------------------------
+    # Metrics: only added files, computed from what the seeds hold
+    # -------------------------
+    metrics_count: Optional[int] = None
+    if metrics_doc is not None and metrics_file is not None:
+        typer.echo("📏 Computing each metric's known value and its dbt test...")
+        semantic = resolve_metrics(model, metrics_doc, model_name=_model_stem(file))
+        values = known_values(
+            semantic,
+            generated_tables,
+            seed=seed,
+            as_of=anchor.isoformat() if anchor is not None else None,
+        )
+        (dest / "metric_values.json").write_text(values.to_json(), encoding="utf-8")
+        write_metric_tests(dest, semantic, values)
+        (dest / "osi").mkdir(exist_ok=True)
+        (dest / "osi" / f"{project_name}.yml").write_text(
+            to_ossie(semantic).to_yaml(), encoding="utf-8"
+        )
+        shutil.copy(metrics_file, dest / metrics_file.name)
+        metrics_count = len(semantic.metrics)
+
+    # -------------------------
     # Summary
     # -------------------------
     total_rows = sum(len(df) for df in generated_tables.values())
@@ -723,6 +790,12 @@ def main(
         )
         for label in duplicate_unique:
             typer.echo(f"    - {label}")
+
+    if metrics_count is not None:
+        typer.echo(
+            f"  Metrics:                 {metrics_count} (metric_values.json, "
+            f"osi/{project_name}.yml, data-tests/metrics/)"
+        )
 
     if report is not None:
         _print_defects(report)
@@ -820,11 +893,25 @@ def validate_command(
     require_files: bool = typer.Option(
         False, "--require-files", help="Exit 1 when no model file was given or matched."
     ),
+    model_option: Optional[Path] = typer.Option(  # noqa: B008
+        None,
+        "--model",
+        "-m",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+        help=(
+            "The model a metrics file (*.metrics.yml) is checked against. Default: the model "
+            "beside it with the same stem (coffee.model2data.yml for coffee.metrics.yml)."
+        ),
+    ),
 ):
     """Check that models conform to spec 0.4.0 (or 0.2.x, 0.3.x), printing every issue with its path.
 
-    Takes one or more files and/or --glob patterns. Exits 1 when any file has an error;
-    warnings are printed, and the model conforms.
+    Takes one or more files and/or --glob patterns. A metrics file (*.metrics.yml) is checked
+    against metrics spec 0.1.0 and against its model. Exits 1 when any file has an error;
+    warnings are printed, and the file conforms.
     """
     if output_format not in ("text", "github"):
         raise typer.BadParameter("must be 'text' or 'github'", param_hint="--format")
@@ -837,7 +924,11 @@ def validate_command(
 
     failed = 0
     for file in targets:
-        issues = validate(file)
+        against: Optional[Path] = None
+        if is_metrics_file(file):
+            issues, against = _metrics_issues(file, _given(model_option))
+        else:
+            issues = validate(file)
         if output_format == "github":
             _print_github_issues(file, issues)
         else:
@@ -845,9 +936,14 @@ def validate_command(
         if any(issue.is_error for issue in issues):
             failed += 1
         elif output_format == "text":
-            typer.echo(
-                f"✅ {file if len(targets) > 1 else file.name} conforms to spec {_spec_of(file)}."
-            )
+            shown = file if len(targets) > 1 else file.name
+            if is_metrics_file(file):
+                model_note = f", checked against {against.name}" if against is not None else ""
+                typer.echo(
+                    f"✅ {shown} conforms to metrics spec {METRICS_SPEC_VERSION}{model_note}."
+                )
+            else:
+                typer.echo(f"✅ {shown} conforms to spec {_spec_of(file)}.")
     if len(targets) > 1 or output_format == "github":
         count = len(targets)
         checked = f"{count} model file{'s' if count != 1 else ''}"
@@ -858,6 +954,32 @@ def validate_command(
             typer.echo(f"✅ {checked} {'conforms' if count == 1 else 'conform'}.")
     if failed:
         raise typer.Exit(1)
+
+
+def _metrics_issues(file: Path, model_option: Optional[Path]) -> tuple[list[Issue], Optional[Path]]:
+    """A metrics file's issues, checked against `model_option` or the model beside it, and
+    the model it was checked against (None when there was none to find)."""
+    model_file = model_option or sibling_model(file)
+    if model_file is None:
+        note = Issue(
+            "",
+            "no model to check it against: there is no "
+            f"{metrics_stem(file)}.model2data.yml beside it. Checked on its own; "
+            "pass --model to check its tables, columns and filters too",
+            severity="warning",
+        )
+        return [*validate_metrics(file), note], None
+    try:
+        model = load(model_file)
+    except ModelError:
+        return [
+            Issue(
+                "",
+                f"its model, {model_file.name}, does not conform: run `model2data validate "
+                f"{model_file.name}` and fix it first",
+            )
+        ], model_file
+    return validate_metrics(file, model, model_name=_model_stem(model_file)), model_file
 
 
 @app.command("convert")
@@ -941,3 +1063,115 @@ def guide_command(
         typer.echo(f"# model2data guide: {reason} -> {topic.value}\n")
     page = resources.files("model2data").joinpath(f"guide/{topic.value}.md")
     typer.echo(page.read_text("utf-8"), nl=False)
+
+
+metrics_app = typer.Typer(
+    help=(
+        "The model's metrics (metrics spec 0.1.0): list them, or export them without "
+        "generating. `generate --metrics FILE` computes their known values and dbt tests."
+    ),
+    no_args_is_help=True,
+)
+app.add_typer(metrics_app, name="metrics")
+
+_METRICS_EXPORTS = ("ossie",)
+
+
+def _metrics_inputs(file: Path, metrics_file: Optional[Path]) -> Any:
+    """The semantic model of a model file and its metrics file (None: the inferred metrics)."""
+    model = _read_model(file)
+    found = _read_metrics(metrics_file, model, file) if metrics_file is not None else None
+    return resolve_metrics(model, found, model_name=_model_stem(file))
+
+
+_MODEL_OPTION = typer.Option(
+    ...,
+    "--file",
+    "-f",
+    exists=True,
+    file_okay=True,
+    dir_okay=False,
+    readable=True,
+    help="The model: a .model2data.yml / .yaml / .json document, or a .dbml file.",
+)
+_METRICS_OPTION = typer.Option(
+    None,
+    "--metrics",
+    exists=True,
+    file_okay=True,
+    dir_okay=False,
+    readable=True,
+    help=(
+        "The model's metrics file. Without it, the metrics are the ones the model implies: "
+        "one per `measure` column and a row count per fact."
+    ),
+)
+
+
+@metrics_app.command("list")
+def metrics_list_command(
+    file: Path = _MODEL_OPTION,
+    metrics_file: Optional[Path] = _METRICS_OPTION,
+):
+    """List every metric: its kind, where it comes from, what it is dated by."""
+    semantic = _metrics_inputs(file, _given(metrics_file))
+    if not semantic.metrics:
+        typer.echo("No metrics: the model has no `measure` column and the file adds none.")
+        return
+    width = max(len(name) for name in semantic.metrics)
+    for name, metric in semantic.metrics.items():
+        origin = "inferred" if metric.inferred else "file"
+        if metric.kind == "simple":
+            what = f"{metric.agg} of {metric.table}.{metric.column}"
+        elif metric.kind == "count":
+            what = f"rows of {metric.table}"
+        elif metric.kind == "ratio":
+            what = f"{metric.numerator} / {metric.denominator}"
+        else:
+            what = str(metric.expression)
+        filtered = ", filtered" if metric.where is not None else ""
+        dated = f", by {metric.time}" if metric.time else ""
+        typer.echo(f"{name:<{width}}  {metric.kind:<7}  {origin:<8}  {what}{filtered}{dated}")
+
+
+@metrics_app.command("export")
+def metrics_export_command(
+    file: Path = _MODEL_OPTION,
+    metrics_file: Optional[Path] = _METRICS_OPTION,
+    to: str = typer.Option("ossie", "--to", help="The format: 'ossie' (Apache Ossie 0.1.1, YAML)."),
+    output: Optional[Path] = typer.Option(  # noqa: B008
+        None,
+        "--output",
+        "-o",
+        dir_okay=False,
+        help="Where to write it (default: print it).",
+    ),
+    force: bool = typer.Option(False, "--force", help="Overwrite the output file if it exists."),
+):
+    """Export the model's metrics, and the model as a semantic model, without generating data.
+
+    Ossie datasets read the staging models of the dbt project `generate` writes
+    (staging.stg_<table>). What Ossie 0.1.1 cannot say is listed at the top of the file,
+    and carried in custom_extensions.
+    """
+    to = (_given(to) or "ossie").lower()
+    if to not in _METRICS_EXPORTS:
+        raise typer.BadParameter(
+            f"Choose one of: {', '.join(_METRICS_EXPORTS)}.", param_hint="--to"
+        )
+    semantic = _metrics_inputs(file, _given(metrics_file))
+    export = to_ossie(semantic)
+    text = export.to_yaml()
+    output = _given(output)
+    if output is None:
+        typer.echo(text, nl=False)
+        return
+    if output.exists() and not _given(force):
+        typer.echo(f"❌ {output} already exists. Use --force to overwrite it.")
+        raise typer.Exit(1)
+    output.write_text(text, encoding="utf-8")
+    typer.echo(f"✅ Wrote {output} (Apache Ossie 0.1.1, {len(semantic.metrics)} metrics)")
+    if export.lossiness:
+        typer.echo("ℹ️  Not expressible in Ossie 0.1.1 itself, carried in custom_extensions:")
+        for loss in export.lossiness:
+            typer.echo(f"  - {loss}")

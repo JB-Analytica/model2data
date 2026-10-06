@@ -163,7 +163,8 @@ Releases are published to PyPI automatically when a GitHub Release is published 
 4. The floating major tag (`uses: JB-Analytica/model2data@v1`) must follow the release.
    `.github/workflows/major-tag.yml` does it on `release: published` for `vX.Y.Z` tags. By
    hand: `git tag -f v1 v1.10.0 && git push -f origin v1`. Also bump the default `version` input
-   in `action.yml`, and the versions in the README's CI snippets, to the new release.
+   in `action.yml`, and the versions in the CI snippets of
+   `docs/ci.md`, to the new release.
 5. Confirm the new version is live: `pip index versions model2data`, or check
    `https://pypi.org/project/model2data/<version>/` (the PyPI JSON API can lag the actual
    upload by a minute or two — the version page itself is the more immediate check).
