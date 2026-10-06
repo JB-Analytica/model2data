@@ -368,7 +368,8 @@ def _condition_filters(
         else:  # gt, gte, lt, lte: on a number, as the spec allows no other kind here
             sign = {"gt": ">", "gte": ">=", "lt": "<", "lte": "<="}[operator]
             out.append({key: f"{sign} {_text(operand, kind)}"})
-    return out
+    # `ne` and `is_null: false` on one column both say `!null`: once is enough.
+    return [item for i, item in enumerate(out) if item not in out[:i]]
 
 
 # ---------------------------------------------------------------------------

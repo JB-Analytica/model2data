@@ -8,6 +8,9 @@ pass: on the reference example, on a model with every kind of column and join,
 and on the training model with its defects (orphans, nulls, invalid values,
 messy text, duplicate keys) over several days. One more edits a known value
 and requires its test to fail, so a passing test is known to check something.
+The shipped examples with `--lightdash` must `dbt parse` cleanly, and, when
+the Lightdash CLI is on PATH too, compile every explore with
+`lightdash compile --no-partial-compilation`.
 
 Run with the project's own dbt first on PATH (`PATH="$PWD/.venv/bin:$PATH"`).
 """
@@ -25,6 +28,7 @@ import pytest
 from model2data.cli import main as generate_cli
 
 DBT = shutil.which("dbt")
+LIGHTDASH = shutil.which("lightdash")
 ROOT = Path(__file__).resolve().parent.parent
 SPEC = ROOT / "model2data" / "spec" / "examples"
 FIXTURES = ROOT / "tests" / "fixtures" / "metrics"
@@ -121,3 +125,68 @@ def test_a_wrong_known_value_fails_its_test(tmp_path, monkeypatch):
     statuses = _metric_tests(_build(project))
     assert statuses.pop("metric_revenue") == "fail"
     assert set(statuses.values()) == {"pass"}
+
+
+@pytest.mark.parametrize(
+    "model, metrics",
+    [
+        pytest.param(
+            SPEC / "coffee_webshop.model2data.yml",
+            SPEC / "coffee_webshop.metrics.yml",
+            id="coffee-example",
+        ),
+        pytest.param(
+            ROOT / "examples" / "ecommerce.model2data.yml",
+            ROOT / "examples" / "ecommerce.metrics.yml",
+            id="ecommerce-example",
+        ),
+        pytest.param(
+            FIXTURES / "shop.model2data.yml",
+            FIXTURES / "shop.metrics.yml",
+            id="every-kind-and-join",
+        ),
+    ],
+)
+def test_the_lightdash_meta_parses_and_compiles(tmp_path, monkeypatch, model, metrics):
+    monkeypatch.chdir(tmp_path)
+    generate_cli(
+        file=model, rows=40, seed=2, force=True, name="lit", metrics_file=metrics, lightdash=True
+    )
+    project = tmp_path / "dbt_lit"
+    parse = subprocess.run(
+        [str(DBT), "parse", "--profiles-dir", ".", "--no-partial-parse"],
+        cwd=project,
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    assert parse.returncode == 0, parse.stdout + parse.stderr
+    assert "warn" not in parse.stdout.lower(), parse.stdout
+    manifest = json.loads((project / "target" / "manifest.json").read_text())
+    metas = [
+        node["config"]["meta"]
+        for node in manifest["nodes"].values()
+        if node["resource_type"] == "model"
+    ]
+    assert metas and all("label" in meta for meta in metas)
+    if LIGHTDASH is None:
+        return
+    compiled = subprocess.run(
+        [
+            LIGHTDASH,
+            "compile",
+            "--project-dir",
+            ".",
+            "--profiles-dir",
+            ".",
+            "--no-warehouse-credentials",
+            "--no-partial-compilation",
+            "--no-version-check",
+        ],
+        cwd=project,
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    assert compiled.returncode == 0, compiled.stdout + compiled.stderr
+    assert "ERRORS=0" in compiled.stdout + compiled.stderr

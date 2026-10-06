@@ -294,6 +294,63 @@ def test_metrics_export_without_losses_prints_none(tmp_path):
     assert "Not expressible" not in result.output
 
 
+def test_metrics_export_prints_lightdash(tmp_path):
+    args = ["metrics", "export", "-f", COFFEE, "--metrics", COFFEE_METRICS, "--to", "lightdash"]
+    result = _invoke(args, tmp_path)
+    assert result.exit_code == 0, result.output
+    assert result.output.startswith("# Lightdash metrics and dimensions (dbt config.meta)")
+    document = yaml.safe_load(result.output)
+    assert document["version"] == 2
+    assert [m["name"] for m in document["models"]][:2] == ["stg_customers", "stg_products"]
+
+
+def test_metrics_export_writes_a_lightdash_file(tmp_path):
+    out = tmp_path / "lightdash.yml"
+    args = ["metrics", "export", "-f", COFFEE, "--metrics", COFFEE_METRICS]
+    result = _invoke([*args, "--to", "Lightdash", "-o", out], tmp_path)
+    assert result.exit_code == 0, result.output
+    assert f"✅ Wrote {out} (Lightdash, dbt YAML, 11 metrics)" in result.output
+    assert "ℹ️  Not expressible in Lightdash, left out:" in result.output
+    assert "  - metrics revenue, average_order_value: currency:" in result.output
+    assert yaml.safe_load(out.read_text())["models"][2]["name"] == "stg_orders"
+
+
+def test_generate_with_lightdash_changes_only_the_staging_yaml(tmp_path):
+    plain, lit = tmp_path / "plain", tmp_path / "lightdash"
+    plain.mkdir()
+    lit.mkdir()
+    first = _invoke(["generate", "-f", COFFEE, *COMMON, "--metrics", COFFEE_METRICS], plain)
+    assert first.exit_code == 0, first.output
+    second = _invoke(
+        ["generate", "-f", COFFEE, *COMMON, "--metrics", COFFEE_METRICS, "--lightdash"], lit
+    )
+    assert second.exit_code == 0, second.output
+    before, after = _hashes(plain), _hashes(lit)
+    assert set(before) == set(after)
+    changed = sorted(path for path in before if before[path] != after[path])
+    assert changed == [
+        f"dbt_shop/models/staging/stg_{name}.yml"
+        for name in sorted(["customers", "orders", "order_items", "products", "product_reviews"])
+    ]
+    assert "🔦 Adding Lightdash metrics and dimensions to the staging models..." in second.output
+    assert "Lightdash:               11 metrics (models/staging/stg_*.yml, config.meta)" in (
+        second.output
+    )
+    assert "ℹ️  Not expressible in Lightdash, left out:" in second.output
+    orders = yaml.safe_load((lit / "dbt_shop/models/staging/stg_orders.yml").read_text())
+    (entry,) = orders["models"]
+    assert entry["config"]["meta"]["metrics"]["average_order_value"]["type"] == "number"
+    # The tests generate wrote are still there.
+    assert entry["columns"][0]["tests"] == ["not_null", "unique"]
+
+
+def test_generate_with_lightdash_and_no_metrics_file_uses_the_inferred_metrics(tmp_path):
+    result = _invoke(["generate", "-f", COFFEE, *COMMON, "--lightdash"], tmp_path)
+    assert result.exit_code == 0, result.output
+    assert "Lightdash:               4 metrics" in result.output
+    assert not (tmp_path / "dbt_shop" / "metric_values.json").exists()
+
+
 def test_metrics_export_refuses_an_unknown_format(tmp_path):
     result = _invoke(["metrics", "export", "-f", COFFEE, "--to", "metricflow"], tmp_path)
     assert result.exit_code == 2
