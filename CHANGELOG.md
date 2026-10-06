@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.12.0] - 2026-10-06
+
 ### Changed
 - **The determinism promise is per version.** The same model, seed, `--as-of` and options still
   give the same files, byte for byte, on any machine and any day, with the same model2data
