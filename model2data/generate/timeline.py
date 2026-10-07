@@ -340,6 +340,46 @@ def _infer_stage(column_name: str) -> Optional[int]:
     return None
 
 
+def creation_column_name(columns: list[tuple[str, bool]]) -> Optional[str]:
+    """Which of a table's date/timestamp columns the row comes into being with.
+
+    `columns` are the table's date and timestamp columns in table order, each
+    as `(name, follows)`, `follows` being whether it has an `after` hint. A
+    column with `after` follows another column of its row, so it is never the
+    one the row starts with. Of the rest, the first whose name puts it at the
+    created stage (`created_at`, `signup_date`, `start_date`: see
+    `_STAGE_WORDS`) is the creation column; failing that, the first whose name
+    puts it at no stage at all (`order_date`, `hire_date`), a birth date
+    excepted. A table whose dates all follow something, or are all updated- or
+    closed-stage (`updated_at`, `deleted_at`), has none.
+    """
+    leading = [name for name, follows in columns if not follows]
+    for name in leading:
+        if _infer_stage(name) == 0:
+            return name
+    for name in leading:
+        if _infer_stage(name) is None and not _EXCLUDED_FROM_CHAIN.intersection(_tokenize(name)):
+            return name
+    return None
+
+
+def creation_column(table_def: TableDef) -> Optional[ColumnDef]:
+    """The date/timestamp column a row of `table_def` comes into being with, or None.
+
+    See `creation_column_name`. It is the column a child row's own date is
+    kept on or after its parent's by (see `generate.parents`).
+    """
+    temporal = [
+        column
+        for column in table_def.columns
+        if not column.enum_values and _column_kind(column.data_type) is not None
+    ]
+    name = creation_column_name(
+        [(column.name, bool((column.note or {}).get("after"))) for column in temporal]
+    )
+    return next((column for column in temporal if column.name == name), None)
+
+
 def _column_kind(data_type: str) -> Optional[str]:
     """`"timestamp"`, `"date"`, or None for anything else -- including plain `time`.
 
@@ -476,7 +516,11 @@ def _topological_order(table_def: TableDef, deps: dict[str, set[str]]) -> list[s
 
 
 def order_row_times(
-    df, table_def: TableDef, as_of: AsOf = None, time_profile: Optional[TimeProfile] = None
+    df,
+    table_def: TableDef,
+    as_of: AsOf = None,
+    time_profile: Optional[TimeProfile] = None,
+    rows: Optional[list] = None,
 ):
     """Fix up temporal columns so an earlier-stage column never lands later.
 
@@ -492,7 +536,9 @@ def order_row_times(
 
     Leaves `df` untouched when the table holds no `after` hint and no
     recognisable created/updated/closed-style name pair, and never modifies a
-    column that isn't a date/timestamp/datetime type.
+    column that isn't a date/timestamp/datetime type. `rows`, when given, are
+    the only index labels it places again (a row whose creation date moved
+    after the table was ordered); every row otherwise.
     """
     columns_by_name = {column.name: column for column in table_def.columns}
     temporal_columns = [
@@ -525,7 +571,7 @@ def order_row_times(
             required_kinds[name] = other_kind
         business_hours = column_business_hours(columns_by_name[column_name], time_profile)
 
-        for idx in df.index:
+        for idx in df.index if rows is None else rows:
             if _parse_value(df.at[idx, column_name], kind) is None:
                 # Already null for this row (or holds a non-temporal default):
                 # nothing to reorder, and forcing a value in would undo the

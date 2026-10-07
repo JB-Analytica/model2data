@@ -287,7 +287,9 @@ def test_an_undone_row_without_days():
 
 def test_late_rows_a_later_defect_makes_on_time_are_not_counted():
     model = load(SHOP)
-    days = generate_days(model, 3, seed=11, as_of=AS_OF)
+    # A seed whose late rows include one the nulls make on time (engine 1.15.0's
+    # parent dates changed which rows seed 11 picks).
+    days = generate_days(model, 3, seed=2, as_of=AS_OF)
     plan = {
         "orders": [
             Defect("late_arriving", count=3),
@@ -295,7 +297,7 @@ def test_late_rows_a_later_defect_makes_on_time_are_not_counted():
             Defect("nulls", column="updated_at", count=10_000),
         ]
     }
-    _, report = apply_defects(model, days, plan, seed=11)
+    _, report = apply_defects(model, days, plan, seed=2)
     late = report.defects[0]
     assert late.applied < 3
     assert "no longer before the cutoff once the table's other defects are in" in late.note

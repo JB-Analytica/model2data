@@ -22,6 +22,7 @@ from model2data.generate.faker import (
 from model2data.generate.hints import validate_hints
 from model2data.generate.kinds import is_integer_type
 from model2data.generate.options import UNIFORM, TimeProfile, validate_skew
+from model2data.generate.parents import ParentRule, follow_parents, parent_rules
 from model2data.generate.relationships import (
     build_fk_lookup,
     classify_refs,
@@ -157,6 +158,8 @@ def generate_data_from_dbml(
     # Generate tables in dependency order
     # ---------------------------------------------------------
     ordered_tables, deferred_edges = _table_order(tables, fk_refs)
+    # Which tables' creation dates follow their parents' (see generate.parents).
+    rules = parent_rules(tables, fk_refs, ordered_tables)
     generated: dict[str, pd.DataFrame] = {}
 
     for table_name in ordered_tables:
@@ -244,6 +247,13 @@ def generate_data_from_dbml(
             )
 
         df = pd.DataFrame(data)
+        # A row comes into being on or after the parent rows it points at:
+        # before the row's own later dates are ordered after its creation date,
+        # so they follow it wherever it ends up (see generate.parents).
+        rule = rules.get(table_name)
+        if rule is not None:
+            creation = next(c for c in table_def.columns if c.name == rule.column)
+            follow_parents(df, rule, creation, generated, as_of=as_of, time_profile=profile)
         # Ordering runs before FK resolution/dedup so a self-ref repair or a
         # composite-key retry regenerates a temporal column's value into a
         # frame that already respects created/updated/closed ordering, rather
@@ -285,6 +295,8 @@ def generate_data_from_dbml(
             as_of=as_of,
             time_profile=profile,
         )
+        if rule is not None:
+            df = _hold_parent_rule(df, table_def, rule, generated, as_of, profile)
 
         df = _coerce_integer_dtypes(df, table_def)
         generated[table_name] = df
@@ -370,9 +382,46 @@ def _mirror_attributes(
     return df
 
 
+def parent_rules_for(tables: dict[str, TableDef], refs: list[dict]) -> dict[str, ParentRule]:
+    """The tables whose creation date `generate_data_from_dbml` keeps after their parents'.
+
+    By table key, each with the foreign keys it follows (see
+    `generate.parents`). What the dbt export tests, so it is worked out exactly
+    as generation works it out.
+    """
+    fk_refs, _ = classify_refs(tables, refs)
+    order, _broken, _leftover = _plan_table_order(tables, fk_refs)
+    return parent_rules(tables, fk_refs, order)
+
+
 # ---------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------
+def _hold_parent_rule(
+    df: pd.DataFrame,
+    table_def: TableDef,
+    rule: ParentRule,
+    generated: dict[str, pd.DataFrame],
+    as_of: AsOf,
+    profile: TimeProfile,
+) -> pd.DataFrame:
+    """Keep the parent rule after the passes that run once it was applied.
+
+    A composite key's repair can give a row another parent, and `when` can fill
+    a creation date the null pass had left empty; either can leave a row dated
+    before its parent. Such a row's date moves (its parents stay: the
+    attributes mirrored through them are final by now), and the row's later
+    dates are placed after it again. A table neither touched comes back as it was.
+    """
+    creation = next(c for c in table_def.columns if c.name == rule.column)
+    moved = follow_parents(
+        df, rule, creation, generated, as_of=as_of, time_profile=profile, repick=False
+    )
+    if moved:
+        df = order_row_times(df, table_def, as_of=as_of, time_profile=profile, rows=moved)
+    return df
+
+
 def _midnight(as_of: AsOf) -> datetime:
     """Midnight of the run's anchor day: the latest moment a first-day timestamp takes."""
     anchor = _resolve_anchor(as_of)
@@ -680,6 +729,17 @@ def _table_order(
     columns are drawn once their parents exist (see `_deferred_fk_columns`). A
     schema without a cycle breaks nothing, so its order is what it always was.
     """
+    order, broken, leftover = _plan_table_order(tables, fk_refs)
+    if leftover:
+        _cycle_state["cyclic_tables"] = leftover
+    return order, broken
+
+
+def _plan_table_order(
+    tables: dict[str, TableDef],
+    fk_refs: list[dict],
+) -> tuple[list[str], set[tuple[str, str]], list[str]]:
+    """`_table_order`, plus the tables left in a cycle, without recording them."""
     graph: dict[str, set[str]] = defaultdict(set)
     indegree: dict[str, int] = dict.fromkeys(tables.keys(), 0)
     # An edge is breakable when every reference along it is a nullable FK.
@@ -742,11 +802,9 @@ def _table_order(
     # unusual-but-not-invalid schema), but record it so the CLI can warn the
     # user their generated FK data may not respect every relationship.
     leftover = sorted(name for name in tables if name not in order)
-    if leftover:
-        _cycle_state["cyclic_tables"] = leftover
     order.extend(leftover)
 
-    return order, broken
+    return order, broken, leftover
 
 
 def _deferred_fk_columns(
