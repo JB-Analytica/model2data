@@ -76,7 +76,7 @@ dbt_{project_name}/
 ├── models/
 │   └── staging/
 │       ├── stg_table1.sql
-│       ├── stg_table1.yml
+│       ├── stg_table1.yml  # with --lightdash, also its Lightdash meta
 │       ├── ut_stg_table1.yml  # only with --unit-tests
 │       └── ...
 ├── data-tests/

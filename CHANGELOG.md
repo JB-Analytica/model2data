@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.14.0] - 2026-10-07
+
+### Added
+- **Lightdash metrics in the generated dbt project.** `generate --lightdash` writes the model's
+  metrics, dimensions and joins where [Lightdash](https://docs.lightdash.com/references/metrics)
+  reads them: under `config.meta` of each staging model's own `models/staging/stg_<table>.yml`,
+  next to its tests (dbt reads a model's properties from one file only, so the meta is merged in
+  rather than written beside it). It takes the `--metrics` file's metrics, or without one the
+  metrics the model implies. Each table is joined many-to-one to every table it reaches along
+  exactly one path; a dimension gets its label and a column that is not one is hidden; a simple
+  metric sits on its column, a row count is a `count_distinct` of the one-column primary key, and
+  a ratio or expression is a `type: number` metric over its inputs; `ai_context` becomes
+  `ai_hint`, `percent` and `currency` the formats `'0.00%'` and `'#,##0.00'`. A filter becomes
+  the metric's `filters` wherever Lightdash's filter grammar means exactly the same (with
+  `'!null'` beside a not-equal, since Lightdash's lets nulls through), and a `CASE WHEN` in its
+  `sql` where it does not (an `any` group, a date comparison), so the metric counts what its
+  known value counts. What Lightdash has no place for (an enum's members, a table's role and
+  grain, a currency, a metric dated by another table's column, a ratio whose inputs are on two
+  tables, which is left out) is listed in the run's summary. Every example's output validates
+  against Lightdash's published JSON Schema for dbt YAML, parses with dbt, and compiles with
+  `lightdash compile --no-partial-compilation`.
+- **`model2data metrics export --to lightdash`** writes the same meta as one dbt properties file
+  for the staging models, without generating, the losses listed at its top.
+- **`model2data.metrics.to_lightdash`** and **`write_lightdash`** in the Python API, beside
+  `to_ossie`.
+
+Without `--lightdash`, a run writes byte for byte what 1.13.0 wrote, with or without
+`--metrics`.
+
 ## [1.13.0] - 2026-10-06
 
 ### Added

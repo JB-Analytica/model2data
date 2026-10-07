@@ -16,7 +16,7 @@ The [README](../README.md) shows what model2data does; these pages say how each 
 - [Defects on purpose](defects.md) — `--defects messy|training`, defects per table, the
   expected-failures report.
 - [Metrics with known values](metrics.md) — the metrics file, `metric_values.json`, a dbt test
-  per metric, the Apache Ossie export.
+  per metric, the Apache Ossie export, Lightdash metrics in the dbt YAML.
 - [Validate models in CI](ci.md) — the GitHub Action, pre-commit, GitLab CI.
 - [Using model2data from a coding agent or an LLM](agents.md) — `model2data guide`, LLMS.md.
 
