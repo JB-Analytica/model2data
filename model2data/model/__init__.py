@@ -1,4 +1,4 @@
-"""The model2data model: spec 0.4.0 (and 0.2.x, 0.3.x), read, checked, written, and generated from.
+"""The model2data model: spec 0.5.0 (and 0.2.x-0.4.x), read, checked, written, and generated from.
 
 A model is one document -- `<name>.model2data.yml`, or the same in JSON -- as
 `model2data/spec/README.md` and `model2data/spec/model.schema.json` define it.

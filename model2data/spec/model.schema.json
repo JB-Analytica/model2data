@@ -1,18 +1,18 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://www.jbanalytica.com/model2data/spec/0.4.0/model.schema.json",
+  "$id": "https://www.jbanalytica.com/model2data/spec/0.5.0/model.schema.json",
   "title": "model2data model",
   "description": "A data model: its tables, their columns and keys, the relationships between them, the enums a column can be typed as, and how each column's values are generated. Written as YAML (the `.model2data.yml` file) or as JSON; both are the same document. This schema is normative together with model2data/spec/README.md, which defines the YAML profile a reader must apply and the checks that depend on more than one part of the document.",
   "type": "object",
   "required": ["model2data", "tables"],
   "properties": {
     "model2data": {
-      "description": "The spec version the document is written against, `MAJOR.MINOR` or `MAJOR.MINOR.PATCH`. Write it as `0.4.0`. A 0.2 or 0.3 document is still read, and reads as it did: 0.3.0 only adds `defects` and `incremental.history`, which a 0.2 document cannot use, and 0.4.0 only a column's `when`, which a 0.2 or 0.3 document cannot use. A reader that met the YAML number 0.4 reads it as `0.4`.",
+      "description": "The spec version the document is written against, `MAJOR.MINOR` or `MAJOR.MINOR.PATCH`. Write it as `0.5.0`. A 0.2, 0.3 or 0.4 document is still read, and reads as it did: 0.3.0 only adds `defects` and `incremental.history`, which a 0.2 document cannot use, 0.4.0 only a column's `when`, which a 0.2 or 0.3 document cannot use, and 0.5.0 only a column's `after_parent`, which a 0.2, 0.3 or 0.4 document cannot use. A reader that met the YAML number 0.5 reads it as `0.5`.",
       "oneOf": [
-        { "type": "string", "pattern": "^0\\.[234](\\.(0|[1-9][0-9]*))?$" },
-        { "enum": [0.2, 0.3, 0.4] }
+        { "type": "string", "pattern": "^0\\.[2345](\\.(0|[1-9][0-9]*))?$" },
+        { "enum": [0.2, 0.3, 0.4, 0.5] }
       ],
-      "examples": ["0.4.0"]
+      "examples": ["0.5.0"]
     },
     "name": {
       "description": "The model's name. Names the generated dbt project, normalised to `[a-z0-9_]`. Defaults to the file's name without `.model2data.yml`.",
@@ -486,7 +486,7 @@
           "x-model2data-applies-to": ["non-key"]
         },
         "skew": {
-          "description": "How unevenly the foreign key's values spread over the parent rows, replacing the run's skew for this column. 0: every parent equally likely. Above 0: the parents, in a seeded random order, are weighted exp(−8 · skew² · i / n) by rank i of n; at 0.8 the top fifth of parents hold roughly 65–75% of the rows, at 1.0 roughly 80%.",
+          "description": "How unevenly the foreign key's values spread over the parent rows, replacing the run's skew for this column. 0: every parent equally likely. Above 0: the parents, in a seeded random order, are weighted exp(−8 · skew² · i / n) by rank i of n; at 0.8 the top fifth of parents hold roughly 65–75% of the rows, at 1.0 roughly 80%. Where the child's creation date follows its parent's (see `after_parent`), the parents created earliest also take the rows dated before later ones existed, so the spread is steeper.",
           "$ref": "#/$defs/fraction",
           "x-model2data-applies-to": ["foreign-key"]
         },
@@ -509,6 +509,11 @@
         "seasonality": {
           "description": "Replaces the run's seasonality for this column. A day weighs 1 + seasonality · cos(2π (d − 320) / 365.25), d its day of the year: an annual peak on 16 November. 0 is no seasonal pattern; 1 the strongest.",
           "$ref": "#/$defs/fraction",
+          "x-model2data-applies-to": ["temporal"]
+        },
+        "after_parent": {
+          "description": "Whether this column, the date a row comes into being with, is kept on or after the creation date of every parent row the row's foreign keys point at: an order is not placed before its customer signed up (see References in the spec README). `true` is the default; `false` draws the column on its own, its parents' dates aside. It sits only on its table's creation column: the first date or timestamp column without `after` whose name puts it at the created stage (`created_at`, `signup_date`, `start_date`), or, when none does, the first without `after` whose name puts it at no stage (`order_date`), a birth date excepted. Spec 0.5.0.",
+          "type": "boolean",
           "x-model2data-applies-to": ["temporal"]
         },
         "transitions": {

@@ -1,4 +1,4 @@
-"""Does a document conform to spec 0.4.0 (or 0.2.x, 0.3.x): the schema, then the checks beyond it.
+"""Does a document conform to spec 0.5.0 (or 0.2.x-0.4.x): the schema, then the checks beyond it.
 
 `check(document)` returns every issue it finds, each with the document path of
 the value at fault and a severity; it never stops at the first. The schema is
@@ -25,29 +25,30 @@ from jsonschema.exceptions import ValidationError
 
 from model2data.dbt.naming import dbt_identifier
 from model2data.generate import kinds
+from model2data.generate.timeline import creation_column_name
 from model2data.model.errors import Issue, PathPart, format_path
 
-SPEC_VERSION = "0.4.0"
+SPEC_VERSION = "0.5.0"
 # The columns `incremental.history` adds to `<table>_history`.
 HISTORY_COLUMNS = ("valid_from", "valid_to", "is_current")
 # The minor versions this reader implements. 0.3.0 only adds `defects` and
-# `incremental.history`, 0.4.0 only `when`, so an older document reads exactly as it
-# did; it just cannot use them.
-READS = ("0.2", "0.3", "0.4")
+# `incremental.history`, 0.4.0 only `when`, 0.5.0 only `after_parent`, so an older
+# document reads exactly as it did; it just cannot use them.
+READS = ("0.2", "0.3", "0.4", "0.5")
 _URL = "https://www.jbanalytica.com/model2data/spec/{}/model.schema.json"
 SCHEMA_URL = _URL.format(SPEC_VERSION)
 
 
 def schema_url(version: Any) -> str:
     """The schema URL a document of `version` points editors at: 0.2.0's for a 0.2 one,
-    0.3.0's for a 0.3 one, the current one otherwise."""
-    older = {"0.2": "0.2.0", "0.3": "0.3.0"}.get(_minor(version) or "")
+    0.3.0's for a 0.3 one, 0.4.0's for a 0.4 one, the current one otherwise."""
+    older = {"0.2": "0.2.0", "0.3": "0.3.0", "0.4": "0.4.0"}.get(_minor(version) or "")
     return _URL.format(older) if older else SCHEMA_URL
 
 
 def _minor(version: Any) -> Optional[str]:
     if isinstance(version, float):
-        return {0.2: "0.2", 0.3: "0.3", 0.4: "0.4"}.get(version)
+        return {0.2: "0.2", 0.3: "0.3", 0.4: "0.4", 0.5: "0.5"}.get(version)
     if isinstance(version, str):
         return ".".join(version.split(".")[:2])
     return None
@@ -55,7 +56,7 @@ def _minor(version: Any) -> Optional[str]:
 
 @lru_cache(maxsize=1)
 def schema() -> dict[str, Any]:
-    """The packaged, normative JSON Schema of spec 0.4.0, which also reads 0.2 and 0.3 documents."""
+    """The packaged, normative JSON Schema of spec 0.5.0, which also reads 0.2-0.4 documents."""
     text = resources.files("model2data").joinpath("spec/model.schema.json").read_text("utf-8")
     return json.loads(text)
 
@@ -99,7 +100,7 @@ def _version_issues(document: Mapping) -> list[Issue]:
     version = document.get("model2data")
     if version is None:
         return []  # reported by the schema as missing
-    if version in (0.2, 0.3, 0.4) and not isinstance(version, bool):
+    if version in (0.2, 0.3, 0.4, 0.5) and not isinstance(version, bool):
         return []
     if isinstance(version, str):
         parts = version.split(".")
@@ -110,7 +111,7 @@ def _version_issues(document: Mapping) -> list[Issue]:
                 Issue(
                     "model2data",
                     f"the document is written against spec {version}, and this reader "
-                    f"implements spec {SPEC_VERSION} (0.2.x, 0.3.x and 0.4.x). "
+                    f"implements spec {SPEC_VERSION} (0.2.x, 0.3.x, 0.4.x and 0.5.x). "
                     + (
                         "Convert a 0.1 model, which is DBML, with `model2data convert`."
                         if parts[:2] == ["0", "1"]
@@ -428,6 +429,18 @@ class _Checks:
         self.issues.append(Issue(format_path(path), message, severity=severity))
 
     # -- enums ---------------------------------------------------------
+    def _creation_column(self, key: str) -> Optional[str]:
+        """The date a row of `key` comes into being with (`generate.timeline.creation_column`)."""
+        temporal = []
+        for name, column in self.columns[key].items():
+            type_text = column.get("type")
+            if not isinstance(type_text, str) or self.enum_named(type_text):
+                continue
+            if kinds.is_temporal_type(type_text):
+                follows = isinstance(_mapping(column.get("generate")).get("after"), str)
+                temporal.append((name, follows))
+        return creation_column_name(temporal)
+
     def enum_named(self, type_name: Any) -> Optional[tuple[str, list]]:
         if not isinstance(type_name, str):
             return None
@@ -649,6 +662,17 @@ class _Checks:
             path,
             f"`{what}` is spec 0.4.0, and the document is written against {self.minor}: "
             "write `model2data: 0.4.0`",
+        )
+        return True
+
+    def _needs_0_5(self, path: list[PathPart], what: str = "after_parent") -> bool:
+        """Report what 0.5.0 added (`what`) in a 0.2-0.4 document; True when it was reported."""
+        if self.minor not in ("0.2", "0.3", "0.4"):
+            return False
+        self.add(
+            path,
+            f"`{what}` is spec 0.5.0, and the document is written against {self.minor}: "
+            "write `model2data: 0.5.0`",
         )
         return True
 
@@ -1072,6 +1096,24 @@ class _Checks:
                 self.add(
                     [*gen_path, "after"],
                     f"names {after}, which is not a date or timestamp column",
+                )
+
+        if (
+            "after_parent" in generate
+            and temporal
+            and not self._needs_0_5([*gen_path, "after_parent"])
+        ):
+            creation = self._creation_column(key)
+            if creation != name:
+                where = (
+                    f"which in {key} is {creation}"
+                    if creation is not None
+                    else f"and every date of {key} follows another column"
+                )
+                self.add(
+                    [*gen_path, "after_parent"],
+                    f"sits on the date a row comes into being with, {where}: only that "
+                    "column is kept on or after its parent rows' own",
                 )
 
         if integer:

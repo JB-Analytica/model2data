@@ -197,12 +197,18 @@ class _Converter:
             if self._named("the table", table.name, f"tables.{key}"):
                 self.tables[key] = self._table(key, table)
         document["tables"] = self.tables
-        # A note hint `when` is spec 0.4.0: the document says so, and any other stays 0.2.0.
-        if any(
-            isinstance(column, dict) and "when" in (column.get("generate") or {})
+        # A note hint `when` is spec 0.4.0 and `after_parent` 0.5.0: the document says so,
+        # and any other stays 0.2.0.
+        hints = {
+            hint
             for table in self.tables.values()
             for column in (table.get("columns") or {}).values()
-        ):
+            if isinstance(column, dict)
+            for hint in (column.get("generate") or {})
+        }
+        if "after_parent" in hints:
+            document["model2data"] = "0.5.0"
+        elif "when" in hints:
             document["model2data"] = "0.4.0"
 
         relationships = self._refs()

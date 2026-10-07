@@ -184,7 +184,7 @@ app = typer.Typer(
     cls=_GenerateByDefault,
     help=(
         "model2data: Generate analytics-ready datasets from a data model.\n\n"
-        "Given a model -- a .model2data.yml document (spec 0.4.0), the same as JSON,\n"
+        "Given a model -- a .model2data.yml document (spec 0.5.0), the same as JSON,\n"
         "or a DBML file -- this tool produces:\n"
         "• Synthetic but realistic data\n"
         "• A runnable dbt project scaffold\n"
@@ -837,12 +837,13 @@ def main(
 
 
 def _spec_of(file: Path) -> str:
-    """The spec a conforming model is written against: 0.4.0, 0.3.0, or 0.2.0 (DBML without
-    `when` included)."""
+    """The spec a conforming model is written against: 0.5.0, 0.4.0, 0.3.0, or 0.2.0 (DBML
+    without `when` or `after_parent` included)."""
     version = str(load(file).version)
-    return (
-        "0.4.0" if version.startswith("0.4") else "0.3.0" if version.startswith("0.3") else "0.2.0"
-    )
+    for minor in ("0.5", "0.4", "0.3"):
+        if version.startswith(minor):
+            return f"{minor}.0"
+    return "0.2.0"
 
 
 def _print_defects(report: DefectsReport) -> None:
@@ -934,7 +935,7 @@ def validate_command(
         ),
     ),
 ):
-    """Check that models conform to spec 0.4.0 (or 0.2.x, 0.3.x), printing every issue with its path.
+    """Check that models conform to spec 0.5.0 (or 0.2.x-0.4.x), printing every issue with its path.
 
     Takes one or more files and/or --glob patterns. A metrics file (*.metrics.yml) is checked
     against metrics spec 0.1.0 and against its model. Exits 1 when any file has an error;
@@ -1029,7 +1030,7 @@ def convert_command(
     force: bool = typer.Option(False, "--force", help="Overwrite the output file if it exists."),
 ):
     """Convert a model -- DBML, typically -- to a .model2data.yml document (spec 0.2.0, or
-    0.3.0 when it has defects, 0.4.0 when it has `when`)."""
+    0.3.0 when it has defects, 0.4.0 when it has `when`, 0.5.0 when it has `after_parent`)."""
     try:
         model = load(file)
     except ModelError as error:

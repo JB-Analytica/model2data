@@ -1,4 +1,4 @@
-# The model2data model — spec 0.4.0
+# The model2data model — spec 0.5.0
 
 A model2data model is one document: the tables of a data model, their columns and keys, the
 relationships between them, the enums a column can be typed as, and how every column's values
@@ -77,7 +77,7 @@ The spec is versioned on its own, apart from the engine and the studio, with
 [semantic versioning](https://semver.org). The version is in the schema's `$id`:
 
 ```
-https://www.jbanalytica.com/model2data/spec/0.4.0/model.schema.json
+https://www.jbanalytica.com/model2data/spec/0.5.0/model.schema.json
 ```
 
 A patch release changes wording only. A minor release adds something optional. A major release
@@ -96,6 +96,15 @@ writer writes the version the document was read with, and 0.3.0 once it uses eit
 document keeps saying the version it says and pointing at that version's schema; a document that
 uses `when` says `model2data: 0.4.0`, and `when` in a document that says 0.2 or 0.3 is an error. A
 writer writes the version the document was read with, and 0.4.0 once it uses `when`.
+
+0.5.0 adds a column's [`after_parent`](#references), and nothing else in the document: a
+0.2, 0.3 or 0.4 document is a 0.5.0 document that does not use it. A document that uses it says
+`model2data: 0.5.0`, and `after_parent` in a document that says an earlier version is an
+error. A writer writes the version the document was read with, and 0.5.0 once it uses
+`after_parent`. 0.5.0 also says two things about the generated data of every document, as
+until 1.0.0 a minor release may: a child row's creation date is not before its parents' (see
+[References](#references)), and an integer primary key numbers the rows 1 to n, in order (see
+[Keys](#keys)).
 
 0.2.0 replaced 0.1.0, which carried hints as JSON inside DBML notes. See
 [From 0.1](#from-01).
@@ -158,6 +167,11 @@ case-insensitively.
   member of a `pk` key is not null. A table has at most one primary key, whichever way it is
   written.
 
+A primary key of one integer column numbers a table's rows: the first day's n rows hold 1 to
+n, and a reader lists them in that order (spec 0.5.0). With a `min`/`max` or `distribution`,
+or as a foreign key (a child keyed by its parent), the values are drawn and the rows listed
+in ascending key order. Any other key leaves the values and the row order to the engine.
+
 ### References
 
 A foreign key of one column is written on it: `references: customers.id`, or
@@ -170,6 +184,21 @@ them (a load log naming a schema version by its hash, which several versions may
 reference is generated like any foreign key -- every non-null child value is drawn from the
 values the parent column actually holds, so each one exists in the parent -- but it does not
 imply one parent row per value, as a reference onto a key does.
+
+A child row comes into being on or after the parent rows it points at (spec 0.5.0): an order
+is not placed before its customer signed up. A table's **creation column** is its first date
+or timestamp column without `after` whose name puts it at the created stage (`created_at`,
+`signup_date`, `start_date`: the engine's stage words), or, when none does, its first without
+`after` whose name puts it at no stage (`order_date`), a birth date excepted; a table whose
+dates all follow something, or are all updated- or closed-stage, has none. On every row, the
+child's creation column is not before the creation column of the parent row each foreign key
+points at, when the key references the parent's primary key or a unique column and the parent
+has a creation column. A date compared with a timestamp compares by day. A null foreign key,
+a self-reference, a foreign key that breaks a cycle of references and a parent without a
+creation column constrain nothing. The child's later dates follow its creation date as they
+always do. `after_parent: false` on the creation column leaves it free of its parents. How
+the engine keeps the child's own shape while doing so is the engine's (see
+`model2data.generate.parents`).
 
 A foreign key over several columns is written on its table under `foreign_keys`, pairing
 `columns` with `to_columns` in order. A many-to-many relationship, which no table holds the key
@@ -269,7 +298,8 @@ orders:
 - A day's new rows continue the existing ones: an integer key continues after the largest value
   held, any other unique value differs from every value held, and a foreign key points at a row
   that exists by then, one inserted the same day included (parents are inserted before
-  children). A foreign key that must be unique takes each parent once, so a table whose parents
+  children), and a new row's creation column is not before that parent's. A foreign key that
+  must be unique takes each parent once, so a table whose parents
   run out inserts fewer rows that day. Every date and timestamp column of a new row falls on the
   day (a timestamp at any time of it, weighted toward working hours when the run shape has
   `business_hours`), a nullable one staying null where an ordinary draw would be, and a column
