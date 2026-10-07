@@ -14,6 +14,9 @@ SQL reads:
   and `model2data_max_distinct`: as their macros in
   `dbt/templates/hint_macros/model2data_hint_tests.sql`, nulls skipped where the
   SQL skips them.
+- `model2data_not_before_parent`: as its macro in
+  `dbt/templates/hint_macros/model2data_parent_tests.sql`: a row dated before
+  the earliest parent row its foreign key matches, by day with `granularity: day`.
 - `model2data_when` and `model2data_when_max_null_share`: as their macros in
   `dbt/templates/hint_macros/model2data_when_tests.sql`, a row matching when
   each named column's text is one of its values (a boolean as `true`/`false`
@@ -338,6 +341,40 @@ def _not_before(test: DbtTest, frame: pd.DataFrame, seeded: Mapping, cache: Colu
     return bool((mine < theirs).any())
 
 
+def _not_before_parent(test: DbtTest, frame: pd.DataFrame, seeded: Mapping, cache: Columns) -> bool:
+    if test.parent is None:
+        return False
+    parent = seeded.get(test.parent[0])
+    if parent is None:
+        return False
+    arguments = test.arguments
+    mine = pd.DataFrame(
+        {
+            "key": cache.numbers(frame, arguments["foreign_key"]),
+            "moment": cache.values(frame, str(test.column)),
+        }
+    ).dropna()
+    theirs = pd.DataFrame(
+        {
+            "key": cache.numbers(parent, arguments["field"]),
+            "parent_moment": cache.values(parent, arguments["parent_column"]),
+        }
+    ).dropna()
+    if mine.empty or theirs.empty:
+        return False
+    # A key several parent rows share counts its earliest, as the SQL's `min` does.
+    theirs["parent_moment"] = pd.to_datetime(theirs["parent_moment"], format="mixed")
+    earliest = theirs.groupby("key", sort=False)["parent_moment"].min().reset_index()
+    pairs = mine.merge(earliest, on="key")
+    if pairs.empty:
+        return False
+    child = pd.to_datetime(pairs["moment"], format="mixed")
+    parents = pairs["parent_moment"]
+    if arguments.get("granularity") == "day":
+        child, parents = child.dt.normalize(), parents.dt.normalize()
+    return bool((child < parents).any())
+
+
 def _max_null_share(test: DbtTest, frame: pd.DataFrame, seeded: Mapping, cache: Columns) -> bool:
     if not len(frame):
         return False
@@ -433,6 +470,7 @@ _CHECKS: dict[str, Callable[[DbtTest, pd.DataFrame, Mapping, Columns], bool]] = 
     "relationships": _relationships,
     "model2data_between": _between,
     "model2data_not_before": _not_before,
+    "model2data_not_before_parent": _not_before_parent,
     "model2data_max_null_share": _max_null_share,
     "model2data_max_distinct": _max_distinct,
     "model2data_when": _when,
