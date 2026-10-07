@@ -620,7 +620,7 @@ class _Engine:
             and kinds.is_integer_type(column.data_type)
         ):
             held = state[column.name].dropna()
-            start = int(held.max()) + 1 if len(held) else 0
+            start = int(held.max()) + 1 if len(held) else 1
             return list(range(start, start + count))
         values = generate_column_values(
             column=column,

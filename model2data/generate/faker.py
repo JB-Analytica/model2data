@@ -897,6 +897,11 @@ def generate_column_values(
             values = [generator() for _ in range(row_count)]
             if ensure_unique:
                 values = _deduplicate(values, generator, column_name=unique_label)
+        elif ensure_unique and "pk" in column.settings and not had_explicit_range:
+            # A table's own integer primary key numbers its rows 1..N, as an
+            # identity column does: the first row is 1 and the last is N.
+            # Before 1.15 it was a shuffled sample starting at 0.
+            values = list(range(1, row_count + 1))
         elif ensure_unique:
             if not had_explicit_range:
                 # No user-specified range: widen the default so there's
@@ -1016,6 +1021,17 @@ def generate_column_values(
                 else:
                     _stats_state["unmapped"].append((column.name, column.data_type))
                     values = [_sentence(3) for _ in range(row_count)]
+
+    # A table's rows come out in the order of an integer primary key: its
+    # values are put in ascending order here, before any other column of the
+    # row is tied to them (they are drawn in the first pass, independently of
+    # each other), so sorting the key is sorting the rows. Covers a key drawn
+    # in an explicit `min`/`max` range or with a `distribution`, and a key that
+    # is also a foreign key (a one-to-one child keyed by its parent). Only a
+    # single-column `pk` carries the setting; text and composite keys keep the
+    # order they are drawn in.
+    if "pk" in column.settings and is_integer_type(base_type) and None not in values:
+        values.sort()
 
     # -----------------------------------------------------
     # Nullability

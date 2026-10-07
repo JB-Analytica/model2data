@@ -115,14 +115,20 @@ class TestReRollingOneTable:
         assert set(rolled["orders"]["customer_id"]) <= set(rolled["customers"]["id"])
         assert set(rolled["order_items"]["order_id"]) <= set(rolled["orders"]["id"])
 
-    def test_the_old_parent_rows_are_genuinely_gone(self):
-        """A child that still pointed at the pre-roll ids would be dangling."""
+    def test_the_re_rolled_parent_holds_new_rows_under_the_same_numbering(self):
+        """An integer key numbers the rows 1..N (1.15.0), so a re-rolled parent
+        keeps its ids and every child still points at a row that exists; the rows
+        behind those ids are new."""
         baseline = _generate()
         rolled = _generate(table_seeds={"orders": 7})
 
-        stale = set(baseline["orders"]["id"]) - set(rolled["orders"]["id"])
-        assert stale, "the re-rolled parent has to hand out at least some new ids"
-        assert not set(rolled["order_items"]["order_id"]) & stale
+        assert rolled["orders"]["id"].tolist() == baseline["orders"]["id"].tolist()
+        assert (
+            not rolled["orders"]
+            .drop(columns=["id"])
+            .equals(baseline["orders"].drop(columns=["id"]))
+        )
+        assert set(rolled["order_items"]["order_id"]) <= set(rolled["orders"]["id"])
 
     def test_two_tables_can_be_re_rolled_at_once(self):
         baseline = _generate()

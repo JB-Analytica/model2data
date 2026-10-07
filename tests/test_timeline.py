@@ -54,26 +54,29 @@ def _created_updated_schema() -> dict[str, TableDef]:
 
 def test_uniform_profile_reproduces_pre_1_5_frames():
     """A table with no ordered pair is untouched by the ordering pass, so its
-    frame under the uniform profile is byte-identical to what 1.4.0 generated."""
+    frame under the uniform profile is byte-identical to what 1.4.0 generated --
+    but for 1.15.0's primary key, which numbers the rows 1..N instead of drawing
+    a shuffled sample, so every column after it draws from a different point of
+    the table's stream (pinned again in 1.15.0)."""
     df = generate_data_from_dbml(
         _single_timestamp_and_date_schema(), [], base_rows=8, seed=2024, as_of=ANCHOR
     )["events"]
 
-    assert list(df["id"]) == [88, 21, 43, 40, 41, 10, 22, 79]
+    assert list(df["id"]) == [1, 2, 3, 4, 5, 6, 7, 8]
     assert list(df["created_at"]) == [
-        "2026-01-24 23:52:50",
-        "2025-08-07 01:00:18",
-        "2025-10-11 16:45:31",
-        "2025-03-20 05:56:47",
-        "2025-11-02 12:14:24",
-        "2025-05-06 07:44:23",
-        "2025-11-12 09:20:05",
-        "2025-11-23 20:22:21",
+        "2025-12-07 15:29:52",
+        "2025-05-20 12:00:46",
+        "2026-01-20 17:46:51",
+        "2026-01-31 06:10:57",
+        "2025-07-25 17:30:00",
+        "2025-07-15 05:24:33",
+        "2025-07-18 08:26:12",
+        "2026-01-28 22:28:20",
     ]
     assert list(df["event_date"]) == [
         date(2025, 7, 31),
-        date(2025, 10, 21),
         None,
+        date(2026, 3, 8),
         date(2024, 11, 19),
         date(2024, 11, 5),
         date(2024, 5, 16),
@@ -90,26 +93,26 @@ def test_ordering_changes_created_updated_pairs_under_the_same_seed():
         _created_updated_schema(), [], base_rows=8, seed=2024, as_of=ANCHOR
     )["events"]
 
-    assert list(df["id"]) == [88, 21, 43, 40, 41, 10, 22, 79]
+    assert list(df["id"]) == [1, 2, 3, 4, 5, 6, 7, 8]
     assert list(df["created_at"]) == [
-        "2026-01-24 23:52:50",
-        "2025-08-07 01:00:18",
-        "2025-10-11 16:45:31",
-        "2025-03-20 05:56:47",
-        "2025-11-02 12:14:24",
-        "2025-05-06 07:44:23",
-        "2025-11-12 09:20:05",
-        "2025-11-23 20:22:21",
+        "2025-12-07 15:29:52",
+        "2025-05-20 12:00:46",
+        "2026-01-20 17:46:51",
+        "2026-01-31 06:10:57",
+        "2025-07-25 17:30:00",
+        "2025-07-15 05:24:33",
+        "2025-07-18 08:26:12",
+        "2026-01-28 22:28:20",
     ]
     assert list(df["updated_at"]) == [
-        "2026-01-25 02:30:36",
-        "2025-08-10 22:27:25",
-        "2025-10-19 02:05:52",
-        "2025-03-24 01:14:16",
-        "2025-11-07 20:42:41",
+        "2025-12-10 13:57:04",
+        "2025-05-23 16:21:10",
         None,
-        "2025-11-16 11:53:12",
-        "2025-11-24 20:45:24",
+        "2026-02-07 13:00:47",
+        "2025-07-29 19:39:57",
+        "2025-07-15 15:51:09",
+        "2025-07-18 17:37:38",
+        "2026-01-30 01:59:33",
     ]
     # Every non-null updated_at is at or after its own row's created_at.
     for created, updated in zip(df["created_at"], df["updated_at"], strict=True):
@@ -425,7 +428,7 @@ def test_single_timestamp_table_is_byte_identical_to_the_pinned_frame():
         _single_timestamp_and_date_schema(), [], base_rows=8, seed=2024, as_of=ANCHOR
     )["events"]
 
-    assert list(df["created_at"])[0] == "2026-01-24 23:52:50"
+    assert list(df["created_at"])[0] == "2025-12-07 15:29:52"
 
 
 def test_cyclic_after_hints_raise_naming_table_and_columns():
