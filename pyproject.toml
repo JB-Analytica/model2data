@@ -7,7 +7,7 @@ name = "model2data"
 version = "1.14.0"
 description = "Turn a data model into realistic synthetic data, a runnable dbt project and metrics with known values"
 readme = "README_PYPI.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "JB Analytica" }]
@@ -26,8 +26,6 @@ classifiers = [
     "Intended Audience :: Developers",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
@@ -40,7 +38,7 @@ dependencies = [
     "dbt-duckdb>=1.11",
     "faker>=37.12.0",
     "jsonschema>=4.18",
-    "pandas>=2.3.3",
+    "pandas>=3.0.4",
     "pyparsing>=3.1,<4",
     "pyyaml>=6.0.3",
     "typer>=0.20.0",
