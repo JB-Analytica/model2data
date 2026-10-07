@@ -161,6 +161,20 @@ shipped_at timestamp [note: '{"after": "ordered_at"}']
 A birth-date-style column (`birth_date`, `date_of_birth`, `dob`) is never folded into this chain —
 it describes the person, not the record.
 
+**A child row is never created before its parents.** A table's creation column (its first
+date/timestamp without `after` named like `created_at`/`signup_date`/`start_date`, else its first
+named for no stage, like `order_date`) is on or after the creation column of every parent row its
+foreign keys point at (onto a pk or unique key): no order before its customer's `created_at`.
+Rows drawn too early take another, older parent, so the child's own growth/seasonality/business
+hours hold; a row with none (or a one-to-one) moves its date. Not followed: self-references, null
+foreign keys, parents without a date, cycle-breaking foreign keys. Opt out per table on the
+creation column, spec 0.5.0 (`model2data: 0.5.0` in YAML):
+```dbml
+logged_at timestamp [note: '{"after_parent": false}']
+```
+With `--hint-tests`, each followed foreign key writes the dbt test `model2data_not_before_parent`.
+Integer primary keys are 1..N and every output lists rows in key order.
+
 **Tie lifecycle columns to the status they belong to with `when`.** Without it, every nullable
 column is filled or nulled independently of the others, so a `todo` task gets a `completed_at`
 and a `cancelled` subscription has no `cancelled_at`. `when` maps another column of the same

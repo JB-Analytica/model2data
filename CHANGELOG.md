@@ -7,6 +7,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **A child row is created on or after its parents.** An order is no longer placed before its
+  customer signed up (in `examples/ecommerce.model2data.yml` half the orders were). A table's
+  **creation column** is its first date or timestamp column without `after` whose name says the
+  row is created (`created_at`, `signup_date`, `start_date`, ...), or, when none does, its first
+  that names no later stage (`order_date`, `hire_date`); a birth date never is. On every row,
+  a child's creation column is on or after the creation column of each parent row its foreign
+  keys point at (a foreign key onto the parent's primary key or a unique column, to a parent
+  that has a creation column); with several parents, after the latest. A date compared with a
+  timestamp compares by day, and the child's later dates (`after`, updated/closed names) follow
+  its creation date as before. Not followed, and documented as such: self-references, nullable
+  foreign keys left null, parents without a creation column, and foreign keys that break a
+  cycle of references.
+  - **The child keeps its own shape.** A row whose date falls before its parent's takes another
+    parent, one created by then, drawn from the parents the column already points at; its date
+    keeps its draw, so growth, seasonality, business hours and the `as_of` window hold exactly.
+    Only a row with no parent created early enough (or a one-to-one, which cannot change
+    parent) moves its date instead, drawn again from the column's own shape cut to the part of
+    the window on or after the parent's; a parent created on the window's last day gives a child
+    on that day, never past `as_of`. Parents created early collect more children, so a skewed
+    foreign key is steeper than before: on a coffee-webshop model with `skew: 0.8` and
+    customers growing over the year, the top fifth of customers hold about 80% of the orders
+    rather than 65%, while the orders' gift-season peak and growth are unchanged.
+  - **Days after the first** keep it too: a new row whose parent was inserted the same day lands
+    later that day than its parent.
+  - **`after_parent: false`** on the creation column draws it on its own, its parents aside, for
+    the table whose rows really can predate them (imported history, say). It is validated like
+    any hint: on a column that is not a date or timestamp, or a date that is not the table's
+    creation column, it is an error naming the column that is. It is new vocabulary, so it
+    needs **spec 0.5.0** (`model2data: 0.5.0`); a 0.2, 0.3 or 0.4 document using it is an error
+    naming the version to write, and reads exactly as before otherwise. DBML with an
+    `after_parent` note converts to 0.5.0. The schema's `$id` moves to `/spec/0.5.0/`.
+  - **dbt: `model2data_not_before_parent`.** With hint tests on (`--hint-tests`), each foreign key
+    a creation date follows writes a relationship-aware test on the child's creation column: no
+    row dated before the parent row it joins to (by day for a date against a timestamp; a key
+    several parent rows share counts its earliest, leaving duplicates to the `unique` test).
+    The macro ships in `macros/model2data_parent_tests.sql`, written only when a project has
+    such a test. `hint_tests_for(tables, refs=...)` takes the references for it when given bare
+    tables. The defects report checks it like every other test, so a defect that dates a row
+    before its parent lists it in `EXPECTED_FAILURES.md`; `late_arriving` takes rows that stay
+    clear of their parents first, so it still breaks no test where it can.
+
+### Changed
+- **Integer primary keys number the rows 1..N, and the rows come out in key order.** A table's
+  single-column integer primary key was a shuffled sample starting at 0 (the first customers
+  were 4251, 4557, 1941, ...); it is now 1, 2, 3, ... N, like an identity column, and every
+  output (seeds, the days' batches and change log, the defects' files) lists the rows in that
+  order. A key with a `min`/`max` or a `distribution`, and an integer key that is also a foreign
+  key (a one-to-one child keyed by its parent), is drawn as before and listed in ascending
+  order. Text, uuid and composite keys keep their values and order. Foreign keys, one-to-one
+  foreign keys and `--table-seed` re-rolls work as before (a re-rolled table keeps its ids 1..N
+  with new rows behind them), and a table with `incremental` continues from the largest key on
+  later days, as before (from 1 when it starts empty).
+- **Output changes for the same seed (the determinism promise is per version).** Every model
+  with an integer primary key generates different bytes than 1.14.0: the key no longer draws
+  from the table's random stream, so every column after it draws from a different point of it.
+  A model whose child tables have a creation date and a dated parent also changes where the
+  rule applies. The same model, seed, `--as-of` and options still give the same bytes on any
+  machine and any day with 1.15.0. Pin `model2data==1.14.0` to keep fixtures of the old shape.
+
 ## [1.14.0] - 2026-10-07
 
 ### Added

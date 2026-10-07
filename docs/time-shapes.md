@@ -19,6 +19,33 @@ shipped_at:
   generate: {after: ordered_at}
 ```
 
+A row is never created before the parent rows it points at: an order's `order_date` is on or
+after its customer's `created_at`, a review's `review_date` on or after the product's launch.
+It needs no hint. A table's **creation column** is its first date or timestamp without `after`
+whose name says created (`created_at`, `signup_date`, `start_date`, ...), else its first that
+names no later stage (`order_date`, `hire_date`); a child's creation column follows the creation
+column of each parent its foreign keys point at, through a foreign key onto the parent's
+primary or unique key, and its own later dates (`shipped_at`, `updated_at`) follow it as
+always. A date compared with a timestamp compares by day.
+
+The child keeps its own shape. A row drawn before its parent takes another parent, one created
+by then, from the parents the column already points at, so the order dates keep their growth,
+seasonality and working hours exactly, and the customers who signed up early end up with more
+orders, as they would. Only a row no parent was created early enough for (or a one-to-one,
+which cannot change parent) moves its date, drawn again from the column's own shape on or
+after the parent's, and never past `as_of`. On days after the first, a new row whose parent was
+inserted the same day lands later that day than the parent.
+
+Self-references, nullable foreign keys left null, parents without a creation column and
+foreign keys that break a cycle are not followed. To draw a creation column on its own, as
+before 1.15, say so on it (spec 0.5.0: the model says `model2data: 0.5.0`):
+
+```yaml
+logged_at:
+  type: timestamp
+  generate: {after_parent: false}
+```
+
 A column that only has a value in some states says which with `when` (spec 0.4.0: the model says
 `model2data: 0.4.0`): it holds a value on
 exactly the rows whose named column holds one of the listed values, and is null on every other

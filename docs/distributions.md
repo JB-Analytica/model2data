@@ -34,7 +34,11 @@ orders:
       generate: {distinct: 12}
 ```
 
-`skew` on a foreign key overrides `--skew` for just that column. `weights` biases an enum column
+`skew` on a foreign key overrides `--skew` for just that column. When the child's creation date
+follows its parent's (see [When things happen](time-shapes.md)), the parents created early also
+pick up the children dated before the later ones existed, so the spread is steeper than `skew`
+alone: on the coffee-webshop example at `skew: 0.8`, the top fifth of customers hold about 80%
+of the orders rather than 65%. `weights` biases an enum column
 toward the values named (unnamed values still appear, at weight 1). `true_rate` is the fraction of
 non-null rows a boolean column comes back `true`. `null_rate` replaces the column's default null
 fraction outright. `distinct` draws the column's values from a fixed-size pool instead of a fresh
