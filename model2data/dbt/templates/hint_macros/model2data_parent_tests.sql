@@ -1,11 +1,11 @@
 {#-
-  The generic test model2data writes where a table's creation date follows its
-  parents': a row is not dated before the parent row its foreign key points at
-  (an order not before its customer signed up). Written beside
-  model2data_hint_tests.sql, and only by a model that has such a table. Plain
+  The generic test model2data writes for a cross-table `after` (`after:
+  customers.created_at` on orders.order_date): a row is not dated before the
+  parent row its foreign key points at. Written beside
+  model2data_hint_tests.sql, and only by a model that has such a hint. Plain
   ANSI SQL, runs on DuckDB and Postgres. Returns the rows that break it.
   `column_name` arrives already quoted by the schema YAML; `foreign_key`,
-  `field` (the parent's key) and `parent_column` (the parent's creation date)
+  `field` (the parent's key) and `parent_column` (the column `after` names)
   are raw names and are quoted here. A row whose foreign key is null, or points
   at no parent row, is left to the not_null and relationships tests, and a key
   several parent rows share (left to the unique test) counts its earliest one.

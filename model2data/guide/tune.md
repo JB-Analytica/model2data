@@ -62,7 +62,7 @@ columns. Add `not_null` to every column that must always have a value.
   `references`, `measure`, `generate`.
 - `generate`: `min`, `max`, `distribution`, `null_rate`, `weights`, `true_rate`,
   `distinct`, `skew`, `after`, `business_hours`, `growth`, `seasonality`, `transitions`,
-  `when`, `after_parent`.
+  `when`.
 - Table: `columns`, `description`, `color`, `role`, `grain`, `keys`, `foreign_keys`,
   `incremental`, `defects`.
 - Top level: `model2data` (spec version), `name`, `description`, `enums`, `tables`,
@@ -95,16 +95,14 @@ tables:
         type: sub_status
         generate: {transitions: {trial: [active, cancelled], active: [cancelled]}}
       seats: {type: integer, generate: {min: 1, max: 500, distribution: {kind: lognormal, median: 10}}}
-      started_at: {type: timestamp, not_null: true, generate: {business_hours: true, growth: 0.5}}
+      started_at:
+        type: timestamp
+        not_null: true
+        generate: {business_hours: true, growth: 0.5, after: accounts.created_at}
       cancelled_at: {type: timestamp, generate: {after: started_at, when: {status: [cancelled]}}}
       updated_at: {type: timestamp, generate: {after: started_at}}
     defects:
       - {type: nulls, column: account_id, count: 2}
-  audit_events:
-    columns:
-      id: {type: bigint, pk: true}
-      account_id: {type: bigint, references: accounts.id}
-      logged_at: {type: timestamp, not_null: true, generate: {after_parent: false}}
 run:
   rows: 100
   rows_per_table: {accounts: 20}
@@ -127,19 +125,17 @@ only the matching rows. On later days a row whose status moves into a listed val
 value that day (its `updated_at` when the table has one), and one moving out loses it. It
 writes the dbt test `model2data_when`.
 
-A row is never created before the parent rows it points at: `started_at` above (the
-subscription's creation column) is on or after its account's `created_at`, on every row,
-with no hint. The creation column is a table's first date or timestamp without `after`
-whose name says created (`created_at`, `signup_date`, `start_date`), else its first that
-names no later stage (`order_date`); a child follows each parent that has one, through a
-foreign key onto the parent's key. A row dated too early takes another parent created by
-then, so the child's growth and seasonality stay as asked; with no such parent its date
-moves. Self-references, nullable foreign keys left null, parents without a date and
-foreign keys that break a cycle are not followed. `after_parent: false` on the creation
-column (spec 0.5.0) turns it off for that table: `audit_events` above copies old events, so
-its `logged_at` may predate the account. With `--hint-tests` each followed foreign key
-writes the dbt test `model2data_not_before_parent`. Integer primary keys number the rows
-1..N, and every output lists the rows in key order.
+`after` also names a parent's column as `<table>.<column>`: `started_at` above is on or after
+the `created_at` of the account its `account_id` points at (spec 0.5.0, so the model says
+`model2data: 0.5.0`). The table must reach that parent through exactly one one-column foreign
+key onto its key; a list (`after: [started_at, accounts.created_at]`) follows each entry. A
+row dated before its parent takes another parent created by then, so the column keeps its
+growth and seasonality; with none (or a one-to-one) its date moves. A null foreign key
+constrains nothing. `validate` warns where a child's first date can fall before its parent's
+`created_at`-like date and names the `after` to add. It writes the dbt test
+`model2data_not_before_parent`. Integer primary keys number the rows 1..N, and every output
+lists the rows in key order.
+
 The full spec and JSON Schema ship in the package: `model2data/spec/README.md`,
 `model2data/spec/model.schema.json`.
 

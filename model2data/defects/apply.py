@@ -113,11 +113,11 @@ class _Table:
         refs: list[dict],
         results: Optional[list[DayResult]],
         incremental: Any,
-        rule: Optional[ParentRule] = None,
+        rules: Sequence[ParentRule] = (),
     ):
         self.key = key
-        # The parents the table's creation date follows (see generate.parents), if any.
-        self.rule = rule
+        # The columns whose `after` names a parent's column (see generate.parents).
+        self.rules = list(rules)
         self.table = table
         self.frames = frames
         self.frame = frames[key]
@@ -643,28 +643,32 @@ def _before_parents_once_late(table: _Table, candidates: list[int], name: str) -
     """The candidates moving back would date before a parent row (see generate.parents).
 
     A late-arriving row is moved back past the previous load's cutoff, every date of
-    it; when the table's creation date follows its parents', that can put it before
-    one, which the dbt test `model2data_not_before_parent` then reports. Rows that
-    stay clear of their parents are taken first, so the defect breaks the
-    incremental model it is meant to and no test besides.
+    it; a date with a cross-table `after` can then fall before its parent, which the
+    dbt test `model2data_not_before_parent` reports. Rows that stay clear of their
+    parents are taken first, so the defect breaks the incremental model it is meant
+    to and no test besides.
     """
-    rule = table.rule
-    if rule is None or not candidates:
+    if not table.rules or not candidates:
         return set()
-    floor = floor_on_day(table.frame, rule, table.frames).tolist()
-    created = moments(table.frame[rule.column], rule.kind).tolist()
+    checks = [
+        (
+            floor_on_day(table.frame, rule, table.frames).tolist(),
+            moments(table.frame[rule.column], rule.kind).tolist(),
+        )
+        for rule in table.rules
+    ]
     values = table.frame[name].tolist()
     cutoffs: dict[int, Any] = {}
     risky = set()
     for position in candidates:
-        # A null foreign key or date gives NaT, which compares false below.
         day = table.inserted_day[position]
         if day not in cutoffs:
             cutoffs[day] = table.loaded_max(day - 1, name)
         cutoff, moment, back = cutoffs[day], _moment(values[position]), 1
         while cutoff is not None and moment - timedelta(days=back) >= cutoff:
             back += 1
-        if created[position] - pd.Timedelta(days=back) < floor[position]:
+        # A null foreign key or date gives NaT, which compares false.
+        if any(own[position] - pd.Timedelta(days=back) < floor[position] for floor, own in checks):
             risky.add(position)
     return risky
 
@@ -876,7 +880,7 @@ def break_tables(
                     inputs.refs,
                     results,
                     inputs.incremental.get(target),
-                    rules.get(target),
+                    rules.get(target, []),
                 )
             table = tables[target]
             rng = random.Random(defect_stream_seed(base_seed, key, defect))

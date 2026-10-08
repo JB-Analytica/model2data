@@ -18,7 +18,7 @@ import json
 from collections.abc import Mapping
 from functools import lru_cache
 from importlib import resources
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 import jsonschema
 from jsonschema.exceptions import ValidationError
@@ -26,13 +26,14 @@ from jsonschema.exceptions import ValidationError
 from model2data.dbt.naming import dbt_identifier
 from model2data.generate import kinds
 from model2data.generate.timeline import creation_column_name
-from model2data.model.errors import Issue, PathPart, format_path
+from model2data.model.errors import Issue, PathPart, Suggestion, format_path
 
 SPEC_VERSION = "0.5.0"
 # The columns `incremental.history` adds to `<table>_history`.
 HISTORY_COLUMNS = ("valid_from", "valid_to", "is_current")
 # The minor versions this reader implements. 0.3.0 only adds `defects` and
-# `incremental.history`, 0.4.0 only `when`, 0.5.0 only `after_parent`, so an older
+# `incremental.history`, 0.4.0 only `when`, 0.5.0 only a list or a parent's
+# `<table>.<column>` in `after`, so an older
 # document reads exactly as it did; it just cannot use them.
 READS = ("0.2", "0.3", "0.4", "0.5")
 _URL = "https://www.jbanalytica.com/model2data/spec/{}/model.schema.json"
@@ -422,6 +423,9 @@ class _Checks:
         self._relationships()
         self._groups()
         self._run()
+        if self.minor not in ("0.2", "0.3", "0.4"):
+            self._parent_after_cycles()
+        self._suggest_parent_after()
         return self.issues
 
     def add(self, path: list[PathPart], message: str, *, warning: bool = False) -> None:
@@ -430,14 +434,18 @@ class _Checks:
 
     # -- enums ---------------------------------------------------------
     def _creation_column(self, key: str) -> Optional[str]:
-        """The date a row of `key` comes into being with (`generate.timeline.creation_column`)."""
+        """The date a row of `key` comes into being with (`generate.timeline.creation_column`).
+
+        Read only to suggest a cross-table `after` (`_suggest_parent_after`)."""
         temporal = []
         for name, column in self.columns[key].items():
             type_text = column.get("type")
             if not isinstance(type_text, str) or self.enum_named(type_text):
                 continue
             if kinds.is_temporal_type(type_text):
-                follows = isinstance(_mapping(column.get("generate")).get("after"), str)
+                after = _mapping(column.get("generate")).get("after")
+                entries = after if isinstance(after, list) else [after]
+                follows = any(isinstance(e, str) and "." not in e for e in entries)
                 temporal.append((name, follows))
         return creation_column_name(temporal)
 
@@ -665,7 +673,7 @@ class _Checks:
         )
         return True
 
-    def _needs_0_5(self, path: list[PathPart], what: str = "after_parent") -> bool:
+    def _needs_0_5(self, path: list[PathPart], what: str) -> bool:
         """Report what 0.5.0 added (`what`) in a 0.2-0.4 document; True when it was reported."""
         if self.minor not in ("0.2", "0.3", "0.4"):
             return False
@@ -1080,41 +1088,8 @@ class _Checks:
             self._when(key, name, column, when, [*gen_path, "when"], is_fk, in_pk or in_key)
 
         after = generate.get("after")
-        if temporal and isinstance(after, str):
-            other = self.columns[key].get(after)
-            if after == name:
-                self.add(
-                    [*gen_path, "after"], "names the column itself: `after` names another column"
-                )
-            elif other is None:
-                self.add(
-                    [*gen_path, "after"], f"names {_show(after)}, which is not a column of {key}"
-                )
-            elif not kinds.is_temporal_type(str(other.get("type", ""))) or self.enum_named(
-                other.get("type")
-            ):
-                self.add(
-                    [*gen_path, "after"],
-                    f"names {after}, which is not a date or timestamp column",
-                )
-
-        if (
-            "after_parent" in generate
-            and temporal
-            and not self._needs_0_5([*gen_path, "after_parent"])
-        ):
-            creation = self._creation_column(key)
-            if creation != name:
-                where = (
-                    f"which in {key} is {creation}"
-                    if creation is not None
-                    else f"and every date of {key} follows another column"
-                )
-                self.add(
-                    [*gen_path, "after_parent"],
-                    f"sits on the date a row comes into being with, {where}: only that "
-                    "column is kept on or after its parent rows' own",
-                )
+        if temporal and after is not None:
+            self._after(key, name, after, [*gen_path, "after"])
 
         if integer:
             bounds = {}
@@ -1294,18 +1269,185 @@ class _Checks:
         }
         return "only sits on " + " or ".join(words.get(kind, kind) for kind in allowed)
 
+    # -- after ---------------------------------------------------------
+    def _after(self, key: str, name: str, after: Any, path: list[PathPart]) -> None:
+        """Each entry of an `after`: a column of the row, or a parent's `<table>.<column>`."""
+        entries = after if isinstance(after, list) else [after]
+        if not all(isinstance(entry, str) for entry in entries):
+            return  # the schema has reported it
+        if (isinstance(after, list) or any("." in entry for entry in entries)) and self._needs_0_5(
+            path, "a list or a `<table>.<column>` in `after`"
+        ):
+            return
+        for position, entry in enumerate(entries):
+            at = [*path, position] if isinstance(after, list) else path
+            if "." in entry:
+                problem = self._parent_after_issue(key, entry)
+                if problem:
+                    self.add(at, f"names {entry}, {problem}")
+                continue
+            other = self.columns[key].get(entry)
+            if entry == name:
+                self.add(at, "names the column itself: `after` names another column")
+            elif other is None:
+                self.add(at, f"names {_show(entry)}, which is not a column of {key}")
+            elif not self._is_temporal(other):
+                self.add(at, f"names {entry}, which is not a date or timestamp column")
+
+    def _is_temporal(self, column: Mapping) -> bool:
+        type_text = column.get("type")
+        return (
+            isinstance(type_text, str)
+            and kinds.is_temporal_type(type_text)
+            and not self.enum_named(type_text)
+        )
+
+    def parent_keys(self, key: str) -> dict[str, list[tuple[str, str]]]:
+        """The `references` of `key`'s columns by parent table: `(child column, parent column)`."""
+        found: dict[str, list[tuple[str, str]]] = {}
+        for name, column in self.columns.get(key, {}).items():
+            reference = column.get("references")
+            to = reference.get("to") if isinstance(reference, Mapping) else reference
+            if isinstance(to, str) and "." in to:
+                parent, parent_column = split_column_path(to)
+                found.setdefault(parent, []).append((name, parent_column))
+        # A `foreign_keys` entry has two columns or more: it identifies no row by one.
+        return found
+
+    def _parent_after_issue(self, key: str, entry: str) -> Optional[str]:
+        """Why `entry`, a `<table>.<column>` in an `after` of `key`, names no parent's date."""
+        parent, column = split_column_path(entry)
+        if parent not in self.tables:
+            return f"and there is no table {_show(parent)}"
+        if parent == key:
+            return (
+                f"a column of {key} itself: name a column of the same row without its table "
+                f"(`after: {column}`); a parent row in the same table is not followed"
+            )
+        target = self.columns.get(parent, {}).get(column)
+        if target is None:
+            return f"and {parent} has no column {_show(column)}"
+        if not self._is_temporal(target):
+            return "which is not a date or timestamp column"
+        keys = self.parent_keys(key).get(parent, [])
+        if not keys:
+            composite = any(
+                _mapping(fk).get("references") == parent
+                for fk in _list(_mapping(self.tables.get(key)).get("foreign_keys"))
+            )
+            if composite:
+                return (
+                    f"and {key} reaches {parent} only through a foreign key of several "
+                    "columns: `after` follows a one-column foreign key"
+                )
+            return (
+                f"and {key} has no foreign key to {parent}: `after` reaches another table "
+                "only through a foreign key of the row"
+            )
+        if len(keys) > 1:
+            names = ", ".join(child for child, _ in keys)
+            return (
+                f"and {key} reaches {parent} through more than one foreign key ({names}): "
+                f"`after` cannot tell which {parent} row it means"
+            )
+        ((child, parent_column),) = keys
+        if {parent_column} not in self.key_sets(parent):
+            return (
+                f"and {child} references {parent}.{parent_column}, which is not a key: "
+                f"`after` needs the one {parent} row the foreign key points at"
+            )
+        return None
+
+    def _parent_after_cycles(self) -> None:
+        """Tables whose `after`s name each other's columns: neither can be drawn first."""
+        edges: dict[str, list[tuple[str, list[PathPart], str]]] = {}
+        for key, columns in self.columns.items():
+            for name, column in columns.items():
+                after = _mapping(column.get("generate")).get("after")
+                entries = after if isinstance(after, list) else [after]
+                for position, entry in enumerate(entries):
+                    if not isinstance(entry, str) or "." not in entry:
+                        continue
+                    parent = split_column_path(entry)[0]
+                    if parent in self.tables and parent != key:
+                        path: list[PathPart] = ["tables", key, "columns", name, "generate", "after"]
+                        if isinstance(after, list):
+                            path.append(position)
+                        edges.setdefault(key, []).append((parent, path, entry))
+
+        def reaches(start: str, goal: str) -> bool:
+            seen, stack = set(), [start]
+            while stack:
+                node = stack.pop()
+                if node == goal:
+                    return True
+                if node not in seen:
+                    seen.add(node)
+                    stack.extend(parent for parent, _, _ in edges.get(node, []))
+            return False
+
+        for key, outgoing in edges.items():
+            for parent, path, entry in outgoing:
+                if reaches(parent, key):
+                    self.add(
+                        path,
+                        f"names {entry}, and an `after` of {parent} (or of a table it names) "
+                        f"names a column of {key}: the tables' dates cannot each follow the other",
+                    )
+
+    def _suggest_parent_after(self) -> None:
+        """Warn where a child's first date can fall before the parent row it points at."""
+        for key, columns in self.columns.items():
+            named = set()
+            for column in columns.values():
+                after = _mapping(column.get("generate")).get("after")
+                for entry in after if isinstance(after, list) else [after]:
+                    if isinstance(entry, str) and "." in entry:
+                        named.add(split_column_path(entry)[0])
+            child = self._creation_column(key)
+            if child is None:
+                continue
+            for parent, keys in self.parent_keys(key).items():
+                if parent == key or parent in named or parent not in self.tables or len(keys) != 1:
+                    continue
+                ((fk, parent_column),) = keys
+                if {parent_column} not in self.key_sets(parent):
+                    continue
+                created = self._creation_column(parent)
+                if created is None:
+                    continue
+                target = f"{parent}.{created}"
+                current = _mapping(columns[child].get("generate")).get("after")
+                if current is None:
+                    value: Union[str, tuple[str, ...]] = target
+                else:
+                    value = (*(current if isinstance(current, list) else [current]), target)
+                path = ["tables", key, "columns", child, "generate", "after"]
+                self.issues.append(
+                    Issue(
+                        format_path(["tables", key, "columns", child]),
+                        f"can fall before {target} (the {parent} row it points at through "
+                        f"{fk}); add `after: {target}` to keep it after",
+                        severity="warning",
+                        suggestion=Suggestion(
+                            format_path(path),
+                            value,
+                            None if self.minor in (None, "0.5") else SPEC_VERSION,
+                        ),
+                    )
+                )
+
     def _after_cycles(self, key: str, columns: dict[str, dict]) -> None:
-        edges: dict[str, str] = {}
+        edges: dict[str, list[str]] = {}
         for name, column in columns.items():
             after = _mapping(column.get("generate")).get("after")
-            if isinstance(after, str) and after in columns and after != name:
-                edges[name] = after
+            for entry in after if isinstance(after, list) else [after]:
+                if isinstance(entry, str) and entry in columns and entry != name:
+                    edges.setdefault(name, []).append(entry)
         reported: set = set()
-        for start in edges:
-            chain = [start]
-            node = start
-            while node in edges:
-                node = edges[node]
+
+        def walk(chain: list[str]) -> None:
+            for node in edges.get(chain[-1], []):
                 if node in chain:
                     cycle = chain[chain.index(node) :]
                     if not reported.intersection(cycle):
@@ -1316,8 +1458,11 @@ class _Checks:
                             ["tables", key, "columns", first, "generate", "after"],
                             f"the after hints of {key} form a cycle: {' -> '.join([*loop, first])}",
                         )
-                    break
-                chain.append(node)
+                elif not reported.intersection(chain):
+                    walk([*chain, node])
+
+        for start in edges:
+            walk([start])
 
     # -- elsewhere -----------------------------------------------------
     def _column_path(self, path: list[PathPart], value: Any) -> None:

@@ -3,7 +3,7 @@
 A note has always been either plain text (a comment, ignored by generation)
 or a JSON object read for `min`/`max`. This module documents the rest of that
 object's vocabulary -- `null_rate`, `weights`, `true_rate`, `distinct`, `skew`,
-`after`, `business_hours`, `growth`, `seasonality`, `after_parent`, `distribution` and its
+`after`, `business_hours`, `growth`, `seasonality`, `distribution` and its
 parameters -- and checks it once, before a single row is generated, so a
 typo'd enum value or a hint on the wrong kind of column fails with a message
 naming the table and column rather than surfacing as a wrong-looking dataset
@@ -17,11 +17,10 @@ or a downstream dbt test failure.
 | `true_rate` | boolean columns                                | fraction of non-null rows that are true   |
 | `distinct`  | columns that aren't an FK, `pk`, `unique`, enum | positive integer: draw from a pool that size |
 | `skew`      | foreign-key columns                            | overrides the run-level `skew` for this column |
-| `after`     | date/timestamp columns                         | name of another date/timestamp column, read by the time-aware generator |
+| `after`     | date/timestamp columns                         | another date/timestamp column of the row, a parent's `<table>.<column>` (see generate.parents), or a list of them |
 | `business_hours` | date/timestamp columns                    | overrides the run-level `TimeProfile.business_hours` for this column |
 | `growth`    | date/timestamp columns                         | overrides the run-level `TimeProfile.growth` for this column |
 | `seasonality` | date/timestamp columns                       | overrides the run-level `TimeProfile.seasonality` for this column |
-| `after_parent` | a table's creation column (see generate.timeline.creation_column) | `false`: not kept on or after its parents' creation dates (see generate.parents) |
 | `distribution` | numeric columns                             | draw shape: `uniform` (default), `normal`, `lognormal`, `exponential` |
 | `mean`      | numeric columns, with `distribution: normal` or `exponential` | normal: the centre; exponential: the average (scale) |
 | `stddev`    | numeric columns, with `distribution: normal`   | normal: the spread |
@@ -35,8 +34,9 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from model2data.generate import kinds
+from model2data.generate.parents import parent_link
 from model2data.generate.relationships import build_fk_lookup, classify_refs
-from model2data.generate.timeline import creation_column
+from model2data.generate.timeline import parent_after
 from model2data.parse.dbml import ColumnDef, TableDef
 
 
@@ -84,8 +84,12 @@ def validate_hints(tables: Mapping[str, TableDef], refs: list[dict]) -> None:
                 is_unique="unique" in column.settings or column.name in composite_unique_columns,
                 columns_by_name=columns_by_name,
             )
-            if "after_parent" in note:
-                _check_after_parent(table_def, column, note["after_parent"])
+            for entry in parent_after(note):
+                link, reason = parent_link(tables, fk_refs, table_name, entry)
+                if link is None:
+                    raise ValueError(
+                        f'{table_name}.{column.name}: "after" names {".".join(entry)}, {reason}.'
+                    )
 
 
 # ---------------------------------------------------------
@@ -295,35 +299,30 @@ def _check_after(
     after: object,
     columns_by_name: dict[str, ColumnDef],
 ) -> None:
-    if not isinstance(after, str):
-        raise ValueError(f'{label}: "after" must be a column name (got {after!r}).')
-    other = columns_by_name.get(after)
-    if other is None:
-        raise ValueError(
-            f'{label}: "after" names {after!r}, which is not a column of {table_name}.'
-        )
-    if not _is_temporal_type(_base_type(other.data_type)):
-        raise ValueError(
-            f'{label}: "after" names {after!r}, which is not a date or timestamp column.'
-        )
+    """A column of the same row, a parent's `<table>.<column>`, or a non-empty list of them.
 
-
-def _check_after_parent(table_def: TableDef, column: ColumnDef, value: object) -> None:
-    label = f"{table_def.name}.{column.name}"
-    if column.enum_values or not _is_temporal_type(_base_type(column.data_type)):
-        raise ValueError(f'{label}: "after_parent" only applies to date/timestamp columns.')
-    _check_bool(label, "after_parent", value)
-    creation = creation_column(table_def)
-    if creation is None or creation.name != column.name:
-        where = (
-            f"which in {table_def.name} is {creation.name}"
-            if creation is not None
-            else f"and {table_def.name} has none (every date follows another column)"
-        )
+    A parent's column is checked by `validate_hints` itself, which knows the
+    other tables and the foreign keys.
+    """
+    raw: list = after if isinstance(after, list) else [after]
+    entries = [entry for entry in raw if isinstance(entry, str)]
+    if not entries or len(entries) != len(raw):
         raise ValueError(
-            f'{label}: "after_parent" sits on the date a row comes into being with, {where}: '
-            "only that column is kept on or after the parent rows' own."
+            f'{label}: "after" must be a column name, `<table>.<column>`, or a list of them '
+            f"(got {after!r})."
         )
+    for entry in entries:
+        if "." in entry:
+            continue
+        other = columns_by_name.get(entry)
+        if other is None:
+            raise ValueError(
+                f'{label}: "after" names {entry!r}, which is not a column of {table_name}.'
+            )
+        if not _is_temporal_type(_base_type(other.data_type)):
+            raise ValueError(
+                f'{label}: "after" names {entry!r}, which is not a date or timestamp column.'
+            )
 
 
 def _check_when(

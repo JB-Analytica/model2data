@@ -97,14 +97,13 @@ document keeps saying the version it says and pointing at that version's schema;
 uses `when` says `model2data: 0.4.0`, and `when` in a document that says 0.2 or 0.3 is an error. A
 writer writes the version the document was read with, and 0.4.0 once it uses `when`.
 
-0.5.0 adds a column's [`after_parent`](#references), and nothing else in the document: a
-0.2, 0.3 or 0.4 document is a 0.5.0 document that does not use it. A document that uses it says
-`model2data: 0.5.0`, and `after_parent` in a document that says an earlier version is an
-error. A writer writes the version the document was read with, and 0.5.0 once it uses
-`after_parent`. 0.5.0 also says two things about the generated data of every document, as
-until 1.0.0 a minor release may: a child row's creation date is not before its parents' (see
-[References](#references)), and an integer primary key numbers the rows 1 to n, in order (see
-[Keys](#keys)).
+0.5.0 adds two forms of a column's [`after`](#references): a parent's column,
+`<table>.<column>`, and a list. A 0.2, 0.3 or 0.4 document is a 0.5.0 document that uses
+neither, and reads as it always read. A document that uses either says `model2data: 0.5.0`,
+and either in a document that says an earlier version is an error. A writer writes the
+version the document was read with, and 0.5.0 once it uses either. 0.5.0 also says, of the
+generated data of every document, as until 1.0.0 a minor release may, that an integer primary
+key numbers the rows 1 to n, in order (see [Keys](#keys)).
 
 0.2.0 replaced 0.1.0, which carried hints as JSON inside DBML notes. See
 [From 0.1](#from-01).
@@ -185,19 +184,25 @@ reference is generated like any foreign key -- every non-null child value is dra
 values the parent column actually holds, so each one exists in the parent -- but it does not
 imply one parent row per value, as a reference onto a key does.
 
-A child row comes into being on or after the parent rows it points at (spec 0.5.0): an order
-is not placed before its customer signed up. A table's **creation column** is its first date
-or timestamp column without `after` whose name puts it at the created stage (`created_at`,
-`signup_date`, `start_date`: the engine's stage words), or, when none does, its first without
-`after` whose name puts it at no stage (`order_date`), a birth date excepted; a table whose
-dates all follow something, or are all updated- or closed-stage, has none. On every row, the
-child's creation column is not before the creation column of the parent row each foreign key
-points at, when the key references the parent's primary key or a unique column and the parent
-has a creation column. A date compared with a timestamp compares by day. A null foreign key,
-a self-reference, a foreign key that breaks a cycle of references and a parent without a
-creation column constrain nothing. The child's later dates follow its creation date as they
-always do. `after_parent: false` on the creation column leaves it free of its parents. How
-the engine keeps the child's own shape while doing so is the engine's (see
+A date can be kept on or after a date of the parent row it points at: `after:
+customers.created_at` on `orders.order_date` places no order before its customer signed up
+(spec 0.5.0). `after` names a column of the same row, a parent's column as `<table>.<column>`
+(a column path: the last `.` separates the column), or a list of them, all of which the value
+is not before. A parent's column is read on the row the child's foreign key points at, so:
+
+- the named table is reached through exactly one foreign key of one column, onto the parent's
+  primary key, a one-column key, or a unique column. A table with two foreign keys to the parent
+  (`sender_id` and `receiver_id` onto `users`) cannot say which row it means, and it is an
+  error naming them; so is a parent reached only through a foreign key of several columns, or
+  through a reference onto a column that is no key;
+- the named column is a date or timestamp; a date compared with a timestamp compares by day;
+- a row whose foreign key is null is not constrained;
+- the named table is not the column's own: a column of the same row is named without a table,
+  and a parent row in the same table (a self-reference) is not followed;
+- two tables' `after`s must not name each other's columns (a cycle), and the parent must not be
+  generated after the child (a cycle of foreign keys broken at the very foreign key followed).
+
+How the engine keeps the child's own shape while doing so is the engine's (see
 `model2data.generate.parents`).
 
 A foreign key over several columns is written on its table under `foreign_keys`, pairing
@@ -298,7 +303,7 @@ orders:
 - A day's new rows continue the existing ones: an integer key continues after the largest value
   held, any other unique value differs from every value held, and a foreign key points at a row
   that exists by then, one inserted the same day included (parents are inserted before
-  children), and a new row's creation column is not before that parent's. A foreign key that
+  children), and a new row's `after` of a parent's column holds on that parent. A foreign key that
   must be unique takes each parent once, so a table whose parents
   run out inserts fewer rows that day. Every date and timestamp column of a new row falls on the
   day (a timestamp at any time of it, weighted toward working hours when the run shape has
@@ -419,8 +424,9 @@ reports each failure with the path of the value (`tables.orders.columns.status.g
 3. A `keys` entry names columns of its own table.
 4. Every hint sits on a column of a kind it applies to.
 5. Every key of `weights` is a member of the column's enum.
-6. `after` names another temporal column of the same table, and the `after` hints of a table do
-   not form a cycle.
+6. Each entry of an `after` names another temporal column of the same table, or a temporal
+   column of a parent table reached as [References](#references) says; the `after` hints of a
+   table do not form a cycle, and two tables' `after`s do not name each other's columns.
 7. On an integer column, `min` and `max` are whole numbers, and `min` does not exceed `max` once
    a bound left out takes its default (0 and 100).
 8. `null_rate` is only on a nullable column (it would otherwise have no rows to null).
@@ -460,6 +466,13 @@ conforms.
 2. A `grain` contains no key of its table (its primary key, a `keys` entry, or a `unique`
    column). The generator does not read `grain`, so generated rows may repeat it; declaring it
    as a key too makes them unique.
+3. A table reaches a parent through one one-column foreign key onto a key, the parent has a
+   date or timestamp that reads as its creation (by the engine's stage words, as `created_at`,
+   or else its first that names no later stage), the table's own first such date has no `after`
+   naming that parent, and no other column's `after` names it: the child's date can fall
+   before its parent's. The warning names the `after` to add. A tool may offer it as a fix: the
+   engine's warning carries the path and value to set (and the spec version the document then
+   needs).
 
 ## From 0.1
 

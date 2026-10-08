@@ -1,5 +1,5 @@
-# yaml-language-server: $schema=https://www.jbanalytica.com/model2data/spec/0.2.0/model.schema.json
-model2data: 0.2.0
+# yaml-language-server: $schema=https://www.jbanalytica.com/model2data/spec/0.5.0/model.schema.json
+model2data: 0.5.0
 name: coffee_webshop
 description: >
   A Belgian specialty-coffee roaster's customers, catalogue, orders and reviews.
@@ -80,7 +80,7 @@ tables:
       order_date:
         type: timestamp
         not_null: true
-        generate: {business_hours: true, seasonality: 0.5}
+        generate: {business_hours: true, seasonality: 0.5, after: customers.created_at}
       shipped_at:
         type: timestamp
         generate: {after: order_date}

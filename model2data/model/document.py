@@ -247,19 +247,25 @@ def uses_0_4(model: Model) -> bool:
 
 
 def uses_0_5(model: Model) -> bool:
-    """Whether the model uses what spec 0.5.0 added: a column's `after_parent`."""
+    """Whether the model uses what spec 0.5.0 added: a list, or a parent's column, in `after`."""
     return any(
-        "after_parent" in column.generate
+        uses_0_5_after(column.generate.get("after"))
         for table in model.tables.values()
         for column in table.columns.values()
     )
+
+
+def uses_0_5_after(after: Any) -> bool:
+    """Whether an `after` is in a form spec 0.5.0 added: a list, or `<table>.<column>`."""
+    return isinstance(after, list) or (isinstance(after, str) and "." in after)
 
 
 def document_version(model: Model) -> Any:
     """The version the model's document is written against.
 
     The version the model was read with, unless the model uses what that
-    version does not have: 0.5.0 when it uses `after_parent` and was read as
+    version does not have: 0.5.0 when it uses a list or a parent's column in
+    `after` and was read as
     0.2-0.4, 0.4.0 when it uses `when` and was read as 0.2 or 0.3, 0.3.0 when it uses `defects` or `incremental.history` and was read as
     0.2. A document without them is written as the version it was, as always.
     """

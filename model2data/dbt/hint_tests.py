@@ -12,17 +12,16 @@ What becomes a test, and what does not:
 |---------------------------|----------------------------------------|-----------|
 | `generate.min` / `max`    | `model2data_between`                   | none      |
 | `generate.after: other`   | `model2data_not_before`                | none      |
+| `generate.after: table.column` | `model2data_not_before_parent`    | none      |
 | `generate.null_rate`      | `model2data_max_null_share`            | yes       |
 | `generate.distinct: n`    | `model2data_max_distinct`              | none      |
 | `generate.when`           | `model2data_when`                      | none      |
 | table `grain`             | `model2data_unique_combination`        | none      |
-| a creation date after its parents' | `model2data_not_before_parent` | none |
 
-The last one comes from no hint: it is what generation keeps on every table
-whose creation date follows a parent's (see `model2data.generate.parents`), one
-test per foreign key it follows, on the child's creation column. It needs the
-model's references, so a caller passing bare tables passes `refs` too; a column
-with `after_parent: false` gets none.
+An `after` listing several columns writes one test for each. A parent's column
+(`after: customers.created_at`, see `model2data.generate.parents`) is tested
+through the foreign key that reaches it, so that test needs the model's
+references: a caller passing bare tables passes `refs` too.
 
 A column with `when` and `null_rate` has its null share tested among the rows
 `when` matches (`model2data_when_max_null_share`), since only those rows can
@@ -51,6 +50,7 @@ from typing import Any, Literal, Optional, Union
 from model2data.generate import kinds
 from model2data.generate.core import parent_rules_for
 from model2data.generate.parents import ParentRule
+from model2data.generate.timeline import same_row_after
 from model2data.model.engine import EngineInputs, to_engine
 from model2data.model.types import Model
 from model2data.parse.dbml import ColumnDef, TableDef
@@ -75,10 +75,9 @@ class HintTest:
     `column` is None for a table-level test (grain). `test` is the generic
     test's name, `arguments` its parameters as dbt's `arguments:` block, and
     `hint` the hint it comes from (`min`, `max`, `after`, `null_rate`,
-    `distinct`, `when`, `grain`, or `after_parent` for a creation date that
-    follows a parent's). `min` and `max` of one column share one test.
+    `distinct`, `when`, `grain`). `min` and `max` of one column share one test.
     `parent` is the `(table, column)` a test looks rows up in: the parent's key
-    for `after_parent`, None for every other test.
+    for `model2data_not_before_parent`, None for every other test.
     """
 
     table: str
@@ -107,8 +106,8 @@ def hint_tests_for(
     `to_engine(model).tables`, or the renamed tables the CLI hands
     `generate_dbt_yml`). Table-level tests follow the table's column tests.
     With `tables`, `refs` are the references as `to_engine` gives them; without
-    them no `after_parent` test is written (a `Model` or `EngineInputs` brings
-    its own).
+    them no test of a parent's column is written (a `Model` or `EngineInputs`
+    brings its own).
 
     `tolerance` is the absolute slack of the statistical test (the null share
     may be `null_rate + tolerance`); hard constraints take none. Severity is
@@ -131,11 +130,11 @@ def hint_tests_for(
     for key, table in tables.items():
         by_name = {column.name: column for column in table.columns}
         names = set(by_name)
-        rule = rules.get(key)
+        parents = {rule.column: rule for rule in rules.get(key, [])}
         for column in table.columns:
             found.extend(_column_tests(key, column, by_name, tolerance))
-            if rule is not None and rule.column == column.name:
-                found.extend(_parent_tests(key, rule))
+            if column.name in parents:
+                found.extend(_parent_tests(key, parents[column.name]))
         grain = (table.note or {}).get("grain")
         if grain and all(name in names for name in grain):
             found.append(
@@ -173,8 +172,7 @@ def _column_tests(
                 )
             )
 
-    after = note.get("after")
-    if isinstance(after, str) and after in kinds_of and after != column.name:
+    for after in [a for a in same_row_after(note) if a in kinds_of and a != column.name]:
         arguments: dict[str, Any] = {"other": after}
         # The generator compares a date with a timestamp at day granularity.
         if (
@@ -230,7 +228,7 @@ def _column_tests(
 
 
 def _parent_tests(table: str, rule: ParentRule) -> list[HintTest]:
-    """One `model2data_not_before_parent` test per foreign key the creation date follows."""
+    """One `model2data_not_before_parent` test per parent column the `after` names."""
     tests = []
     for link in rule.links:
         arguments: dict[str, Any] = {
@@ -247,7 +245,7 @@ def _parent_tests(table: str, rule: ParentRule) -> list[HintTest]:
                 rule.column,
                 "model2data_not_before_parent",
                 arguments,
-                "after_parent",
+                "after",
                 parent=(link.parent_table, link.parent_key),
             )
         )

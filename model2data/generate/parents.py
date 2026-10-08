@@ -1,28 +1,27 @@
-"""A child row comes into being on or after the parent rows it points at.
+"""A cross-table `after`: a child's date on or after the parent row it points at.
 
 An order placed before its customer signed up, a review written before the
-product existed: each column is plausible on its own and the pair is not. So a
-table's **creation column** (see `generate.timeline.creation_column`: its
-`created_at`, `signup_date`, or else its first date that follows nothing, such
-as `order_date`) is kept on or after the creation column of every parent row
-its foreign keys point at, on every row, by the rule `parent_rules` works out:
+product existed: each column is plausible on its own and the pair is not.
+`after: customers.created_at` on `orders.order_date` keeps every order on or
+after the `created_at` of the customer its foreign key points at; a list
+(`after: [orders.ordered_at, products.launched_at]`) keeps it after each, and
+may mix in columns of the row itself (`after: [placed_at, customers.created_at]`).
+`parent_rules` works out, per column, which foreign key reaches each parent:
 
-- The rule follows a foreign key onto a parent's primary or unique key (one
-  parent row per value), to a parent that has a creation column and is
-  generated before the child. A self-reference, a foreign key that breaks a
-  cycle (its parent is generated after the child), a parent without a date
-  and a reference onto a column that is no key are not followed; a null
-  foreign key constrains nothing.
-- `after_parent: false` on the child's creation column turns the rule off for
-  the table.
+- The parent is reached through exactly one one-column foreign key onto its
+  primary key or a unique column (one parent row per value), and is generated
+  before the child. Anything else is refused, naming the foreign keys when
+  there are several. A self-reference is not a parent: `after` names a column
+  of the row itself without a table. A null foreign key constrains nothing on
+  its row.
 - A date compared with a timestamp compares by day: a date is not before the
   timestamp's day, and a timestamp is not before the date's midnight.
 
 How a row is made to hold (`follow_parents`), keeping the child's own shape:
 
 1. A row that already holds keeps every value: the column was drawn exactly
-   as it is without the rule.
-2. A row whose date is before a parent's takes another parent through that
+   as it is without the hint.
+2. A row whose date is before its parent's takes another parent through that
    foreign key, one created on or before its date, drawn from the parents the
    column already points at (so a popular customer stays popular, and one
    created earlier has had longer to order). The child's date keeps its draw,
@@ -35,13 +34,12 @@ How a row is made to hold (`follow_parents`), keeping the child's own shape:
    weekdays) and, for a timestamp, the same hours. A parent created at the
    very end of the window gives a child at the very end of it, never past it.
 
-Because a kept row is a draw from the column's shape and a moved one is a draw
-from that shape cut at the parent, step 3 alone gives each row exactly the
-shape cut at its parent; step 2 keeps the column's shape whole wherever a
-parent allows it.
+A column that also follows a column of its own row (by `after` or by its
+name's stage) is then placed after both by `timeline.order_row_times`, which
+reads the parents' moments as one more thing to follow.
 
 All draws come from the table's own stream (seeded by `generate.core`), so the
-rule is as reproducible as the rest of the table.
+hint is as reproducible as the rest of the table.
 """
 
 from __future__ import annotations
@@ -49,7 +47,7 @@ from __future__ import annotations
 import random
 from bisect import bisect_right
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from itertools import accumulate
 from typing import Optional
@@ -69,7 +67,7 @@ from model2data.generate.timeline import (
     _resolve_anchor,
     _window_days,
     column_business_hours,
-    creation_column,
+    parent_after,
 )
 from model2data.parse.dbml import ColumnDef, TableDef
 
@@ -78,13 +76,13 @@ _TS_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 @dataclass(frozen=True)
 class ParentLink:
-    """One foreign key of a child along which its creation column follows a parent's.
+    """One parent column a child's `after` names, and the foreign key that reaches it.
 
     `fk` is the child's foreign-key column, `parent_key` the parent column it
-    references, `parent_column` the parent's creation column, of `parent_kind`
-    (`"date"` or `"timestamp"`). `unique` is true
-    when the foreign key takes each parent at most once (a one-to-one), so a
-    row cannot simply take another parent. `by_day` is true when the two
+    references, `parent_column` the column `after` names, of `parent_kind`
+    (`"date"` or `"timestamp"`). `unique` is true when the foreign key takes
+    each parent at most once (a one-to-one), so a row cannot simply take
+    another parent. `by_day` is true when the two
     columns compare by day (one is a date, the other a timestamp).
     """
 
@@ -99,7 +97,7 @@ class ParentLink:
 
 @dataclass(frozen=True)
 class ParentRule:
-    """A table's creation column (`column`, of `kind`) and the parents it follows."""
+    """A column (`column`, of `kind`) of `table` and the parent columns its `after` names."""
 
     table: str
     column: str
@@ -107,63 +105,104 @@ class ParentRule:
     links: tuple[ParentLink, ...]
 
 
-def after_parent_enabled(column: ColumnDef) -> bool:
-    """False when the column opts out with `after_parent: false`."""
-    return (column.note or {}).get("after_parent") is not False
+def parent_link(
+    tables: Mapping[str, TableDef],
+    fk_refs: list[dict],
+    table_name: str,
+    entry: tuple[str, str],
+) -> tuple[Optional[ParentLink], str]:
+    """The foreign key `table_name` reaches `entry`'s parent column through, or why none.
+
+    `entry` is `(parent table, parent column)` from a cross-table `after`.
+    Returns the link and an empty reason, or None and the reason, worded to
+    follow `names <table>.<column>, `.
+    """
+    parent, column = entry
+    parent_def = tables.get(parent)
+    if parent_def is None:
+        return None, f"and there is no table {parent}"
+    if parent == table_name:
+        return None, (
+            f"a column of {table_name} itself: name a column of the same row without its "
+            f"table (`after: {column}`); a parent row in the same table is not followed"
+        )
+    target = next((c for c in parent_def.columns if c.name == column), None)
+    if target is None:
+        return None, f"and {parent} has no column {column}"
+    parent_kind = kinds.temporal_kind(target.data_type)
+    if target.enum_values or parent_kind is None:
+        return None, "which is not a date or timestamp column"
+    refs = [r for r in fk_refs if r["source_table"] == table_name and r["target_table"] == parent]
+    if not refs:
+        return None, (
+            f"and {table_name} has no foreign key to {parent}: `after` reaches another table "
+            "only through a foreign key of the row"
+        )
+    if len(refs) > 1:
+        names = ", ".join(r["source_column"] for r in refs)
+        return None, (
+            f"and {table_name} reaches {parent} through more than one foreign key ({names}): "
+            f"`after` cannot tell which {parent} row it means"
+        )
+    (ref,) = refs
+    if _key_kind(dict(tables), ref) not in ("pk", "unique"):
+        return None, (
+            f"and {ref['source_column']} references {parent}.{ref['target_column']}, which is "
+            f"not a key: `after` needs the one {parent} row the foreign key points at"
+        )
+    fk_column = next(c for c in tables[table_name].columns if c.name == ref["source_column"])
+    link = ParentLink(
+        fk=fk_column.name,
+        parent_table=parent,
+        parent_key=ref["target_column"],
+        parent_column=column,
+        parent_kind=parent_kind,
+        unique="pk" in fk_column.settings or "unique" in fk_column.settings,
+        by_day=False,
+    )
+    return link, ""
 
 
 def parent_rules(
     tables: Mapping[str, TableDef], fk_refs: list[dict], order: list[str]
-) -> dict[str, ParentRule]:
-    """The rule of every table it applies to, by table key.
+) -> dict[str, list[ParentRule]]:
+    """The cross-table `after` of every column that has one, by table key.
 
     `fk_refs` are the foreign keys as `generate.relationships.classify_refs`
-    finds them, `order` the order tables are generated in: a parent counts
-    only when it comes before the child, which leaves out a self-reference and
-    a foreign key that breaks a cycle (its parent is drawn after the child).
+    finds them, `order` the order tables are generated in; the hints are the
+    ones `generate.hints.validate_hints` accepted. Raises ValueError for a
+    parent generated after the table (their foreign keys form a cycle, broken
+    at the very key followed).
     """
     position = {name: index for index, name in enumerate(order)}
-    rules: dict[str, ParentRule] = {}
+    rules: dict[str, list[ParentRule]] = {}
     for table_name, table_def in tables.items():
-        column = creation_column(table_def)
-        if column is None or not after_parent_enabled(column):
-            continue
-        kind = kinds.temporal_kind(column.data_type)
-        assert kind is not None
-        by_name = {c.name: c for c in table_def.columns}
-        links: list[ParentLink] = []
-        for ref in fk_refs:
-            if ref["source_table"] != table_name:
+        for column in table_def.columns:
+            entries = parent_after(column.note)
+            if not entries:
                 continue
-            parent = ref["target_table"]
-            parent_def = tables.get(parent)
-            fk_column = by_name.get(ref["source_column"])
-            if (
-                parent_def is None
-                or fk_column is None
-                or parent == table_name
-                or position.get(parent, len(order)) >= position.get(table_name, -1)
-                or _key_kind(dict(tables), ref) not in ("pk", "unique")
-            ):
-                continue
-            parent_column = creation_column(parent_def)
-            if parent_column is None:
-                continue
-            parent_kind = kinds.temporal_kind(parent_column.data_type)
-            assert parent_kind is not None
-            link = ParentLink(
-                fk=fk_column.name,
-                parent_table=parent,
-                parent_key=ref["target_column"],
-                parent_column=parent_column.name,
-                parent_kind=parent_kind,
-                unique="pk" in fk_column.settings or "unique" in fk_column.settings,
-                by_day=parent_kind != kind,
+            # `validate_hints` has refused an `after` on any other column, and
+            # any entry `parent_link` finds no link for.
+            kind = kinds.temporal_kind(column.data_type)
+            assert kind is not None
+            label = f"{table_name}.{column.name}"
+            links: list[ParentLink] = []
+            for entry in entries:
+                link, _ = parent_link(tables, fk_refs, table_name, entry)
+                assert link is not None
+                named = f"{entry[0]}.{entry[1]}"
+                if position[link.parent_table] > position[table_name]:
+                    raise ValueError(
+                        f'{label}: "after" names {named}, and {link.parent_table} is generated '
+                        f"after {table_name}: their foreign keys form a cycle, broken at "
+                        f"{link.fk}, whose parents are drawn once {table_name} exists."
+                    )
+                link = replace(link, by_day=link.parent_kind != kind)
+                if link not in links:
+                    links.append(link)
+            rules.setdefault(table_name, []).append(
+                ParentRule(table_name, column.name, kind, tuple(links))
             )
-            if link not in links:
-                links.append(link)
-        if links:
-            rules[table_name] = ParentRule(table_name, column.name, kind, tuple(links))
     return rules
 
 
@@ -183,7 +222,7 @@ def moments(series: pd.Series, kind: str) -> pd.Series:
 def parent_floor(
     frame: pd.DataFrame, link: ParentLink, parents: Mapping[str, pd.DataFrame]
 ) -> pd.Series:
-    """Per row of `frame`: the creation moment of the parent its `link` points at.
+    """Per row of `frame`: the moment of `link`'s parent column on the row it points at.
 
     NaT where the foreign key is null, points at no row, or the parent's date
     is null. By day (midnight) when `link.by_day`.
@@ -226,17 +265,16 @@ def follow_parents(
     as_of: AsOf = None,
     time_profile: Optional[TimeProfile] = None,
     repick: bool = True,
-) -> list:
-    """Make every row of `df` hold `rule`, in place; return the index labels whose date moved.
+) -> tuple[pd.Series, list]:
+    """Make every row of `df` hold `rule`, in place.
 
-    See the module docstring for how. `parents` holds the generated parent
-    tables. `repick` false skips step 2 (taking another parent), for a pass
-    that must leave the foreign keys as they are.
+    Returns each row's latest parent moment (NaT where none applies), for
+    `timeline.order_row_times` to place the column after too, and the index
+    labels whose date moved. See the module docstring for how. `parents`
+    holds the generated parent tables. `repick` false skips step 2 (taking
+    another parent), for a pass that must leave the foreign keys as they are.
     """
     own = moments(df[rule.column], rule.kind)
-    if not bool(own.notna().any()):
-        return []
-
     floors: list[pd.Series] = []
     for link in rule.links:
         floor = parent_floor(df, link, parents)
@@ -248,7 +286,7 @@ def follow_parents(
     lowest = pd.concat(floors, axis=1).max(axis=1) if len(floors) > 1 else floors[0]
     late = own.notna() & lowest.notna() & (own < lowest)
     if not bool(late.any()):
-        return []
+        return lowest, []
 
     window = _Window(rule.kind, column, as_of, time_profile)
     positions = np.flatnonzero(late.to_numpy())
@@ -258,7 +296,7 @@ def follow_parents(
         lower = pd.Timestamp(floor_values[position]).to_pydatetime()
         values[position] = _stored(window.draw(lower), rule.kind)
     df[rule.column] = pd.Series(values, index=df.index, dtype=object)
-    return df.index[positions].tolist()
+    return lowest, df.index[positions].tolist()
 
 
 def _repick(
@@ -389,11 +427,11 @@ class _Window:
 
 
 # ---------------------------------------------------------
-# Later days: a new row's timestamp on its day
+# Later days, and the defects: the parents' moments per row
 # ---------------------------------------------------------
 def floor_on_day(
     frame: pd.DataFrame, rule: ParentRule, parents: Mapping[str, pd.DataFrame]
 ) -> pd.Series:
-    """Per new row: the latest creation moment among the parents it points at (NaT for none)."""
+    """Per row: the latest moment among the parent columns `rule` names (NaT for none)."""
     floors = [parent_floor(frame, link, parents) for link in rule.links]
     return pd.concat(floors, axis=1).max(axis=1) if len(floors) > 1 else floors[0]

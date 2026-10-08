@@ -7,7 +7,7 @@
   "required": ["model2data", "tables"],
   "properties": {
     "model2data": {
-      "description": "The spec version the document is written against, `MAJOR.MINOR` or `MAJOR.MINOR.PATCH`. Write it as `0.5.0`. A 0.2, 0.3 or 0.4 document is still read, and reads as it did: 0.3.0 only adds `defects` and `incremental.history`, which a 0.2 document cannot use, 0.4.0 only a column's `when`, which a 0.2 or 0.3 document cannot use, and 0.5.0 only a column's `after_parent`, which a 0.2, 0.3 or 0.4 document cannot use. A reader that met the YAML number 0.5 reads it as `0.5`.",
+      "description": "The spec version the document is written against, `MAJOR.MINOR` or `MAJOR.MINOR.PATCH`. Write it as `0.5.0`. A 0.2, 0.3 or 0.4 document is still read, and reads as it did: 0.3.0 only adds `defects` and `incremental.history`, which a 0.2 document cannot use, 0.4.0 only a column's `when`, which a 0.2 or 0.3 document cannot use, and 0.5.0 only an `after` that is a list or names a parent's column, which a 0.2, 0.3 or 0.4 document cannot use. A reader that met the YAML number 0.5 reads it as `0.5`.",
       "oneOf": [
         { "type": "string", "pattern": "^0\\.[2345](\\.(0|[1-9][0-9]*))?$" },
         { "enum": [0.2, 0.3, 0.4, 0.5] }
@@ -75,6 +75,12 @@
       "type": "string",
       "pattern": "^[^./\\\\\\u0000-\\u001f\\u007f]+(\\.[^./\\\\\\u0000-\\u001f\\u007f]+){1,2}$",
       "examples": ["customers.id", "raw.users.id"]
+    },
+    "afterTarget": {
+      "description": "What an `after` names: a column of the same table (a name), or a column of a parent table (a column path: `table.column` or `schema.table.column`).",
+      "type": "string",
+      "pattern": "^[^./\\\\\\u0000-\\u001f\\u007f]+(\\.[^./\\\\\\u0000-\\u001f\\u007f]+){0,2}$",
+      "examples": ["placed_at", "customers.created_at"]
     },
     "color": {
       "description": "A hex colour literal: `#rgb`, `#rgba`, `#rrggbb` or `#rrggbbaa`. Quote it in YAML, where `#` starts a comment.",
@@ -486,14 +492,23 @@
           "x-model2data-applies-to": ["non-key"]
         },
         "skew": {
-          "description": "How unevenly the foreign key's values spread over the parent rows, replacing the run's skew for this column. 0: every parent equally likely. Above 0: the parents, in a seeded random order, are weighted exp(−8 · skew² · i / n) by rank i of n; at 0.8 the top fifth of parents hold roughly 65–75% of the rows, at 1.0 roughly 80%. Where the child's creation date follows its parent's (see `after_parent`), the parents created earliest also take the rows dated before later ones existed, so the spread is steeper.",
+          "description": "How unevenly the foreign key's values spread over the parent rows, replacing the run's skew for this column. 0: every parent equally likely. Above 0: the parents, in a seeded random order, are weighted exp(−8 · skew² · i / n) by rank i of n; at 0.8 the top fifth of parents hold roughly 65–75% of the rows, at 1.0 roughly 80%. Where the child's date has an `after` naming the parent's date, the parents created earliest also take the rows dated before later ones existed, so the spread is steeper.",
           "$ref": "#/$defs/fraction",
           "x-model2data-applies-to": ["foreign-key"]
         },
         "after": {
-          "description": "Another temporal column of the same table. In every row, this column's value is not earlier than that column's. A date column that follows a timestamp compares by day: it is not before the timestamp's date. The `after` hints of one table must not form a cycle.",
-          "$ref": "#/$defs/name",
-          "x-model2data-applies-to": ["temporal"]
+          "description": "What this column is not earlier than, in every row: another temporal column of the same table (`placed_at`), a temporal column of a parent table as `<table>.<column>` (`customers.created_at`), or a list of them, every one of which it is not earlier than. A parent's column is read on the parent row the row's foreign key points at, so the table reaches that parent through exactly one one-column foreign key onto its primary key or a unique column; a null foreign key constrains nothing. A date compared with a timestamp compares by day: a date is not before the timestamp's date, a timestamp not before the date's midnight. The `after` hints of one table must not form a cycle, nor may two tables' `after`s name each other's columns. A list or a parent's column is spec 0.5.0.",
+          "oneOf": [
+            { "$ref": "#/$defs/afterTarget" },
+            {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": { "$ref": "#/$defs/afterTarget" }
+            }
+          ],
+          "x-model2data-applies-to": ["temporal"],
+          "examples": ["placed_at", "customers.created_at", ["placed_at", "customers.created_at"]]
         },
         "business_hours": {
           "description": "Replaces the run's business-hours setting for this column. When true, weekend days weigh 0.3 against a weekday's 1, and a timestamp's hour is drawn from a working-day profile (busiest 08:00–17:59, a lunch dip, rare at night) rather than evenly.",
@@ -509,11 +524,6 @@
         "seasonality": {
           "description": "Replaces the run's seasonality for this column. A day weighs 1 + seasonality · cos(2π (d − 320) / 365.25), d its day of the year: an annual peak on 16 November. 0 is no seasonal pattern; 1 the strongest.",
           "$ref": "#/$defs/fraction",
-          "x-model2data-applies-to": ["temporal"]
-        },
-        "after_parent": {
-          "description": "Whether this column, the date a row comes into being with, is kept on or after the creation date of every parent row the row's foreign keys point at: an order is not placed before its customer signed up (see References in the spec README). `true` is the default; `false` draws the column on its own, its parents' dates aside. It sits only on its table's creation column: the first date or timestamp column without `after` whose name puts it at the created stage (`created_at`, `signup_date`, `start_date`), or, when none does, the first without `after` whose name puts it at no stage (`order_date`), a birth date excepted. Spec 0.5.0.",
-          "type": "boolean",
           "x-model2data-applies-to": ["temporal"]
         },
         "transitions": {

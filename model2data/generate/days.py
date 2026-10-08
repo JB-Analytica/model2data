@@ -334,7 +334,7 @@ class _Engine:
     day_date: date = field(default_factory=date.today)
     warnings: list[str] = field(default_factory=list)
     states: dict[str, pd.DataFrame] = field(default_factory=dict)
-    rules: dict[str, ParentRule] = field(default_factory=dict)
+    rules: dict[str, list[ParentRule]] = field(default_factory=dict)
 
     # -- one table, one day ---------------------------------------------
     def advance(
@@ -733,28 +733,26 @@ class _Engine:
     def _after_parents(
         self, table: TableDef, frame: pd.DataFrame, stamps: dict[str, pd.Series]
     ) -> None:
-        """A new row's creation timestamp is not before its parents' (see generate.parents).
+        """A new row's timestamp is not before the parent its `after` names (generate.parents).
 
         Only a parent inserted the same day can be later: every other one is
         from an earlier day. Such a row is moved to a time between its latest
         parent and the end of the day, evenly. A date column falls on the day,
         which is never before a parent's.
         """
-        rule = self.rules.get(table.name)
-        if rule is None or rule.column not in stamps:
-            return
-        floor = floor_on_day(frame, rule, self.states)
-        current = stamps[rule.column]
-        late = current.notna() & floor.notna() & (current < floor)
-        if not bool(late.any()):
-            return
         end = pd.Timestamp(self._day_start()) + pd.Timedelta(seconds=86399)
-        moved = current.copy()
-        for label in frame.index[late.to_numpy()]:
-            lower = floor.at[label]
-            room = max(0, int((end - lower).total_seconds()))
-            moved.at[label] = lower + pd.Timedelta(seconds=random.randint(0, room))
-        stamps[rule.column] = moved
+        for rule in self.rules.get(table.name, []):
+            if rule.column not in stamps:
+                continue
+            floor = floor_on_day(frame, rule, self.states)
+            current = stamps[rule.column]
+            late = current.notna() & floor.notna() & (current < floor)
+            moved = current.copy()
+            for label in frame.index[late.to_numpy()]:
+                lower = floor.at[label]
+                room = max(0, int((end - lower).total_seconds()))
+                moved.at[label] = lower + pd.Timedelta(seconds=random.randint(0, room))
+            stamps[rule.column] = moved
 
     def _timestamps(self, count: int, profile: TimeProfile) -> pd.DatetimeIndex:
         if profile.business_hours:

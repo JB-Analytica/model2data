@@ -1,5 +1,5 @@
-# yaml-language-server: $schema=https://www.jbanalytica.com/model2data/spec/0.2.0/model.schema.json
-model2data: 0.2.0
+# yaml-language-server: $schema=https://www.jbanalytica.com/model2data/spec/0.5.0/model.schema.json
+model2data: 0.5.0
 description: >
   A multi-tenant SaaS platform: organizations, their users, subscriptions, invoices, plan limits, API usage and an audit log.
 
@@ -38,7 +38,10 @@ tables:
         not_null: true
         generate: {min: 0, max: 999}
       status: subscription_status
-      current_period_start: {type: timestamp, not_null: true}
+      current_period_start:
+        type: timestamp
+        not_null: true
+        generate: {after: organizations.created_at}
       current_period_end: timestamp
 
   invoices:
@@ -51,7 +54,10 @@ tables:
         not_null: true
         generate: {min: 0, max: 999}
       status: invoice_status
-      created_at: {type: timestamp, not_null: true}
+      created_at:
+        type: timestamp
+        not_null: true
+        generate: {after: organizations.created_at}
 
   feature_limits:
     columns:
@@ -91,4 +97,7 @@ tables:
       event_type: {type: audit_event_type, not_null: true}
       resource_id: text
       resource_type: text
-      created_at: {type: timestamp, not_null: true}
+      created_at:
+        type: timestamp
+        not_null: true
+        generate: {after: organizations.created_at}

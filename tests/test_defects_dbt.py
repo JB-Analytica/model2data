@@ -191,8 +191,10 @@ PARENT_TEST = (
 def test_the_parent_dates_test_passes_clean_and_fails_a_customer_created_late(
     tmp_path, monkeypatch
 ):
-    """Orders follow their customers' `created_at`: dbt agrees, and catches one that does not."""
-    project = _generate(tmp_path, monkeypatch, SHOP)
+    """`after: customers.created_at` holds: dbt agrees, and catches an order that does not."""
+    model = load(SHOP)
+    model.tables["orders"].columns["ordered_at"].generate["after"] = "customers.created_at"
+    project = _generate(tmp_path, monkeypatch, dump(model))
     assert (project / "macros" / "model2data_parent_tests.sql").exists()
     assert _build(project) == set()
 

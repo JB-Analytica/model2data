@@ -838,7 +838,7 @@ def main(
 
 def _spec_of(file: Path) -> str:
     """The spec a conforming model is written against: 0.5.0, 0.4.0, 0.3.0, or 0.2.0 (DBML
-    without `when` or `after_parent` included)."""
+    without `when` or a 0.5.0 `after` included)."""
     version = str(load(file).version)
     for minor in ("0.5", "0.4", "0.3"):
         if version.startswith(minor):
@@ -1030,7 +1030,8 @@ def convert_command(
     force: bool = typer.Option(False, "--force", help="Overwrite the output file if it exists."),
 ):
     """Convert a model -- DBML, typically -- to a .model2data.yml document (spec 0.2.0, or
-    0.3.0 when it has defects, 0.4.0 when it has `when`, 0.5.0 when it has `after_parent`)."""
+    0.3.0 when it has defects, 0.4.0 when it has `when`, 0.5.0 when an `after` is a list or
+    names a parent's column)."""
     try:
         model = load(file)
     except ModelError as error:

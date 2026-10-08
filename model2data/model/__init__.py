@@ -17,7 +17,7 @@ from model2data.model.dbml import from_dbml
 from model2data.model.document import from_dict, to_dict
 from model2data.model.dump import dump
 from model2data.model.engine import EngineInputs, run_as_of, to_engine
-from model2data.model.errors import Issue, ModelError
+from model2data.model.errors import Issue, ModelError, Suggestion
 from model2data.model.reader import load, validate
 from model2data.model.types import (
     DEFECT_PRESETS,
@@ -58,6 +58,7 @@ __all__ = [
     "Relationship",
     "Run",
     "Shape",
+    "Suggestion",
     "Table",
     "dump",
     "from_dbml",

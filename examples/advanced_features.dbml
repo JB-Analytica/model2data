@@ -48,7 +48,7 @@ Table time_entries {
   id bigint [pk, not null]
   project_id bigint [not null]
   employee_id bigint [not null]
-  entry_date date [not null]
+  entry_date date [not null, note: '{"after": "employees.hire_date"}']
   hours_worked numeric [not null, note: '{"min": 0.5, "max": 8}']
   billable boolean
 }
