@@ -32,11 +32,18 @@ review_date:
   generate: {after: [orders.ordered_at, products.launched_at]}
 ```
 
+Use it wherever a child cannot exist before its parent: an order before its customer signed up,
+a subscription before its organisation, a time entry before the employee was hired. Leave it off
+where the child's date has no such tie (an event that may predate the account it is later linked
+to).
+
 A list follows every entry, and may mix columns of the row itself (`after: [placed_at,
 customers.created_at]`). The table must reach each parent through exactly one one-column
 foreign key onto the parent's primary key or a unique column: a table with `sender_id` and
 `receiver_id` both onto `users` cannot say which user it means, and validation says so, naming
-both. A date compared with a timestamp compares by day. A null foreign key constrains nothing,
+both. Choosing one of several foreign keys to the same parent is not built yet: until it is, a
+table like that cannot use a cross-table `after` on that parent, and keeps its own dates. A date
+compared with a timestamp compares by day. A null foreign key constrains nothing,
 and a self-reference is not a parent: a column of the same row is named without its table.
 
 The child keeps its own shape. A row drawn before its parent takes another parent, one created
@@ -56,6 +63,13 @@ names the `after` to add:
   - tables.orders.columns.order_date: can fall before customers.created_at (the customers row
     it points at through customer_id); add `after: customers.created_at` to keep it after
 ```
+
+To act on it, put the `after` the warning names in `generate` on the column its path points at
+(a column that already has an `after` gets a list: `after: [placed_at, customers.created_at]`),
+write `model2data: 0.5.0`, and validate again. A tool reading the issues gets the same edit as
+`Issue.suggestion` (the `path` to set, the `value`, and the `spec` version to write). The warning
+only says the dates *can* disagree; if the child may legitimately predate its parent, leave it.
+Generation itself is unchanged by the warning.
 
 A column that only has a value in some states says which with `when` (spec 0.4.0: the model says
 `model2data: 0.4.0`): it holds a value on
