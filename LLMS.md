@@ -161,19 +161,22 @@ shipped_at timestamp [note: '{"after": "ordered_at"}']
 A birth-date-style column (`birth_date`, `date_of_birth`, `dob`) is never folded into this chain —
 it describes the person, not the record.
 
-**A child row is never created before its parents.** A table's creation column (its first
-date/timestamp without `after` named like `created_at`/`signup_date`/`start_date`, else its first
-named for no stage, like `order_date`) is on or after the creation column of every parent row its
-foreign keys point at (onto a pk or unique key): no order before its customer's `created_at`.
-Rows drawn too early take another, older parent, so the child's own growth/seasonality/business
-hours hold; a row with none (or a one-to-one) moves its date. Not followed: self-references, null
-foreign keys, parents without a date, cycle-breaking foreign keys. Opt out per table on the
-creation column, spec 0.5.0 (`model2data: 0.5.0` in YAML):
+**`after` can name a parent's column.** `<table>.<column>` reaches the parent row through the
+row's foreign key: `after: customers.created_at` keeps every order on or after its customer's
+sign-up. A list follows every entry, and may mix the row's own columns:
 ```dbml
-logged_at timestamp [note: '{"after_parent": false}']
+order_date timestamp [note: '{"after": "customers.created_at"}']
+shipped_at timestamp [note: '{"after": ["order_date", "customers.created_at"]}']
 ```
-With `--hint-tests`, each followed foreign key writes the dbt test `model2data_not_before_parent`.
-Integer primary keys are 1..N and every output lists rows in key order.
+The table must reach the parent through exactly one one-column foreign key onto its pk or a unique
+column (two, like `sender_id`/`receiver_id` to `users`, is an error naming them). Rows dated too
+early take an older parent, so the column's growth/seasonality/business hours hold; a row with
+none (or a one-to-one) moves its date. A null foreign key constrains nothing; a self-reference is
+not a parent (name the column without a table). In YAML it is spec 0.5.0 (`model2data: 0.5.0`).
+Validation warns where a child's first date can fall before a parent's `created_at`-like date,
+with the `after` to add. With `--hint-tests` each parent column writes the dbt test
+`model2data_not_before_parent`. Integer primary keys are 1..N and every output lists rows in key
+order.
 
 **Tie lifecycle columns to the status they belong to with `when`.** Without it, every nullable
 column is filled or nulled independently of the others, so a `todo` task gets a `completed_at`

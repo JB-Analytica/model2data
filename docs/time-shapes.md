@@ -19,31 +19,42 @@ shipped_at:
   generate: {after: ordered_at}
 ```
 
-A row is never created before the parent rows it points at: an order's `order_date` is on or
-after its customer's `created_at`, a review's `review_date` on or after the product's launch.
-It needs no hint. A table's **creation column** is its first date or timestamp without `after`
-whose name says created (`created_at`, `signup_date`, `start_date`, ...), else its first that
-names no later stage (`order_date`, `hire_date`); a child's creation column follows the creation
-column of each parent its foreign keys point at, through a foreign key onto the parent's
-primary or unique key, and its own later dates (`shipped_at`, `updated_at`) follow it as
-always. A date compared with a timestamp compares by day.
+`after` can also name a column of a parent table, as `<table>.<column>`: the value is then on
+or after that column on the parent row the row's foreign key points at, so no order is placed
+before its customer signed up (spec 0.5.0: the model says `model2data: 0.5.0`):
+
+```yaml
+order_date:
+  type: timestamp
+  generate: {after: customers.created_at}
+review_date:
+  type: date
+  generate: {after: [orders.ordered_at, products.launched_at]}
+```
+
+A list follows every entry, and may mix columns of the row itself (`after: [placed_at,
+customers.created_at]`). The table must reach each parent through exactly one one-column
+foreign key onto the parent's primary key or a unique column: a table with `sender_id` and
+`receiver_id` both onto `users` cannot say which user it means, and validation says so, naming
+both. A date compared with a timestamp compares by day. A null foreign key constrains nothing,
+and a self-reference is not a parent: a column of the same row is named without its table.
 
 The child keeps its own shape. A row drawn before its parent takes another parent, one created
-by then, from the parents the column already points at, so the order dates keep their growth,
+by then, from the parents the column already points at, so the dates keep their growth,
 seasonality and working hours exactly, and the customers who signed up early end up with more
 orders, as they would. Only a row no parent was created early enough for (or a one-to-one,
 which cannot change parent) moves its date, drawn again from the column's own shape on or
 after the parent's, and never past `as_of`. On days after the first, a new row whose parent was
 inserted the same day lands later that day than the parent.
 
-Self-references, nullable foreign keys left null, parents without a creation column and
-foreign keys that break a cycle are not followed. To draw a creation column on its own, as
-before 1.15, say so on it (spec 0.5.0: the model says `model2data: 0.5.0`):
+Without the hint, a child's dates are drawn on their own. `model2data validate` (and every run)
+warns where that can put a child's first date before its parent's `created_at`-like date, and
+names the `after` to add:
 
-```yaml
-logged_at:
-  type: timestamp
-  generate: {after_parent: false}
+```
+⚠️  shop.model2data.yml: 1 warning
+  - tables.orders.columns.order_date: can fall before customers.created_at (the customers row
+    it points at through customer_id); add `after: customers.created_at` to keep it after
 ```
 
 A column that only has a value in some states says which with `when` (spec 0.4.0: the model says

@@ -52,7 +52,7 @@ dbt package, so `dbt build` still works offline):
 | `generate: {distinct: n}` | `model2data_max_distinct`: at most `n` distinct values | none |
 | `generate: {when}` | `model2data_when`: null exactly where the condition does not hold (with `null_rate`, only there; its null share is then tested among the matching rows) | none |
 | `grain` on a table | `model2data_unique_combination` | none |
-| a creation date that follows its parents' (no hint: see [When things happen](time-shapes.md)) | `model2data_not_before_parent`, one per foreign key it follows, in `macros/model2data_parent_tests.sql`: no row dated before the parent row it joins to | none |
+| `generate: {after: table.column}` (a parent's column, see [When things happen](time-shapes.md)) | `model2data_not_before_parent`, one per parent column, in `macros/model2data_parent_tests.sql`: no row dated before the parent row it joins to | none |
 | an enum-typed column | `accepted_values` (always written) | none |
 
 `true_rate`, `weights`, `skew`, `distribution` and the temporal shape hints (`business_hours`,

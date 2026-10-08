@@ -8,18 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
-- **A child row is created on or after its parents.** An order is no longer placed before its
-  customer signed up (in `examples/ecommerce.model2data.yml` half the orders were). A table's
-  **creation column** is its first date or timestamp column without `after` whose name says the
-  row is created (`created_at`, `signup_date`, `start_date`, ...), or, when none does, its first
-  that names no later stage (`order_date`, `hire_date`); a birth date never is. On every row,
-  a child's creation column is on or after the creation column of each parent row its foreign
-  keys point at (a foreign key onto the parent's primary key or a unique column, to a parent
-  that has a creation column); with several parents, after the latest. A date compared with a
-  timestamp compares by day, and the child's later dates (`after`, updated/closed names) follow
-  its creation date as before. Not followed, and documented as such: self-references, nullable
-  foreign keys left null, parents without a creation column, and foreign keys that break a
-  cycle of references.
+- **`after` can name a parent's column.** `after: customers.created_at` on `orders.order_date`
+  keeps every order on or after the `created_at` of the customer its foreign key points at (in
+  `examples/ecommerce.model2data.yml`, half the orders used to predate their customer). `after`
+  takes a column of the same row as before, a parent's column as `<table>.<column>` (the last
+  `.` separates the column, so `raw.customers.created_at` works), or a list of either, all of
+  which the value is not before: `after: [orders.ordered_at, products.launched_at]`, or
+  `after: [placed_at, customers.created_at]`. A date compared with a timestamp compares by day.
+  - **Reaching the parent:** through exactly one one-column foreign key onto the parent's
+    primary key or a unique column. A null foreign key constrains nothing on its row. Errors,
+    in the style of the others, for an unknown table or column, a column that is no date, a
+    table the row has no foreign key to (or only a composite one, or one onto a column that is
+    no key), the column's own table (a column of the row is named without its table; a
+    self-reference is not followed), more than one foreign key to the parent (`messages`
+    reaching `users` through `sender_id` and `receiver_id` is an error naming both), two
+    tables whose `after`s name each other's columns, and a parent generated after the child
+    (a cycle of foreign keys broken at the very key followed).
   - **The child keeps its own shape.** A row whose date falls before its parent's takes another
     parent, one created by then, drawn from the parents the column already points at; its date
     keeps its draw, so growth, seasonality, business hours and the `as_of` window hold exactly.
@@ -27,27 +31,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
     parent) moves its date instead, drawn again from the column's own shape cut to the part of
     the window on or after the parent's; a parent created on the window's last day gives a child
     on that day, never past `as_of`. Parents created early collect more children, so a skewed
-    foreign key is steeper than before: on a coffee-webshop model with `skew: 0.8` and
-    customers growing over the year, the top fifth of customers hold about 80% of the orders
-    rather than 65%, while the orders' gift-season peak and growth are unchanged.
-  - **Days after the first** keep it too: a new row whose parent was inserted the same day lands
-    later that day than its parent.
-  - **`after_parent: false`** on the creation column draws it on its own, its parents aside, for
-    the table whose rows really can predate them (imported history, say). It is validated like
-    any hint: on a column that is not a date or timestamp, or a date that is not the table's
-    creation column, it is an error naming the column that is. It is new vocabulary, so it
-    needs **spec 0.5.0** (`model2data: 0.5.0`); a 0.2, 0.3 or 0.4 document using it is an error
-    naming the version to write, and reads exactly as before otherwise. DBML with an
-    `after_parent` note converts to 0.5.0. The schema's `$id` moves to `/spec/0.5.0/`.
-  - **dbt: `model2data_not_before_parent`.** With hint tests on (`--hint-tests`), each foreign key
-    a creation date follows writes a relationship-aware test on the child's creation column: no
-    row dated before the parent row it joins to (by day for a date against a timestamp; a key
-    several parent rows share counts its earliest, leaving duplicates to the `unique` test).
-    The macro ships in `macros/model2data_parent_tests.sql`, written only when a project has
-    such a test. `hint_tests_for(tables, refs=...)` takes the references for it when given bare
-    tables. The defects report checks it like every other test, so a defect that dates a row
-    before its parent lists it in `EXPECTED_FAILURES.md`; `late_arriving` takes rows that stay
-    clear of their parents first, so it still breaks no test where it can.
+    foreign key is steeper: on a coffee-webshop model with `skew: 0.8`, customers growing over
+    the year and `after: customers.created_at` on the orders, the top fifth of customers hold
+    about 80% of the orders rather than 65%, while the orders' gift-season peak and growth are
+    unchanged. A composite-key repair or a `when` fill that dates a row before its parent
+    afterwards moves only that row's date, and its later dates follow it again.
+  - **Days after the first:** a new row whose parent was inserted the same day lands later that
+    day than its parent.
+  - **Spec 0.5.0.** A list or a parent's column in `after` is new vocabulary: a document using
+    either says `model2data: 0.5.0`, and a 0.2, 0.3 or 0.4 document using it gets an error
+    naming the version to write (and otherwise reads exactly as before). DBML with such a note
+    converts to 0.5.0. The schema's `$id` moves to `/spec/0.5.0/`.
+  - **dbt: `model2data_not_before_parent`.** With hint tests on (`--hint-tests`), each parent
+    column an `after` names writes a test that joins the child to the parent model through the
+    foreign key and returns the rows dated before their parent row (by day for a date against a
+    timestamp; a key several parent rows share counts its earliest, leaving duplicates to the
+    `unique` test). The macro ships in `macros/model2data_parent_tests.sql`, written only when a
+    project has such a test. `hint_tests_for(tables, refs=...)` takes the references for it when
+    given bare tables. The defects report checks it like every other test, so a defect that
+    dates a row before its parent lists it in `EXPECTED_FAILURES.md`; `late_arriving` takes
+    rows that stay clear of their parents first, so it still breaks no test where it can.
+- **A warning where a child's date can fall before its parent's.** When a table reaches a parent
+  through one foreign key, the parent has a date that reads as its creation (`created_at`,
+  `signup_date`, or its first date naming no later stage), and the table's own first date has no
+  `after` naming that parent, validation (and so every run) warns, on
+  `tables.orders.columns.order_date`: "can fall before customers.created_at (the customers row
+  it points at through customer_id); add `after: customers.created_at` to keep it after". The
+  warning's `Issue` carries a `suggestion` (`model2data.model.Suggestion`: the `path` to set,
+  the `value`, and the `spec` version an older document must then say) for a tool to offer as a
+  fix. No warning for a parent without such a date, a self-reference, two foreign keys to one
+  parent, or a table whose `after` already names that parent. Generation itself does not change.
+- The bundled examples use it where it is plainly right: `ecommerce`, `ecommerce_daily`,
+  `ecommerce_training` (orders after their customer), `advanced_features` (time entries after
+  the employee's hire date), `saas_platform` (subscriptions, invoices and audit events after
+  their organisation), and the spec's coffee-webshop example; those documents now say 0.5.0.
 
 ### Changed
 - **Integer primary keys number the rows 1..N, and the rows come out in key order.** A table's
@@ -63,8 +80,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **Output changes for the same seed (the determinism promise is per version).** Every model
   with an integer primary key generates different bytes than 1.14.0: the key no longer draws
   from the table's random stream, so every column after it draws from a different point of it.
-  A model whose child tables have a creation date and a dated parent also changes where the
-  rule applies. The same model, seed, `--as-of` and options still give the same bytes on any
+  Dates change only where a model uses a parent's column in `after` (the examples listed
+  above now do). The same model, seed, `--as-of` and options still give the same bytes on any
   machine and any day with 1.15.0. Pin `model2data==1.14.0` to keep fixtures of the old shape.
 
 ## [1.14.0] - 2026-10-07
