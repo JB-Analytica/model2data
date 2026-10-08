@@ -131,7 +131,9 @@ the `created_at` of the account its `account_id` points at (spec 0.5.0, so the m
 key onto its key; a list (`after: [started_at, accounts.created_at]`) follows each entry. A
 row dated before its parent takes another parent created by then, so the column keeps its
 growth and seasonality; with none (or a one-to-one) its date moves. A null foreign key
-constrains nothing. `validate` warns where a child's first date can fall before its parent's
+constrains nothing. Use it whenever a child cannot exist before its parent (an order before its
+customer). Two foreign keys to one parent (`sender_id`, `receiver_id`) are an error: choosing
+between them is not built yet. `validate` warns where a child's first date can fall before its parent's
 `created_at`-like date and names the `after` to add. It writes the dbt test
 `model2data_not_before_parent`. Integer primary keys number the rows 1..N, and every output
 lists the rows in key order.
