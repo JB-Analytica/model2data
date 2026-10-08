@@ -438,3 +438,96 @@ def test_later_days_continue_the_numbering():
     )
     day1 = results[1].tables["customers"].inserted
     assert day1["id"].tolist() == list(range(301, 309))
+
+
+# ---------------------------------------------------------------------------
+# Edges
+# ---------------------------------------------------------------------------
+def test_an_empty_or_undated_child_is_left_alone():
+    document = copy.deepcopy(SHOP)
+    document["tables"]["reviews"]["columns"]["review_date"] = {
+        "type": "date",
+        "generate": {"null_rate": 1.0},
+    }
+    frames = _generate(document, rows={**ROWS, "orders": 0})
+    assert frames["orders"].empty
+    assert frames["reviews"]["review_date"].isna().all()
+
+
+def test_a_date_filled_by_when_still_follows_its_parent():
+    """`when` fills a creation date after the rule ran; the row then moves again."""
+    document: dict[str, Any] = {
+        "model2data": "0.5.0",
+        "enums": {"kind": ["a", "b"]},
+        "tables": {
+            "customers": {
+                "columns": {
+                    "id": {"type": "int", "pk": True},
+                    "created_at": {"type": "timestamp", "not_null": True},
+                }
+            },
+            "events": {
+                "columns": {
+                    "id": {"type": "int", "pk": True},
+                    "customer_id": {"type": "int", "not_null": True, "references": "customers.id"},
+                    "kind": {"type": "kind", "not_null": True},
+                    "created_at": {"type": "timestamp", "generate": {"when": {"kind": ["a"]}}},
+                    "updated_at": {"type": "timestamp"},
+                }
+            },
+        },
+    }
+    for seed in range(1, 6):
+        frames = _generate(document, seed=seed, rows={"customers": 50, "events": 400})
+        joined = _joined(frames, "events", "customer_id", "created_at", "customers", "created_at")
+        assert (joined["_mine"] >= joined["_theirs"]).all()
+        events = frames["events"].dropna(subset=["created_at", "updated_at"])
+        assert (pd.to_datetime(events["updated_at"]) >= pd.to_datetime(events["created_at"])).all()
+
+
+def test_the_parent_check_without_the_parent_or_rows_passes():
+    tables, refs = _engine(SHOP)
+    test = next(
+        t
+        for t in dbt_tests(tables, refs, hint_tests="warn")
+        if t.type == "model2data_not_before_parent"
+    )
+    frames = _generate(SHOP)
+    seeded = {key: as_seeded(frame) for key, frame in frames.items()}
+    assert not fails(test, {"orders": seeded["orders"]})
+    assert not fails(test, {**seeded, "orders": seeded["orders"].iloc[0:0]})
+
+
+def test_dbml_with_an_after_parent_note_converts_to_0_5():
+    from model2data.model import from_dbml
+
+    model = from_dbml(
+        "Table customers {\n  id int [pk]\n  created_at timestamp\n}\n"
+        "Table orders {\n  id int [pk]\n  customer_id int [ref: > customers.id]\n"
+        "  order_date timestamp [note: '{\"after_parent\": false}']\n}\n"
+    )
+    assert str(model.version) == "0.5.0"
+
+
+def test_a_model_given_after_parent_is_written_as_0_5():
+    from model2data.model import dump
+
+    document = copy.deepcopy(SHOP)
+    document["model2data"] = "0.4.0"
+    model = from_dict(document)
+    model.tables["orders"].columns["order_date"].generate["after_parent"] = False
+    assert "model2data: 0.5.0" in dump(model)
+
+
+def test_an_enum_named_like_a_date_is_not_a_creation_candidate():
+    document = copy.deepcopy(SHOP)
+    document["enums"] = {"date_bucket": ["early", "late"]}
+    columns = document["tables"]["orders"]["columns"]
+    document["tables"]["orders"]["columns"] = {
+        "id": columns["id"],
+        "bucket": "date_bucket",
+        **{k: v for k, v in columns.items() if k != "id"},
+    }
+    columns = document["tables"]["orders"]["columns"]
+    columns["order_date"]["generate"]["after_parent"] = False
+    assert _issues(document) == []

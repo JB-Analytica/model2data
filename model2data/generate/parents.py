@@ -175,8 +175,6 @@ def moments(series: pd.Series, kind: str) -> pd.Series:
 
     A timestamp column holds `"YYYY-MM-DD HH:MM:SS"` text, a date column `date`s.
     """
-    if pd.api.types.is_datetime64_any_dtype(series):
-        return series
     if kind == "timestamp":
         return pd.to_datetime(series, format=_TS_FORMAT, errors="coerce")
     return pd.to_datetime(series, errors="coerce")
@@ -190,9 +188,7 @@ def parent_floor(
     NaT where the foreign key is null, points at no row, or the parent's date
     is null. By day (midnight) when `link.by_day`.
     """
-    parent = parents.get(link.parent_table)
-    if parent is None or link.fk not in frame.columns:
-        return pd.Series(pd.NaT, index=frame.index, dtype="datetime64[ns]")
+    parent = parents[link.parent_table]
     created = moments(parent[link.parent_column], link.parent_kind)
     if link.by_day:
         created = created.dt.normalize()
@@ -209,25 +205,13 @@ def _key_index(keys: pd.Series) -> pd.Index:
 
 
 def _key_values(values: pd.Series) -> pd.Series:
-    """Keys as plain Python values, so an `Int64` parent and an int child match."""
+    """Keys as plain Python values (`tolist` unboxes them), so an `Int64` parent and an
+    int child match, and a missing key (`pd.NA`, NaN) as None."""
     return pd.Series(
-        [None if _is_na(value) else _plain(value) for value in values.tolist()],
+        [None if pd.isna(value) else value for value in values.tolist()],
         index=values.index,
         dtype=object,
     )
-
-
-def _is_na(value: object) -> bool:
-    try:
-        return bool(pd.isna(value))
-    except (TypeError, ValueError):
-        return False
-
-
-def _plain(value: object) -> object:
-    if isinstance(value, np.generic):
-        return value.item()
-    return value
 
 
 # ---------------------------------------------------------
@@ -249,8 +233,6 @@ def follow_parents(
     tables. `repick` false skips step 2 (taking another parent), for a pass
     that must leave the foreign keys as they are.
     """
-    if rule.column not in df.columns or not len(df):
-        return []
     own = moments(df[rule.column], rule.kind)
     if not bool(own.notna().any()):
         return []
@@ -353,9 +335,8 @@ class _Window:
         return self._timestamp(lower)
 
     def _date(self, lower: datetime) -> datetime:
-        first = max(0, (lower.date() - self.start).days)
-        if first >= len(self.days):
-            return lower
+        # A parent is never dated after the anchor, so `first` is inside the window.
+        first = min(max(0, (lower.date() - self.start).days), len(self.days) - 1)
         before = self.added_up[first - 1] if first else 0.0
         point = before + random.random() * (self.added_up[-1] - before)
         index = min(bisect_right(self.added_up, point), len(self.days) - 1)
@@ -368,9 +349,9 @@ class _Window:
             # A parent created at the very end of the window (a date on the
             # anchor day): the child is created at the end too, never past it.
             return lower
+        # Only a row dated before its parent moves, and it is dated inside the
+        # window, so the parent is too: `first` is never before the window.
         first = (lower.date() - self.start).days
-        if first < 0:
-            first, lower = 0, datetime.combine(self.start, datetime.min.time())
         offset = lower.hour * 3600 + lower.minute * 60 + lower.second
         first_share = self.weights[first] * self._share_after(offset)
         rest = self.added_up[-1] - self.added_up[first]
@@ -415,6 +396,4 @@ def floor_on_day(
 ) -> pd.Series:
     """Per new row: the latest creation moment among the parents it points at (NaT for none)."""
     floors = [parent_floor(frame, link, parents) for link in rule.links]
-    if not floors:
-        return pd.Series(pd.NaT, index=frame.index, dtype="datetime64[ns]")
     return pd.concat(floors, axis=1).max(axis=1) if len(floors) > 1 else floors[0]

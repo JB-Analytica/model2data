@@ -657,8 +657,7 @@ def _before_parents_once_late(table: _Table, candidates: list[int], name: str) -
     cutoffs: dict[int, Any] = {}
     risky = set()
     for position in candidates:
-        if pd.isna(floor[position]) or pd.isna(created[position]):
-            continue
+        # A null foreign key or date gives NaT, which compares false below.
         day = table.inserted_day[position]
         if day not in cutoffs:
             cutoffs[day] = table.loaded_max(day - 1, name)

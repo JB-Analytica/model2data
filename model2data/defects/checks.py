@@ -342,8 +342,7 @@ def _not_before(test: DbtTest, frame: pd.DataFrame, seeded: Mapping, cache: Colu
 
 
 def _not_before_parent(test: DbtTest, frame: pd.DataFrame, seeded: Mapping, cache: Columns) -> bool:
-    if test.parent is None:
-        return False
+    assert test.parent is not None  # `dbt_tests` names the parent of every such test
     parent = seeded.get(test.parent[0])
     if parent is None:
         return False
