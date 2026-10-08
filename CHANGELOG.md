@@ -21,7 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
     table the row has no foreign key to (or only a composite one, or one onto a column that is
     no key), the column's own table (a column of the row is named without its table; a
     self-reference is not followed), more than one foreign key to the parent (`messages`
-    reaching `users` through `sender_id` and `receiver_id` is an error naming both), two
+    reaching `users` through `sender_id` and `receiver_id` is an error naming both; picking one
+    of several foreign keys to a parent is not built yet), two
     tables whose `after`s name each other's columns, and a parent generated after the child
     (a cycle of foreign keys broken at the very key followed).
   - **The child keeps its own shape.** A row whose date falls before its parent's takes another

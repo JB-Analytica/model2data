@@ -401,8 +401,9 @@ def main(
         "warn",
         "--hint-tests",
         help=(
-            "Write the model's generation hints as dbt tests (min/max range, after, "
-            "null_rate, distinct, when, grain) at this severity: error, warn or off. They "
+            "Write the model's generation hints as dbt tests (min/max range, after "
+            "(also a parent's column), null_rate, distinct, when, grain) at this severity: "
+            "error, warn or off. They "
             "describe intent, so they warn by default rather than break a first dbt "
             "build on real data."
         ),
@@ -939,7 +940,8 @@ def validate_command(
 
     Takes one or more files and/or --glob patterns. A metrics file (*.metrics.yml) is checked
     against metrics spec 0.1.0 and against its model. Exits 1 when any file has an error;
-    warnings are printed, and the file conforms.
+    warnings are printed, and the file conforms. A warning that a child's date `can fall
+    before` its parent's names the `after: <table>.<column>` to add.
     """
     if output_format not in ("text", "github"):
         raise typer.BadParameter("must be 'text' or 'github'", param_hint="--format")
