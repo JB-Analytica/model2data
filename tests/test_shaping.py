@@ -83,62 +83,64 @@ def test_a_nullable_enum_column_takes_the_default_null_rate():
 def test_uniform_generation_reproduces_pre_1_5_frames():
     """A run that passes no shaping option at all must still produce exactly
     what 1.4.0 produced with the same seed -- this is the guard rail every
-    later change in this module works against."""
+    later change in this module works against. Re-pinned in 1.15.0, whose
+    primary keys number the rows 1..N instead of drawing a shuffled sample, so
+    every column after the key draws from a different point of the stream."""
     data = generate_data_from_dbml(
         _users_orders_schema(), _USERS_ORDERS_REFS, base_rows=12, seed=2024
     )
     orders = data["orders"]
 
-    assert orders["id"].tolist() == [67, 7, 12, 23, 83, 48, 85, 42, 74, 72, 13, 87]
-    assert orders["user_id"].tolist() == [41, 82, 31, 21, 48, 39, 99, 82, 21, 0, 48, 41]
+    assert orders["id"].tolist() == list(range(1, 13))
+    assert orders["user_id"].tolist() == [9, 1, 2, 3, 11, 7, 11, 6, 10, 10, 2, 11]
     assert orders["status"].tolist() == [
+        "cancelled",
+        "cancelled",
+        "pending",
+        "pending",
+        "cancelled",
+        "delivered",
+        "pending",
+        "cancelled",
         "delivered",
         "cancelled",
         "pending",
         "delivered",
-        "cancelled",
-        "delivered",
-        "pending",
-        "cancelled",
-        "pending",
-        "pending",
-        "pending",
-        "shipped",
     ]
     assert orders["is_paid"].tolist() == [
         False,
+        False,
+        True,
+        False,
+        True,
         True,
         None,
-        False,
-        False,
+        True,
         None,
-        False,
         True,
         True,
-        False,
-        False,
         False,
     ]
-    assert pd.isna(orders["total"].tolist()[1])
-    assert pd.isna(orders["total"].tolist()[9])
+    assert pd.isna(orders["total"].tolist()[0])
+    assert pd.isna(orders["total"].tolist()[2])
     non_null_totals = [v for v in orders["total"].tolist() if not pd.isna(v)]
     assert non_null_totals == [
-        2435.11,
-        1746.91,
-        370.85,
-        1610.47,
-        6398.42,
-        1936.29,
-        2677.74,
-        4708.56,
-        3946.17,
-        1678.0,
+        2530.43,
+        6586.53,
+        8365.73,
+        9516.01,
+        3703.4,
+        3187.15,
+        3350.27,
+        3432.97,
+        1887.32,
+        2337.57,
     ]
     assert orders["note"].tolist() == [
         "Argue we pretty.",
         "One big indicate.",
+        "Range billion.",
         None,
-        "Raise west hotel.",
         "Agreement pattern yet.",
         "Radio trip administration.",
         "Machine tell big.",

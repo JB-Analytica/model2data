@@ -184,7 +184,7 @@ app = typer.Typer(
     cls=_GenerateByDefault,
     help=(
         "model2data: Generate analytics-ready datasets from a data model.\n\n"
-        "Given a model -- a .model2data.yml document (spec 0.4.0), the same as JSON,\n"
+        "Given a model -- a .model2data.yml document (spec 0.5.0), the same as JSON,\n"
         "or a DBML file -- this tool produces:\n"
         "• Synthetic but realistic data\n"
         "• A runnable dbt project scaffold\n"
@@ -401,8 +401,9 @@ def main(
         "warn",
         "--hint-tests",
         help=(
-            "Write the model's generation hints as dbt tests (min/max range, after, "
-            "null_rate, distinct, when, grain) at this severity: error, warn or off. They "
+            "Write the model's generation hints as dbt tests (min/max range, after "
+            "(also a parent's column), null_rate, distinct, when, grain) at this severity: "
+            "error, warn or off. They "
             "describe intent, so they warn by default rather than break a first dbt "
             "build on real data."
         ),
@@ -837,12 +838,13 @@ def main(
 
 
 def _spec_of(file: Path) -> str:
-    """The spec a conforming model is written against: 0.4.0, 0.3.0, or 0.2.0 (DBML without
-    `when` included)."""
+    """The spec a conforming model is written against: 0.5.0, 0.4.0, 0.3.0, or 0.2.0 (DBML
+    without `when` or a 0.5.0 `after` included)."""
     version = str(load(file).version)
-    return (
-        "0.4.0" if version.startswith("0.4") else "0.3.0" if version.startswith("0.3") else "0.2.0"
-    )
+    for minor in ("0.5", "0.4", "0.3"):
+        if version.startswith(minor):
+            return f"{minor}.0"
+    return "0.2.0"
 
 
 def _print_defects(report: DefectsReport) -> None:
@@ -934,11 +936,12 @@ def validate_command(
         ),
     ),
 ):
-    """Check that models conform to spec 0.4.0 (or 0.2.x, 0.3.x), printing every issue with its path.
+    """Check that models conform to spec 0.5.0 (or 0.2.x-0.4.x), printing every issue with its path.
 
     Takes one or more files and/or --glob patterns. A metrics file (*.metrics.yml) is checked
     against metrics spec 0.1.0 and against its model. Exits 1 when any file has an error;
-    warnings are printed, and the file conforms.
+    warnings are printed, and the file conforms. A warning that a child's date `can fall
+    before` its parent's names the `after: <table>.<column>` to add.
     """
     if output_format not in ("text", "github"):
         raise typer.BadParameter("must be 'text' or 'github'", param_hint="--format")
@@ -1029,7 +1032,8 @@ def convert_command(
     force: bool = typer.Option(False, "--force", help="Overwrite the output file if it exists."),
 ):
     """Convert a model -- DBML, typically -- to a .model2data.yml document (spec 0.2.0, or
-    0.3.0 when it has defects, 0.4.0 when it has `when`)."""
+    0.3.0 when it has defects, 0.4.0 when it has `when`, 0.5.0 when an `after` is a list or
+    names a parent's column)."""
     try:
         model = load(file)
     except ModelError as error:

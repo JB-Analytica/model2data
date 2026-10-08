@@ -66,10 +66,12 @@ def generate_dbt_yml(
     staging_path = dest / "models" / "staging"
     staging_path.mkdir(parents=True, exist_ok=True)
 
-    hinted = _hinted(tables, hint_tests, test_tolerance)
+    hinted = _hinted(tables, hint_tests, test_tolerance, refs)
     if hinted:
-        when = any(test.hint == "when" for tests in hinted.values() for test in tests)
-        write_hint_macros(dest, when=when)
+        names = {test.test for tests in hinted.values() for test in tests}
+        write_hint_macros(
+            dest, when="model2data_when" in names, parents="model2data_not_before_parent" in names
+        )
     if any(_history_entries(table) for table in tables.values()):
         write_history_macros(dest)
     fk_map = _fk_map(tables, refs)
@@ -114,14 +116,14 @@ def generate_dbt_yml(
 
 
 def _hinted(
-    tables: dict, hint_tests: str, test_tolerance: float
+    tables: dict, hint_tests: str, test_tolerance: float, refs: list[dict]
 ) -> dict[tuple[str, Optional[str]], list[HintTest]]:
     """The hint tests by (table, column), column None for a table-level one; none for `off`."""
     if hint_tests not in ("error", "warn", "off"):
         raise ValueError(f"hint_tests must be error, warn or off, not {hint_tests!r}")
     hinted: dict[tuple[str, Optional[str]], list[HintTest]] = defaultdict(list)
     if hint_tests != "off":
-        for hint_test in hint_tests_for(tables, tolerance=test_tolerance):
+        for hint_test in hint_tests_for(tables, tolerance=test_tolerance, refs=refs):
             hinted[(hint_test.table, hint_test.column)].append(hint_test)
     return hinted
 
@@ -193,7 +195,8 @@ class DbtTest:
     `relationships`, a `model2data_*` hint test) or `unique_combination` for the
     singular test of a composite key. `arguments` are the test's parameters,
     `severity` is `error`, or the hint tests' severity, and `parent` is the
-    `(table, column)` a `relationships` test looks values up in.
+    `(table, column)` a `relationships` test looks values up in, or the parent
+    key a `model2data_not_before_parent` test joins on.
     """
 
     name: str
@@ -218,7 +221,7 @@ def dbt_tests(
     name dbt gives the test in the generated project. Unit tests are not data
     tests and are not listed.
     """
-    hinted = _hinted(tables, hint_tests, test_tolerance)
+    hinted = _hinted(tables, hint_tests, test_tolerance, refs)
     fk_map = _fk_map(tables, refs)
     found: list[DbtTest] = []
     for table in tables.values():
@@ -226,6 +229,9 @@ def dbt_tests(
         for col in table.columns:
             column_ref = _dbt_column_ref(col.name)
             parents = iter(fk_map.get((table.name, col.name), []))
+            hint_parents = iter(
+                t.parent for t in hinted.get((table.name, col.name), []) if t.parent is not None
+            )
             for entry in _column_entries(table, col, fk_map, hinted, hint_tests):
                 test_type, body = _entry_parts(entry)
                 arguments = dict(body.get("arguments") or {})
@@ -233,6 +239,8 @@ def dbt_tests(
                 if test_type == "relationships":
                     ref = next(parents)
                     parent = (ref["target_table"], ref["target_column"])
+                elif test_type == "model2data_not_before_parent":
+                    parent = next(hint_parents)
                 found.append(
                     DbtTest(
                         name=generic_test_name(

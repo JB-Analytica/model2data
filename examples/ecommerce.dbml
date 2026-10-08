@@ -34,7 +34,7 @@ Table products {
 Table orders {
   id bigint [pk, not null]
   customer_id bigint [not null]
-  order_date timestamp [not null]
+  order_date timestamp [not null, note: '{"after": "customers.created_at"}']
   total_amount numeric [not null, note: '{"min": 10, "max": 5000}']
   status order_status
 }

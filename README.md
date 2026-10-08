@@ -42,9 +42,12 @@ emails, not `Lorem ipsum`. Type a column with any Faker provider (`billing_count
 come from one country. → [The model file](docs/model-file.md)
 
 **Foreign keys that resolve.** Tables are generated in dependency order and every foreign key
-points at a parent row that exists — onto a primary key or a unique one. Composite primary and
-unique keys hold, and a column that repeats a parent's value through a foreign key
-(`orders.customer_email`) holds the email of the order's own customer.
+points at a parent row that exists — onto a primary key or a unique one — and
+`after: customers.created_at` keeps an order on or after the sign-up of the customer it points
+at (`validate` suggests it where a date could fall before its parent's). Integer primary keys
+number the rows 1..N, in order. Composite primary and unique keys hold, and a column that repeats a
+parent's value through a foreign key (`orders.customer_email`) holds the email of the order's
+own customer.
 → [The model file](docs/model-file.md)
 
 **A dbt project that runs.** Seeds, staging models that `ref()` them, `not_null`, `unique`,
@@ -68,8 +71,7 @@ byte-identical. → [The determinism promise](docs/generating.md#the-determinism
 
 **When things happen.** `--business-hours`, `--growth` and `--seasonality` shape every timestamp
 (weekdays and working hours, a trend, a Q4 peak), or one column at a time. `updated_at` never
-lands before `created_at`, `after` orders any two columns, and `when` gives `shipped_at` a value
-on shipped and delivered orders only. → [When things happen](docs/time-shapes.md)
+lands before `created_at`, `after` orders any two columns, or a column after a parent's, and `when` gives `shipped_at` a value on shipped and delivered orders only. → [When things happen](docs/time-shapes.md)
 
 **How the data is spread.** `--skew` lets a few customers place most of the orders; `weights`,
 `true_rate`, `null_rate` and `distinct` shape a column; `distribution` draws a number from a

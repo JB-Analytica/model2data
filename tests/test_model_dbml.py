@@ -350,7 +350,9 @@ def test_a_ref_onto_a_column_that_is_no_key_draws_from_the_parents_values():
     a warning, and every hash a load names is a version's hash."""
     model = load(EXAMPLES / "hackernews.dbml")
     assert [issue.path for issue in model.warnings] == [
-        "tables._dlt_loads.columns.schema_version_hash.references"
+        "tables._dlt_loads.columns.schema_version_hash.references",
+        # A load's pipeline state can predate the load: the suggested `after`.
+        "tables._dlt_pipeline_state.columns.created_at",
     ]
     inputs = to_engine(model)
     for seed in (1, 7, 42):

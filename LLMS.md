@@ -22,7 +22,7 @@ install. If the person you're helping wants to *look at* or share the model rath
 its generation, point them there; the DBML guidance below applies to both.
 
 > **Two input formats.** Since 1.8, model2data reads a model as one YAML document,
-> `<name>.model2data.yml` ([spec 0.4.0](model2data/spec/README.md), with a JSON Schema at
+> `<name>.model2data.yml` ([spec 0.5.0](model2data/spec/README.md), with a JSON Schema at
 > `model2data/spec/model.schema.json` and a complete example at
 > `model2data/spec/examples/coffee_webshop.model2data.yml`), and DBML as supported input that it
 > converts to the same model. The DBML guidance below still holds; if you write the YAML form
@@ -134,6 +134,7 @@ is_paid boolean [note: '{"true_rate": 0.9}']               ' fraction of non-nul
 shipping_city varchar [note: '{"distinct": 12}']           ' draw from a pool this size (not fk/pk/unique/enum)
 customer_id int [note: '{"skew": 0.9}']                    ' per-column override of --skew (fk columns only)
 updated_at timestamp [note: '{"after": "created_at"}']     ' must fall after another date/timestamp column
+order_date timestamp [note: '{"after": "customers.created_at"}']  ' ... or after a parent's column, or a list of both
 completed_at timestamp [note: '{"when": {"status": ["done"]}}']  ' set only where status is done, null elsewhere
 created_at timestamp [note: '{"business_hours": true}']    ' per-column override of --business-hours
 created_at timestamp [note: '{"growth": 0.4}']             ' per-column override of --growth (date/timestamp only)
@@ -160,6 +161,41 @@ shipped_at timestamp [note: '{"after": "ordered_at"}']
 ```
 A birth-date-style column (`birth_date`, `date_of_birth`, `dob`) is never folded into this chain —
 it describes the person, not the record.
+
+**`after` can name a parent's column.** `<table>.<column>` reaches the parent row through the
+row's foreign key: `after: customers.created_at` keeps every order on or after its customer's
+sign-up. A list follows every entry, and may mix the row's own columns:
+```dbml
+order_date timestamp [note: '{"after": "customers.created_at"}']
+shipped_at timestamp [note: '{"after": ["order_date", "customers.created_at"]}']
+```
+The table must reach the parent through exactly one one-column foreign key onto its pk or a unique
+column (two, like `sender_id`/`receiver_id` to `users`, is an error naming them). Rows dated too
+early take an older parent, so the column's growth/seasonality/business hours hold; a row with
+none (or a one-to-one) moves its date. A null foreign key constrains nothing; a self-reference is
+not a parent (name the column without a table). In YAML it is spec 0.5.0 (`model2data: 0.5.0`).
+Validation warns where a child's first date can fall before a parent's `created_at`-like date,
+with the `after` to add. With `--hint-tests` each parent column writes the dbt test
+`model2data_not_before_parent`. Integer primary keys are 1..N and every output lists rows in key
+order.
+
+*When to use it:* whenever a child row cannot exist before its parent: an order before its
+customer signed up, a subscription before its organisation, a time entry before the employee's
+hire date. Skip it when the child's date has no such tie (an event log that may predate the
+account it is later linked to).
+
+*Acting on the warning:* it reads `tables.orders.columns.order_date: can fall before
+customers.created_at (...); add `after: customers.created_at` to keep it after`. Add exactly
+that `after` to `generate` on the column the path names (an existing `after` there becomes a
+list: `after: [placed_at, customers.created_at]`), set `model2data: 0.5.0`, and run `validate`
+again; the warning is gone and the file conforms either way. Over the Python API the warning's
+`Issue.suggestion` (a `model2data.model.Suggestion`) carries `path`, `value` and `spec` for the
+same edit. If the child may legitimately predate the parent, leave the warning.
+
+*Not built yet:* a table with two foreign keys to the same parent (`sender_id` and `receiver_id`
+onto `users`) cannot use `after: users.created_at`: model2data cannot tell which row is meant,
+so validation refuses it with an error naming both keys. There is no way yet to pick one; drop
+the hint (the warning is not raised for such a table either).
 
 **Tie lifecycle columns to the status they belong to with `when`.** Without it, every nullable
 column is filled or nulled independently of the others, so a `todo` task gets a `completed_at`
@@ -287,7 +323,7 @@ model2data --file SCHEMA.dbml [OPTIONS]
 --adapter, -a    TEXT      duckdb (default) or postgres
 --unit-tests               Also generate dbt unit test fixtures
 --hint-tests     TEXT      error, warn (default) or off: severity of the dbt tests written from
-                           min/max, after, null_rate, distinct, when and grain hints
+                           min/max, after (also a parent's column), null_rate, distinct, when and grain hints
 --test-tolerance FLOAT     Absolute slack of the null_rate test (default 0.1)
 --defects        TEXT      clean (default), messy or training: break the data on purpose, so dbt
                            tests are seen to fail; writes defects_report.json and

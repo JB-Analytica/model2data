@@ -60,7 +60,7 @@ Table subscriptions {
   plan_tier plan_tier_type [not null]
   monthly_price numeric [not null, note: '{"min": 0, "max": 999}']
   status subscription_status
-  current_period_start timestamp [not null]
+  current_period_start timestamp [not null, note: '{"after": "organizations.created_at"}']
   current_period_end timestamp
 }
 
@@ -70,7 +70,7 @@ Table invoices {
   subscription_id bigint [not null]
   amount numeric [not null, note: '{"min": 0, "max": 999}']
   status invoice_status
-  created_at timestamp [not null]
+  created_at timestamp [not null, note: '{"after": "organizations.created_at"}']
 }
 
 Table feature_limits {
@@ -95,7 +95,7 @@ Table audit_events {
   event_type audit_event_type [not null]
   resource_id text
   resource_type text
-  created_at timestamp [not null]
+  created_at timestamp [not null, note: '{"after": "organizations.created_at"}']
 }
 
 Ref {

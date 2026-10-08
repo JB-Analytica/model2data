@@ -1,7 +1,7 @@
 # The model file
 
 A model is one YAML document, `<name>.model2data.yml` — or the same document as JSON. Its
-format is [spec 0.4.0](../model2data/spec/README.md), with a JSON Schema
+format is [spec 0.5.0](../model2data/spec/README.md), with a JSON Schema
 ([`model.schema.json`](../model2data/spec/model.schema.json)) your editor can autocomplete and check
 against:
 
@@ -59,6 +59,12 @@ Check a model without generating anything — every issue is printed with its pa
 ```bash
 model2data validate examples/ecommerce.model2data.yml
 ```
+
+A warning is not an error, and some name the fix. `can fall before customers.created_at ... add
+`after: customers.created_at`` means a child's date can precede its parent's creation; the
+`after` it names (see [When things happen](time-shapes.md)) is the edit, and spec 0.5.0 the
+version to write. Integer primary keys number the rows 1..N, and every output lists them in that
+order.
 
 ## DBML is supported input
 

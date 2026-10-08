@@ -18,6 +18,13 @@ says it created the project. Fix the **model file**, never the generated project
   (`tables.orders.columns.status.generate.weights`). Fix that value. Exit 1 until all are gone.
 - `⚠️  <file>: N warnings`: it conforms. A reference to a parent column that is not a key:
   make the parent `pk` or `unique`. A `grain` without a key: add the key, or drop `grain`.
+  A warning `can fall before customers.created_at (...); add `after: customers.created_at``
+  on `tables.orders.columns.order_date`: a child's date can precede its parent's creation (an
+  order before its customer). Add exactly that `after` to the column's `generate` (a column with
+  an `after` already takes a list: `after: [placed_at, customers.created_at]`), set
+  `model2data: 0.5.0`, and validate again. If the child may truly predate the parent, leave it.
+  An error `reaches users through more than one foreign key (sender_id, receiver_id)` on an
+  `after`: choosing between two foreign keys to one parent is not built yet; drop that `after`.
 - A metrics file (`<stem>.metrics.yml`) is checked against the model beside it. An error
   naming two paths: the filter's table is reached twice (two foreign keys to one table);
   filter on a column of the table in between instead. `cannot be reached`: the column is on
@@ -62,7 +69,10 @@ Take the first rule that applies to each line:
    seeds must come from the same run); if it still fails, report it with both files. Never
    edit `metric_values.json` or the test to make it pass.
 5. A WARN from a hint test (`min`/`max`, `after`, `null_rate`, `distinct`, `grain`): the hint
-   and the data disagree. Fix the hint in the model.
+   and the data disagree. Fix the hint in the model. `model2data_not_before_parent` is the test
+   of an `after: <table>.<column>`: a row dated before its parent row; the model is wrong only
+   if the parent column or the foreign key changed since the data was generated, so
+   regenerate with `--force` first.
 6. Still failing after the model is fixed: report it with the model file and the output.
 
 Done looks like: `validate` exits 0, the summary has no ⚠️ lines, `dbt build` ends `ERROR=0`

@@ -182,6 +182,37 @@ def test_a_preset_fails_exactly_the_tests_the_report_names(
             assert late == {"late_arriving", "late_updates"}
 
 
+PARENT_TEST = (
+    "model2data_not_before_parent_stg_orders_ordered_at"
+    "__id__customer_id__created_at__ref_stg_customers_"
+)
+
+
+def test_the_parent_dates_test_passes_clean_and_fails_a_customer_created_late(
+    tmp_path, monkeypatch
+):
+    """`after: customers.created_at` holds: dbt agrees, and catches an order that does not."""
+    model = load(SHOP)
+    model.tables["orders"].columns["ordered_at"].generate["after"] = "customers.created_at"
+    project = _generate(tmp_path, monkeypatch, dump(model))
+    assert (project / "macros" / "model2data_parent_tests.sql").exists()
+    assert _build(project) == set()
+
+    seeds = project / "seeds" / "raw"
+    orders = (seeds / "orders.csv").read_text().splitlines()
+    customer = orders[1].split(",")[1]
+    lines = (seeds / "customers.csv").read_text().splitlines()
+    header = lines[0].split(",")
+    at, key = header.index("created_at"), header.index("id")
+    for number, line in enumerate(lines[1:], start=1):
+        cells = line.split(",")
+        if cells[key] == customer:
+            cells[at] = "2099-01-01 00:00:00"
+            lines[number] = ",".join(cells)
+    (seeds / "customers.csv").write_text("\n".join(lines) + "\n")
+    assert _build(project) == {PARENT_TEST}
+
+
 def test_a_history_fails_only_its_overlap_test(tmp_path, monkeypatch):
     model = load(HISTORY)
     model.tables["orders"].defects = [Defect("overlapping_history", count=3)]

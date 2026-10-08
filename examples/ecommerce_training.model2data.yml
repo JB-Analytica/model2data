@@ -1,5 +1,5 @@
-# yaml-language-server: $schema=https://www.jbanalytica.com/model2data/spec/0.3.0/model.schema.json
-model2data: 0.3.0
+# yaml-language-server: $schema=https://www.jbanalytica.com/model2data/spec/0.5.0/model.schema.json
+model2data: 0.5.0
 description: >
   The ecommerce_daily store with deliberate defects, for teaching dbt tests: the `training` preset breaks each kind of standard test once, and the tables add defects of their own. Orders keep their history (`orders_history`, one row per version), which the preset breaks with overlapping versions on a run of several days. `model2data generate --days 3` writes defects_report.json and EXPECTED_FAILURES.md into the project, listing every broken row and the tests `dbt build` should fail.
 
@@ -41,7 +41,10 @@ tables:
     columns:
       id: {type: bigint, pk: true, not_null: true}
       customer_id: {type: bigint, not_null: true, references: customers.id}
-      order_date: {type: timestamp, not_null: true}
+      order_date:
+        type: timestamp
+        not_null: true
+        generate: {after: customers.created_at}
       total_amount:
         type: numeric
         not_null: true

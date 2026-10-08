@@ -17,7 +17,7 @@ or a downstream dbt test failure.
 | `true_rate` | boolean columns                                | fraction of non-null rows that are true   |
 | `distinct`  | columns that aren't an FK, `pk`, `unique`, enum | positive integer: draw from a pool that size |
 | `skew`      | foreign-key columns                            | overrides the run-level `skew` for this column |
-| `after`     | date/timestamp columns                         | name of another date/timestamp column, read by the time-aware generator |
+| `after`     | date/timestamp columns                         | another date/timestamp column of the row, a parent's `<table>.<column>` (see generate.parents), or a list of them |
 | `business_hours` | date/timestamp columns                    | overrides the run-level `TimeProfile.business_hours` for this column |
 | `growth`    | date/timestamp columns                         | overrides the run-level `TimeProfile.growth` for this column |
 | `seasonality` | date/timestamp columns                       | overrides the run-level `TimeProfile.seasonality` for this column |
@@ -34,7 +34,9 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from model2data.generate import kinds
+from model2data.generate.parents import parent_link
 from model2data.generate.relationships import build_fk_lookup, classify_refs
+from model2data.generate.timeline import parent_after
 from model2data.parse.dbml import ColumnDef, TableDef
 
 
@@ -82,6 +84,12 @@ def validate_hints(tables: Mapping[str, TableDef], refs: list[dict]) -> None:
                 is_unique="unique" in column.settings or column.name in composite_unique_columns,
                 columns_by_name=columns_by_name,
             )
+            for entry in parent_after(note):
+                link, reason = parent_link(tables, fk_refs, table_name, entry)
+                if link is None:
+                    raise ValueError(
+                        f'{table_name}.{column.name}: "after" names {".".join(entry)}, {reason}.'
+                    )
 
 
 # ---------------------------------------------------------
@@ -291,17 +299,30 @@ def _check_after(
     after: object,
     columns_by_name: dict[str, ColumnDef],
 ) -> None:
-    if not isinstance(after, str):
-        raise ValueError(f'{label}: "after" must be a column name (got {after!r}).')
-    other = columns_by_name.get(after)
-    if other is None:
+    """A column of the same row, a parent's `<table>.<column>`, or a non-empty list of them.
+
+    A parent's column is checked by `validate_hints` itself, which knows the
+    other tables and the foreign keys.
+    """
+    raw: list = after if isinstance(after, list) else [after]
+    entries = [entry for entry in raw if isinstance(entry, str)]
+    if not entries or len(entries) != len(raw):
         raise ValueError(
-            f'{label}: "after" names {after!r}, which is not a column of {table_name}.'
+            f'{label}: "after" must be a column name, `<table>.<column>`, or a list of them '
+            f"(got {after!r})."
         )
-    if not _is_temporal_type(_base_type(other.data_type)):
-        raise ValueError(
-            f'{label}: "after" names {after!r}, which is not a date or timestamp column.'
-        )
+    for entry in entries:
+        if "." in entry:
+            continue
+        other = columns_by_name.get(entry)
+        if other is None:
+            raise ValueError(
+                f'{label}: "after" names {entry!r}, which is not a column of {table_name}.'
+            )
+        if not _is_temporal_type(_base_type(other.data_type)):
+            raise ValueError(
+                f'{label}: "after" names {entry!r}, which is not a date or timestamp column.'
+            )
 
 
 def _check_when(

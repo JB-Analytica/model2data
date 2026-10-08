@@ -32,6 +32,8 @@ from datetime import date, datetime, timedelta
 from itertools import accumulate
 from typing import Optional, Union
 
+from pandas import NaT
+
 from model2data.generate.kinds import temporal_kind
 from model2data.generate.options import TimeProfile
 from model2data.parse.dbml import ColumnDef, TableDef
@@ -340,6 +342,76 @@ def _infer_stage(column_name: str) -> Optional[int]:
     return None
 
 
+def after_entries(note: Optional[dict]) -> list[str]:
+    """A column's `after` as a list: one name (`created_at`, `customers.created_at`) or several."""
+    after = (note or {}).get("after")
+    if isinstance(after, str):
+        return [after]
+    if isinstance(after, list):
+        return [entry for entry in after if isinstance(entry, str)]
+    return []
+
+
+def same_row_after(note: Optional[dict]) -> list[str]:
+    """The `after` entries naming a column of the same row (no table before a `.`)."""
+    return [entry for entry in after_entries(note) if "." not in entry]
+
+
+def parent_after(note: Optional[dict]) -> list[tuple[str, str]]:
+    """The `after` entries naming a parent's column, as `(table key, column)`.
+
+    The last `.` separates the column, so a table outside the default schema
+    reads as `raw.customers.created_at`.
+    """
+    found = []
+    for entry in after_entries(note):
+        if "." in entry:
+            table, _, column = entry.rpartition(".")
+            found.append((table, column))
+    return found
+
+
+def creation_column_name(columns: list[tuple[str, bool]]) -> Optional[str]:
+    """Which of a table's date/timestamp columns the row comes into being with.
+
+    `columns` are the table's date and timestamp columns in table order, each
+    as `(name, follows)`, `follows` being whether its `after` names a column of
+    its own row. Such a column follows another one, so it is never the one the
+    row starts with. Of the rest, the first whose name puts it at the
+    created stage (`created_at`, `signup_date`, `start_date`: see
+    `_STAGE_WORDS`) is the creation column; failing that, the first whose name
+    puts it at no stage at all (`order_date`, `hire_date`), a birth date
+    excepted. A table whose dates all follow something, or are all updated- or
+    closed-stage (`updated_at`, `deleted_at`), has none.
+    """
+    leading = [name for name, follows in columns if not follows]
+    for name in leading:
+        if _infer_stage(name) == 0:
+            return name
+    for name in leading:
+        if _infer_stage(name) is None and not _EXCLUDED_FROM_CHAIN.intersection(_tokenize(name)):
+            return name
+    return None
+
+
+def creation_column(table_def: TableDef) -> Optional[ColumnDef]:
+    """The date/timestamp column a row of `table_def` comes into being with, or None.
+
+    See `creation_column_name`. Generation does not act on it: the model's
+    validation reads it to suggest a cross-table `after` where a child's date
+    can fall before its parent's (see `model.validate`).
+    """
+    temporal = [
+        column
+        for column in table_def.columns
+        if not column.enum_values and _column_kind(column.data_type) is not None
+    ]
+    name = creation_column_name(
+        [(column.name, bool(same_row_after(column.note))) for column in temporal]
+    )
+    return next((column for column in temporal if column.name == name), None)
+
+
 def _column_kind(data_type: str) -> Optional[str]:
     """`"timestamp"`, `"date"`, or None for anything else -- including plain `time`.
 
@@ -384,6 +456,10 @@ def _format_value(moment: datetime, kind: str) -> Union[str, date]:
     return moment.date()
 
 
+def _is_nat(value: object) -> bool:
+    return value is None or value is NaT
+
+
 def column_business_hours(column: ColumnDef, time_profile: Optional[TimeProfile]) -> bool:
     """Whether `column` is drawn in business hours: its own hint, else the run's."""
     note = column.note or {}
@@ -406,22 +482,24 @@ def _build_dependencies(
     explicit: set[str] = set()
 
     for column in temporal_columns:
-        after = (column.note or {}).get("after") if column.note else None
-        if not after:
+        # A parent's column (`customers.created_at`) is no column of this row:
+        # generate.parents keeps it, and the column stays in the stage system.
+        names = same_row_after(column.note)
+        if not names:
             continue
-        after_name = str(after)
-        target = columns_by_name.get(after_name)
-        if target is None:
-            raise ValueError(
-                f"Table '{table_def.name}' column '{column.name}': after references "
-                f"unknown column '{after_name}'."
-            )
-        if _column_kind(target.data_type) is None:
-            raise ValueError(
-                f"Table '{table_def.name}' column '{column.name}': after column "
-                f"'{after_name}' is not a date or timestamp column."
-            )
-        deps[column.name] = {after_name}
+        for after_name in names:
+            target = columns_by_name.get(after_name)
+            if target is None:
+                raise ValueError(
+                    f"Table '{table_def.name}' column '{column.name}': after references "
+                    f"unknown column '{after_name}'."
+                )
+            if _column_kind(target.data_type) is None:
+                raise ValueError(
+                    f"Table '{table_def.name}' column '{column.name}': after column "
+                    f"'{after_name}' is not a date or timestamp column."
+                )
+        deps[column.name] = set(names)
         explicit.add(column.name)
 
     stages = {
@@ -476,7 +554,12 @@ def _topological_order(table_def: TableDef, deps: dict[str, set[str]]) -> list[s
 
 
 def order_row_times(
-    df, table_def: TableDef, as_of: AsOf = None, time_profile: Optional[TimeProfile] = None
+    df,
+    table_def: TableDef,
+    as_of: AsOf = None,
+    time_profile: Optional[TimeProfile] = None,
+    rows: Optional[list] = None,
+    floors: Optional[dict] = None,
 ):
     """Fix up temporal columns so an earlier-stage column never lands later.
 
@@ -492,7 +575,12 @@ def order_row_times(
 
     Leaves `df` untouched when the table holds no `after` hint and no
     recognisable created/updated/closed-style name pair, and never modifies a
-    column that isn't a date/timestamp/datetime type.
+    column that isn't a date/timestamp/datetime type. `rows`, when given, are
+    the only index labels it places again (a row whose date moved after the
+    table was ordered); every row otherwise. `floors` maps a column to a
+    `datetime64` Series of the latest parent moment each row must not precede
+    (a cross-table `after`, see generate.parents): a column placed here lands
+    after that too.
     """
     columns_by_name = {column.name: column for column in table_def.columns}
     temporal_columns = [
@@ -524,8 +612,9 @@ def order_row_times(
             assert other_kind is not None
             required_kinds[name] = other_kind
         business_hours = column_business_hours(columns_by_name[column_name], time_profile)
+        floor = (floors or {}).get(column_name)
 
-        for idx in df.index:
+        for idx in df.index if rows is None else rows:
             if _parse_value(df.at[idx, column_name], kind) is None:
                 # Already null for this row (or holds a non-temporal default):
                 # nothing to reorder, and forcing a value in would undo the
@@ -538,6 +627,8 @@ def order_row_times(
                 for parsed in [_parse_value(df.at[idx, name], other_kind)]
                 if parsed is not None
             ]
+            if floor is not None and not _is_nat(floor.at[idx]):
+                earlier.append(floor.at[idx].to_pydatetime())
             if not earlier:
                 continue
             latest_required = max(earlier)

@@ -1,5 +1,5 @@
-# yaml-language-server: $schema=https://www.jbanalytica.com/model2data/spec/0.2.0/model.schema.json
-model2data: 0.2.0
+# yaml-language-server: $schema=https://www.jbanalytica.com/model2data/spec/0.5.0/model.schema.json
+model2data: 0.5.0
 description: >
   An online store: customers, a product catalogue, orders and their line items, and product reviews.
 
@@ -37,7 +37,10 @@ tables:
     columns:
       id: {type: bigint, pk: true, not_null: true}
       customer_id: {type: bigint, not_null: true, references: customers.id}
-      order_date: {type: timestamp, not_null: true}
+      order_date:
+        type: timestamp
+        not_null: true
+        generate: {after: customers.created_at}
       total_amount:
         type: numeric
         not_null: true

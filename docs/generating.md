@@ -38,8 +38,10 @@ The same model, seed and `--as-of` — with the same options (`--rows`, `--rows-
 - with the same model2data version, whenever you run it.
 
 A new release may change what a seed produces, to fix a bug or make the data more realistic.
-When it does, the changelog says which models are affected and why. Pin the version
-(`model2data==1.11.0`) when fixtures must stay the same across upgrades.
+When it does, the changelog says which models are affected and why (1.15.0, for one, numbers
+integer primary keys 1..N, which changes the bytes of every model that has one, and moves dates
+only where a model uses a parent's column in `after`). Pin the version (`model2data==1.14.0`)
+when fixtures must stay the same across upgrades.
 
 `tests/test_determinism.py` holds the file hashes of a spread of models, presets, multi-day runs
 and locales, and runs on every pull request — against the newest Faker and pandas too — so a
