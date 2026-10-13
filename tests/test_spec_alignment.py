@@ -213,6 +213,40 @@ def test_a_unique_self_reference_is_not_capped():
     assert get_capped_tables() == []
 
 
+def test_a_unique_reference_into_a_table_generated_later_is_not_capped():
+    # A cycle broken at a nullable link generates `accounts` before `users`, so
+    # at the cap there is no parent column to count yet: nothing to cap against.
+    tables = {
+        "accounts": TableDef(
+            "accounts",
+            [ColumnDef("id", "int", {"pk"}), ColumnDef("owner_user_id", "int", {"unique"})],
+        ),
+        "users": TableDef(
+            "users",
+            [ColumnDef("id", "int", {"pk"}), ColumnDef("account_id", "int", {"not null"})],
+        ),
+    }
+    refs = [
+        {
+            "source_table": "accounts",
+            "source_column": "owner_user_id",
+            "target_table": "users",
+            "target_column": "id",
+        },
+        {
+            "source_table": "users",
+            "source_column": "account_id",
+            "target_table": "accounts",
+            "target_column": "id",
+        },
+    ]
+    data = generate_data_from_dbml(
+        tables, refs, base_rows=20, row_overrides={"users": 5}, seed=2, as_of=AS_OF
+    )
+    assert len(data["accounts"]) == 20
+    assert get_capped_tables() == []
+
+
 def test_a_unique_foreign_key_with_too_few_parents_is_reported():
     reset_duplicate_unique_columns()
     parents = [1, 2, 3]
