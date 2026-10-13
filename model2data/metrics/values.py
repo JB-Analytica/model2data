@@ -155,10 +155,12 @@ def _text_columns(frame: pd.DataFrame, columns: list[Any]) -> pd.DataFrame:
     pandas writes each column of a CSV by that column's own type and values, and quotes
     each field on its own, so a column's text is the same whether the other columns are
     written beside it or not. One column with an empty field is written as `""`, not as
-    a blank line, so no row is lost when a single column is written.
+    a blank line, so no row is lost when a single column is written. Read as `object`
+    rather than `str`: with no NA filtering every field is a Python string either way, and
+    pandas 3 reads `str` as its own string type, which DuckDB cannot scan.
     """
     buffer = io.StringIO(frame[columns].to_csv(index=False))
-    return pd.read_csv(buffer, dtype=str, keep_default_na=False, na_values=[], na_filter=False)
+    return pd.read_csv(buffer, dtype=object, keep_default_na=False, na_values=[], na_filter=False)
 
 
 # What dbt's seed loader reads as null: an empty field, or `null` in any case. The letters
