@@ -64,6 +64,10 @@ dbt seed && dbt run
   - Customer reviews and ratings with min/max constraints
   - Business constraints: unique emails, foreign key relationships
   - **Generation hints** (`generate`): Price ranges, stock levels, quantities, ratings
+  - **Dates that respect their parent**: `orders.order_date` has `after: customers.created_at`,
+    so no order predates its customer (spec 0.5.0). `ecommerce_daily` and `ecommerce_training`
+    do the same; `saas_platform` (subscriptions, invoices and audit events after their
+    organisation) and `advanced_features` (time entries after `employees.hire_date`) use it too
 
 **Tables**: 5 tables with 5 relationships
 - `customers` — Customer directory with realistic names, emails, phone numbers
@@ -76,6 +80,9 @@ dbt seed && dbt run
 - **Faker data types**: Uses `email`, `first_name`, `last_name`, `phone_number`, `country`, `word`, `ean13`
 - **Generation hints**: `price: {type: numeric, not_null: true, generate: {min: 5.99, max: 999.99}}`
 - **Foreign keys**: Transactional relationships between customers, orders, and products
+- **Cross-table `after`**: `order_date: {type: timestamp, generate: {after: customers.created_at}}`
+  keeps each order on or after the customer it points at. Add it where a child cannot exist
+  before its parent; `model2data validate` warns where it is missing
 - **Unique constraints**: Email uniqueness per customer
 - **Realistic data generation**: Names, emails, phone numbers generated via Faker library
 
@@ -360,7 +367,8 @@ allocation: {type: numeric, generate: {min: 0.5, max: 8}}
 
 (A column with `generate` is usually written as a block mapping, as above; the one-line form is
 the same YAML.) Every other hint -- `null_rate`, `weights`, `true_rate`, `distinct`, `skew`,
-`after`, `business_hours`, `growth`, `seasonality`, `distribution` -- is documented in the
+`after` (a column of the row, a parent's `<table>.<column>`, or a list), `business_hours`,
+`growth`, `seasonality`, `distribution` -- is documented in the
 [spec's schema](../model2data/spec/model.schema.json).
 
 ### When to Use Constraints

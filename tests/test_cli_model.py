@@ -160,7 +160,7 @@ def test_two_table_keys_that_would_be_one_dbt_name_are_refused(in_tmp):
 def test_generate_prints_warnings_and_goes_on(in_tmp):
     result = runner.invoke(app, ["--file", str(EXAMPLES / "hackernews.dbml"), "--rows", "10"])
     assert result.exit_code == 0, result.output
-    assert "⚠️  hackernews.dbml: 1 warning" in result.output
+    assert "⚠️  hackernews.dbml: 2 warnings" in result.output
     assert "tables._dlt_loads.columns.schema_version_hash.references" in result.output
 
 
@@ -194,7 +194,7 @@ def test_validate_prints_every_issue_with_its_path_and_exits_1(tmp_path):
 def test_validate_exits_0_on_warnings_alone(tmp_path):
     result = runner.invoke(app, ["validate", str(EXAMPLES / "hackernews.dbml")])
     assert result.exit_code == 0
-    assert "⚠️  hackernews.dbml: 1 warning" in result.output
+    assert "⚠️  hackernews.dbml: 2 warnings" in result.output
     assert "conforms to spec 0.2.0" in result.output
 
 

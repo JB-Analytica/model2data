@@ -15,6 +15,25 @@ def format_path(parts: Iterable[PathPart]) -> str:
 
 
 @dataclass(frozen=True)
+class Suggestion:
+    """A change that resolves a warning, for a tool to offer as a one-click fix.
+
+    Set the value at `path` (a document path, as `Issue.path`) to `value`: a
+    string, or a tuple a tool writes as a YAML list. `spec`, when set, is the
+    spec version the document must then say (`model2data:`), because `value`
+    uses what that version added.
+    """
+
+    path: str
+    value: Union[str, tuple[str, ...]]
+    spec: Union[str, None] = None
+
+    def to_dict(self) -> dict:
+        value = list(self.value) if isinstance(self.value, tuple) else self.value
+        return {"path": self.path, "value": value, "spec": self.spec}
+
+
+@dataclass(frozen=True)
 class Issue:
     """One thing wrong with a document: where it is, and what is wrong with it.
 
@@ -26,12 +45,15 @@ class Issue:
     `severity` is `"error"` for a way the document does not conform, and
     `"warning"` for one the spec asks a reader to point out in a document that
     still conforms (a reference onto a column that is not a key).
+    `suggestion`, on some warnings, is the change that resolves it.
     """
 
     path: str
     message: str
     line: Union[int, None] = None
     severity: Literal["error", "warning"] = "error"
+    # A fix a tool can apply for the user (a warning's suggested hint).
+    suggestion: Union[Suggestion, None] = None
 
     @property
     def is_error(self) -> bool:

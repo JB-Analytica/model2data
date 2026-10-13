@@ -67,8 +67,10 @@ from model2data.dbt.tests import DbtTest, dbt_tests
 from model2data.defects.checks import Columns, as_seeded, failing, fails
 from model2data.defects.report import AppliedDefect, DefectsReport, ExpectedFailure
 from model2data.generate import kinds
+from model2data.generate.core import parent_rules_for
 from model2data.generate.days import DayResult, TableDay
 from model2data.generate.history import IS_CURRENT, VALID_FROM, VALID_TO, history_key, primary_key
+from model2data.generate.parents import ParentRule, floor_on_day, moments
 from model2data.model.engine import EngineInputs, to_engine
 from model2data.model.types import Defect, Model
 from model2data.parse.dbml import ColumnDef, TableDef
@@ -111,8 +113,11 @@ class _Table:
         refs: list[dict],
         results: Optional[list[DayResult]],
         incremental: Any,
+        rules: Sequence[ParentRule] = (),
     ):
         self.key = key
+        # The columns whose `after` names a parent's column (see generate.parents).
+        self.rules = list(rules)
         self.table = table
         self.frames = frames
         self.frame = frames[key]
@@ -533,7 +538,7 @@ def _late_arriving(table: _Table, defect: Defect, rng: random.Random, count: int
     ]
     temporal = [c for c in table.columns if table.is_temporal(c)]
     candidates = table.free(candidates, temporal)
-    chosen = _choose(rng, candidates, count, set())
+    chosen = _choose(rng, candidates, count, _before_parents_once_late(table, candidates, name))
     patches: list[_Patch] = []
     # Earliest day first: a row moved back lowers what the loader has seen on later days.
     for position in sorted(chosen, key=lambda p: (table.inserted_day[p], p)):
@@ -632,6 +637,40 @@ def _event_column(table: _Table) -> Optional[str]:
     if table.incremental is not None and table.incremental.updated_at:
         return table.incremental.updated_at
     return next((c for c in table.columns if table.is_temporal(c)), None)
+
+
+def _before_parents_once_late(table: _Table, candidates: list[int], name: str) -> set[int]:
+    """The candidates moving back would date before a parent row (see generate.parents).
+
+    A late-arriving row is moved back past the previous load's cutoff, every date of
+    it; a date with a cross-table `after` can then fall before its parent, which the
+    dbt test `model2data_not_before_parent` reports. Rows that stay clear of their
+    parents are taken first, so the defect breaks the incremental model it is meant
+    to and no test besides.
+    """
+    if not table.rules or not candidates:
+        return set()
+    checks = [
+        (
+            floor_on_day(table.frame, rule, table.frames).tolist(),
+            moments(table.frame[rule.column], rule.kind).tolist(),
+        )
+        for rule in table.rules
+    ]
+    values = table.frame[name].tolist()
+    cutoffs: dict[int, Any] = {}
+    risky = set()
+    for position in candidates:
+        day = table.inserted_day[position]
+        if day not in cutoffs:
+            cutoffs[day] = table.loaded_max(day - 1, name)
+        cutoff, moment, back = cutoffs[day], _moment(values[position]), 1
+        while cutoff is not None and moment - timedelta(days=back) >= cutoff:
+            back += 1
+        # A null foreign key or date gives NaT, which compares false.
+        if any(own[position] - pd.Timedelta(days=back) < floor[position] for floor, own in checks):
+            risky.add(position)
+    return risky
 
 
 def _moment(value: Any) -> datetime:
@@ -818,6 +857,7 @@ def break_tables(
 
     applied: Applied = []
     tables: dict[str, _Table] = {}
+    rules = parent_rules_for(inputs.tables, inputs.refs)
     for key, entries in defects.items():
         if key not in inputs.tables:
             raise ValueError(f"defects name the table {key!r}, which is not in the model")
@@ -840,6 +880,7 @@ def break_tables(
                     inputs.refs,
                     results,
                     inputs.incremental.get(target),
+                    rules.get(target, []),
                 )
             table = tables[target]
             rng = random.Random(defect_stream_seed(base_seed, key, defect))

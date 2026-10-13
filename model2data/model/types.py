@@ -1,4 +1,4 @@
-"""The model as typed values: what a spec 0.4.0 (or 0.2.x, 0.3.x) document says, read.
+"""The model as typed values: what a spec 0.5.0 (or 0.2.x-0.4.x) document says, read.
 
 Every class is a plain, comparable dataclass, so `load(dump(m)) == m` means
 what it says. A value left out of the document is the class default (`None`,

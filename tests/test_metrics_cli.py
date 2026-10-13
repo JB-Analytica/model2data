@@ -99,7 +99,7 @@ def test_validate_refuses_a_metrics_file_whose_model_does_not_conform(tmp_path):
 def test_validate_mixes_models_and_metrics_files(tmp_path):
     result = _invoke(["validate", COFFEE, COFFEE_METRICS], tmp_path)
     assert result.exit_code == 0, result.output
-    assert "conforms to spec 0.2.0" in result.output
+    assert "conforms to spec 0.5.0" in result.output
     assert "conforms to metrics spec 0.1.0" in result.output
     assert "✅ 2 model files conform." in result.output
 

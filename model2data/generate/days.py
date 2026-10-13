@@ -89,6 +89,7 @@ from model2data.generate.faker import (
 )
 from model2data.generate.hints import validate_hints
 from model2data.generate.options import UNIFORM, TimeProfile, validate_skew
+from model2data.generate.parents import ParentRule, floor_on_day, parent_rules
 from model2data.generate.relationships import build_fk_lookup, classify_refs
 from model2data.generate.timeline import HOUR_WEIGHTS, _build_dependencies, _topological_order
 from model2data.generate.when import SeedFor, apply_when, end_of_day, update_when
@@ -253,6 +254,7 @@ def iter_days(
         anchor=anchor,
         seed=seed,
         table_seeds=seeds,
+        rules=parent_rules(tables, fk_refs, order),
     )
     state = dict(frames)
     for day in range(1, days + 1):
@@ -332,6 +334,7 @@ class _Engine:
     day_date: date = field(default_factory=date.today)
     warnings: list[str] = field(default_factory=list)
     states: dict[str, pd.DataFrame] = field(default_factory=dict)
+    rules: dict[str, list[ParentRule]] = field(default_factory=dict)
 
     # -- one table, one day ---------------------------------------------
     def advance(
@@ -620,7 +623,7 @@ class _Engine:
             and kinds.is_integer_type(column.data_type)
         ):
             held = state[column.name].dropna()
-            start = int(held.max()) + 1 if len(held) else 0
+            start = int(held.max()) + 1 if len(held) else 1
             return list(range(start, start + count))
         values = generate_column_values(
             column=column,
@@ -715,6 +718,7 @@ class _Engine:
             moments = self._timestamps(len(frame), profile)
             stamps[name] = pd.Series(moments, index=frame.index).where(present, pd.NaT)
         if not only_updated_at:
+            self._after_parents(table, frame, stamps)
             self._order(table, frame, by_name, stamps)
         for name, series in stamps.items():
             if name == inc.updated_at:
@@ -725,6 +729,30 @@ class _Engine:
             if kinds.temporal_kind(column.data_type) == "timestamp":
                 latest = pd.DataFrame(stamps).max(axis=1)
                 frame[inc.updated_at] = _format(latest)
+
+    def _after_parents(
+        self, table: TableDef, frame: pd.DataFrame, stamps: dict[str, pd.Series]
+    ) -> None:
+        """A new row's timestamp is not before the parent its `after` names (generate.parents).
+
+        Only a parent inserted the same day can be later: every other one is
+        from an earlier day. Such a row is moved to a time between its latest
+        parent and the end of the day, evenly. A date column falls on the day,
+        which is never before a parent's.
+        """
+        end = pd.Timestamp(self._day_start()) + pd.Timedelta(seconds=86399)
+        for rule in self.rules.get(table.name, []):
+            if rule.column not in stamps:
+                continue
+            floor = floor_on_day(frame, rule, self.states)
+            current = stamps[rule.column]
+            late = current.notna() & floor.notna() & (current < floor)
+            moved = current.copy()
+            for label in frame.index[late.to_numpy()]:
+                lower = floor.at[label]
+                room = max(0, int((end - lower).total_seconds()))
+                moved.at[label] = lower + pd.Timedelta(seconds=random.randint(0, room))
+            stamps[rule.column] = moved
 
     def _timestamps(self, count: int, profile: TimeProfile) -> pd.DatetimeIndex:
         if profile.business_hours:

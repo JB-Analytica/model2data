@@ -1,4 +1,4 @@
-"""The model2data model: spec 0.4.0 (and 0.2.x, 0.3.x), read, checked, written, and generated from.
+"""The model2data model: spec 0.5.0 (and 0.2.x-0.4.x), read, checked, written, and generated from.
 
 A model is one document -- `<name>.model2data.yml`, or the same in JSON -- as
 `model2data/spec/README.md` and `model2data/spec/model.schema.json` define it.
@@ -17,7 +17,7 @@ from model2data.model.dbml import from_dbml
 from model2data.model.document import from_dict, to_dict
 from model2data.model.dump import dump
 from model2data.model.engine import EngineInputs, run_as_of, to_engine
-from model2data.model.errors import Issue, ModelError
+from model2data.model.errors import Issue, ModelError, Suggestion
 from model2data.model.reader import load, validate
 from model2data.model.types import (
     DEFECT_PRESETS,
@@ -58,6 +58,7 @@ __all__ = [
     "Relationship",
     "Run",
     "Shape",
+    "Suggestion",
     "Table",
     "dump",
     "from_dbml",

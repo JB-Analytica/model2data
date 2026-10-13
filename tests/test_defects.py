@@ -146,7 +146,12 @@ def test_an_empty_defects_list_is_kept():
 
 
 def test_a_0_2_model_given_defects_is_written_as_0_3():
-    model = load((EXAMPLES / "ecommerce.model2data.yml").read_text())
+    model = load(
+        (EXAMPLES / "ecommerce.model2data.yml")
+        .read_text()
+        .replace("0.5.0", "0.2.0")
+        .replace("generate: {after: customers.created_at}", "description: placed")
+    )
     assert model.version == "0.2.0"
     assert to_dict(model)["model2data"] == "0.2.0"
     assert dump(model).splitlines()[0].endswith("/spec/0.2.0/model.schema.json")
@@ -161,7 +166,8 @@ def test_the_version_as_a_yaml_number_0_3_is_read():
     assert schema_url(0.3).endswith("/0.3.0/model.schema.json")
     assert schema_url(0.2).endswith("/0.2.0/model.schema.json")
     # A version it does not name points at the current spec.
-    assert schema_url(None).endswith("/0.4.0/model.schema.json")
+    assert schema_url(0.4).endswith("/0.4.0/model.schema.json")
+    assert schema_url(None).endswith("/0.5.0/model.schema.json")
     assert schema_url(0.4).endswith("/0.4.0/model.schema.json")
 
 

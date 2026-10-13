@@ -39,7 +39,7 @@ import re
 import warnings
 from typing import Any, Optional
 
-from model2data.model.document import from_dict
+from model2data.model.document import from_dict, uses_0_5_after
 from model2data.model.errors import Issue, ModelError
 from model2data.model.types import Model
 
@@ -197,12 +197,17 @@ class _Converter:
             if self._named("the table", table.name, f"tables.{key}"):
                 self.tables[key] = self._table(key, table)
         document["tables"] = self.tables
-        # A note hint `when` is spec 0.4.0: the document says so, and any other stays 0.2.0.
-        if any(
-            isinstance(column, dict) and "when" in (column.get("generate") or {})
+        # A note hint `when` is spec 0.4.0, and an `after` that is a list or names a
+        # parent's column 0.5.0: the document says so, and any other stays 0.2.0.
+        generates = [
+            column.get("generate") or {}
             for table in self.tables.values()
             for column in (table.get("columns") or {}).values()
-        ):
+            if isinstance(column, dict)
+        ]
+        if any(uses_0_5_after(generate.get("after")) for generate in generates):
+            document["model2data"] = "0.5.0"
+        elif any("when" in generate for generate in generates):
             document["model2data"] = "0.4.0"
 
         relationships = self._refs()
