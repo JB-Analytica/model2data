@@ -550,7 +550,7 @@
  },
  "metrics": {
   "dbt_det/coffee_webshop.metrics.yml": "16981620dc46a34c01f2c6cfc36644522bf9c5a80defb49206cc2a82eca67c32",
-  "dbt_det/coffee_webshop.model2data.yml": "596c24c87f0fed5b4c18a32c3f14af162ccc8c0dc3a278df1f73cd3f4b434079",
+  "dbt_det/coffee_webshop.model2data.yml": "e5b116739df19fdfcfea9ecb2290d731b36eca203afe0d0925c0b42b83250e1b",
   "dbt_det/data-tests/metrics/metric_average_order_value.sql": "9292cf214a82e05011817057157da7eaa467baf5fda2443a80a826b2302c0bd6",
   "dbt_det/data-tests/metrics/metric_coffee_units_sold.sql": "6e9d8b6182348163d5311790f71c5b41875c26b8cd7e96aa064075ba1849d19f",
   "dbt_det/data-tests/metrics/metric_order_items_count.sql": "3d0e8d87ceb9c396106908800b18872c499f9927b634780868271d003df3a415",

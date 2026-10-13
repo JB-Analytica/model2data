@@ -80,7 +80,7 @@ tables:
       order_date:
         type: timestamp
         not_null: true
-        generate: {business_hours: true, seasonality: 0.5, after: customers.created_at}
+        generate: {after: customers.created_at, business_hours: true, seasonality: 0.5}
       shipped_at:
         type: timestamp
         generate: {after: order_date}
