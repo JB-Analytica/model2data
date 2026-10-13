@@ -83,7 +83,7 @@ def test_a_nullable_enum_column_takes_the_default_null_rate():
 def test_uniform_generation_reproduces_pre_1_5_frames():
     """A run that passes no shaping option at all must still produce exactly
     what 1.4.0 produced with the same seed -- this is the guard rail every
-    later change in this module works against. Re-pinned in 1.15.0, whose
+    later change in this module works against. Re-pinned in 1.16.0, whose
     primary keys number the rows 1..N instead of drawing a shuffled sample, so
     every column after the key draws from a different point of the stream."""
     data = generate_data_from_dbml(

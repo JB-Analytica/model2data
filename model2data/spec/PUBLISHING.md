@@ -24,8 +24,8 @@ On the website (`JB-Analytica/jba-website`), serve this directory's files at the
 | --- | --- |
 | `https://www.jbanalytica.com/model2data/spec/metrics/0.1.0/metrics.schema.json` | `model2data/spec/metrics/metrics.schema.json` of engine 1.13.0 |
 | `https://www.jbanalytica.com/model2data/spec/metrics/0.1.0/README.md` (optional, or render it as a page) | `model2data/spec/metrics/README.md` of engine 1.13.0 |
-| `https://www.jbanalytica.com/model2data/spec/0.5.0/model.schema.json` | `model2data/spec/model.schema.json` of engine 1.15.0 |
-| `https://www.jbanalytica.com/model2data/spec/0.5.0/README.md` (optional, or render it as a page) | `model2data/spec/README.md` of engine 1.15.0 |
+| `https://www.jbanalytica.com/model2data/spec/0.5.0/model.schema.json` | `model2data/spec/model.schema.json` of engine 1.16.0 |
+| `https://www.jbanalytica.com/model2data/spec/0.5.0/README.md` (optional, or render it as a page) | `model2data/spec/README.md` of engine 1.16.0 |
 | `https://www.jbanalytica.com/model2data/spec/0.4.0/model.schema.json` | `model2data/spec/model.schema.json` of engine 1.11.0 |
 | `https://www.jbanalytica.com/model2data/spec/0.4.0/README.md` (optional, or render it as a page) | `model2data/spec/README.md` of engine 1.11.0 |
 | `https://www.jbanalytica.com/model2data/spec/0.3.0/model.schema.json` | `model2data/spec/model.schema.json` of engine 1.9.0 |
@@ -41,7 +41,7 @@ Requirements:
   Monaco playgrounds) can fetch it.
 - **`Content-Type: application/schema+json`** (or `application/json`).
 - Copy the file from the released engine version, not from a branch: the tag that ships each
-  version (0.2.0: engine 1.8.0; 0.3.0: engine 1.9.0; 0.4.0: engine 1.11.0; 0.5.0: engine 1.15.0;
+  version (0.2.0: engine 1.8.0; 0.3.0: engine 1.9.0; 0.4.0: engine 1.11.0; 0.5.0: engine 1.16.0;
   metrics 0.1.0: engine 1.13.0).
 - The metrics spec is versioned on its own, under `/spec/metrics/<version>/`, beside the model
   spec's versions; a metrics file's first line points at it the same way:

@@ -196,7 +196,7 @@ def test_no_hint_and_uniform_profile_matches_the_pre_feature_pinned_frame():
     }
     df = generate_data_from_dbml(tables, [], base_rows=8, seed=2024, as_of=ANCHOR_DATE)["events"]
 
-    # As re-pinned in 1.15.0 (integer keys numbered 1..N).
+    # As re-pinned in 1.16.0 (integer keys numbered 1..N).
     assert list(df["created_at"])[:2] == ["2025-12-07 15:29:52", "2025-05-20 12:00:46"]
 
 

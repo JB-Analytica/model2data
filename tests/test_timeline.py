@@ -55,9 +55,9 @@ def _created_updated_schema() -> dict[str, TableDef]:
 def test_uniform_profile_reproduces_pre_1_5_frames():
     """A table with no ordered pair is untouched by the ordering pass, so its
     frame under the uniform profile is byte-identical to what 1.4.0 generated --
-    but for 1.15.0's primary key, which numbers the rows 1..N instead of drawing
+    but for 1.16.0's primary key, which numbers the rows 1..N instead of drawing
     a shuffled sample, so every column after it draws from a different point of
-    the table's stream (pinned again in 1.15.0)."""
+    the table's stream (pinned again in 1.16.0)."""
     df = generate_data_from_dbml(
         _single_timestamp_and_date_schema(), [], base_rows=8, seed=2024, as_of=ANCHOR
     )["events"]

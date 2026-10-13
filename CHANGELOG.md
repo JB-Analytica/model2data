@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.16.0] - 2026-10-13
+
+The v1.15.0 GitHub release never reached PyPI (its package still said 1.14.0), so its fixes
+ship here, together with the changes below.
+
 ### Added
 - **`after` can name a parent's column.** `after: customers.created_at` on `orders.order_date`
   keeps every order on or after the `created_at` of the customer its foreign key points at (in
@@ -83,7 +88,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   from the table's random stream, so every column after it draws from a different point of it.
   Dates change only where a model uses a parent's column in `after` (the examples listed
   above now do). The same model, seed, `--as-of` and options still give the same bytes on any
-  machine and any day with 1.15.0. Pin `model2data==1.14.0` to keep fixtures of the old shape.
+  machine and any day with 1.16.0. Pin `model2data==1.14.0` to keep fixtures of the old shape.
 
 ### Fixed
 - **A `binary` column holds a short value.** `binary` is also the name of a Faker provider, and

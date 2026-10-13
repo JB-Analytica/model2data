@@ -908,7 +908,7 @@ def generate_column_values(
         elif ensure_unique and "pk" in column.settings and not had_explicit_range:
             # A table's own integer primary key numbers its rows 1..N, as an
             # identity column does: the first row is 1 and the last is N.
-            # Before 1.15 it was a shuffled sample starting at 0.
+            # Before 1.16 it was a shuffled sample starting at 0.
             values = list(range(1, row_count + 1))
         elif ensure_unique:
             if not had_explicit_range:

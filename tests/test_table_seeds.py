@@ -116,7 +116,7 @@ class TestReRollingOneTable:
         assert set(rolled["order_items"]["order_id"]) <= set(rolled["orders"]["id"])
 
     def test_the_re_rolled_parent_holds_new_rows_under_the_same_numbering(self):
-        """An integer key numbers the rows 1..N (1.15.0), so a re-rolled parent
+        """An integer key numbers the rows 1..N (1.16.0), so a re-rolled parent
         keeps its ids and every child still points at a row that exists; the rows
         behind those ids are new."""
         baseline = _generate()

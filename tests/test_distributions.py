@@ -38,7 +38,7 @@ def test_no_distribution_hint_reproduces_pre_1_7_frames():
         )
     }
     data = generate_data_from_dbml(tables, [], base_rows=8, seed=777)
-    # Re-pinned in 1.15.0: the primary key numbers the rows 1..N rather than
+    # Re-pinned in 1.16.0: the primary key numbers the rows 1..N rather than
     # drawing a shuffled sample, so the columns after it start elsewhere in the stream.
     assert data["t"]["amount"].tolist() == [
         7784.79,
