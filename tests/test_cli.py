@@ -951,3 +951,40 @@ def test_cli_rejects_growth_below_minus_one(tmp_path):
     result = _run_shop(tmp_path, "bad_growth", "--growth", "-2")
     assert result.exit_code != 0
     assert "--growth" in _plain(result.output)
+
+
+def test_cli_summary_names_a_table_capped_by_a_unique_reference(tmp_path):
+    """A key referencing a column with fewer distinct values gets one row per value.
+
+    The reference is drawn backwards, the way ERD Studio 1.6.7 saved it: the
+    dimension's primary key points at the fact's non-unique column.
+    """
+    dbml_file = tmp_path / "backwards.dbml"
+    dbml_file.write_text(
+        """
+    Table fct_order {
+        order_id int [pk]
+        product_key int [not null, note: '{"min": 1, "max": 6}']
+    }
+
+    Table dim_product {
+        product_key int [pk]
+        product_name varchar
+    }
+
+    Ref: dim_product.product_key > fct_order.product_key
+    """
+    )
+
+    original_cwd = os.getcwd()
+    try:
+        os.chdir(tmp_path)
+        result = runner.invoke(app, ["--file", str(dbml_file), "--rows", "30", "--seed", "3"])
+    finally:
+        os.chdir(original_cwd)
+
+    assert result.exit_code == 0
+    output = _plain(result.stdout)
+    assert "Tables generated with fewer rows than asked" in output
+    assert "dim_product: 6 rows, not 30 (product_key is a unique reference to" in output
+    assert "Unique columns left with duplicate values" not in output

@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- **A `binary` column holds a short value.** `binary` is also the name of a Faker provider, and
+  the generic fallback called it, which returns a whole MiB of random bytes per value: about 3 MB
+  of text per CSV cell, so a 50-row table with two binary hash keys wrote a 391 MB seed that dbt's
+  seed loader refused outright. `binary`, `varbinary`, `bytea`, `blob` and `bytes` columns now
+  hold 16 random bytes from the seeded stream, written as 32 hex characters (an MD5-sized hash
+  key), and stay unique when they are a key. `varbinary`, `bytea` and `blob` used to fall back to
+  placeholder text and are listed among the generic-fallback columns no more.
+- **A key that references a column with fewer distinct values caps its table.** A `pk` or
+  `unique` column referencing another table's column takes each parent value once, so a table
+  asked for more rows than that column holds distinct values repeated some, and failed its own
+  generated `unique` test. The commonest source is a reference drawn the wrong way round
+  (`Ref: dim_product.product_key > fct_order.product_key`, as ERD Studio 1.6.7 saved it and its
+  DBML export writes it). The table now gets one row per distinct parent value, and the summary
+  names it, its row count and the reference that set it, the way `generate --days` already stops
+  adding rows once a one-to-one reference runs out of parents.
+
+A model with no byte column, and no key referencing a column short of distinct values, writes
+byte for byte what 1.14.0 wrote.
+
 ## [1.14.0] - 2026-10-07
 
 ### Added

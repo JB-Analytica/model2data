@@ -29,6 +29,7 @@ from model2data.defects import (
 )
 from model2data.generate.core import (
     generate_data_from_dbml,
+    get_capped_tables,
     get_cyclic_tables,
     get_unresolved_composite_keys,
 )
@@ -772,6 +773,7 @@ def main(
     cyclic_tables = get_cyclic_tables()
     unresolved_keys = get_unresolved_composite_keys()
     duplicate_unique = get_duplicate_unique_columns()
+    capped_tables = get_capped_tables()
 
     typer.echo("\n📊 Summary")
     typer.echo(f"  Tables generated:        {len(generated_tables)}")
@@ -809,6 +811,13 @@ def main(
             "test will fail — try a lower --rows, or widen the column's value space):"
         )
         for label in duplicate_unique:
+            typer.echo(f"    - {label}")
+    if capped_tables:
+        typer.echo(
+            "  ⚠️  Tables generated with fewer rows than asked, so a unique reference "
+            "keeps one row per parent value:"
+        )
+        for label in capped_tables:
             typer.echo(f"    - {label}")
 
     if metrics_count is not None:
