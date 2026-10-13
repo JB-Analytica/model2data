@@ -149,18 +149,20 @@ def aggregate_sql(
 # ---------------------------------------------------------------------------
 # Warehouse SQL
 # ---------------------------------------------------------------------------
-def _cast(alias: str, column: str, kind: ColumnKind) -> str:
-    return f"cast({alias}.{quote(column)} as {SQL_TYPES[kind]})"
-
-
 class _From:
-    """The `from` and `join` clauses of a simple metric, and the alias of each table in them."""
+    """The `from` and `join` clauses of a simple metric, and the alias of each table in them.
+
+    Every column the query reads is written by `column`, which also records it in `read`
+    (by table key), so `columns_read` knows them from the same code that writes them.
+    """
 
     def __init__(self, metric: ResolvedMetric, relation: Relation):
         assert metric.table is not None
         self.lines = [f"from {relation(metric.table)} as t0"]
         self.alias = {metric.table: "t0"}
+        self.read: dict[str, set[str]] = {metric.table: set()}
         by_prefix: dict[tuple, str] = {(): "t0"}
+        table_of = {"t0": metric.table}
         for table, path in metric.joins.items():
             for length in range(1, len(path) + 1):
                 prefix = path[:length]
@@ -169,13 +171,26 @@ class _From:
                 alias = f"t{len(by_prefix)}"
                 previous = by_prefix[path[: length - 1]]
                 step = path[length - 1]
+                table_of[alias] = step.parent
                 on = " and ".join(
-                    f"cast({previous}.{quote(child)} as varchar) = cast({alias}.{quote(parent)} as varchar)"
+                    f"cast({self._at(previous, table_of[previous], child)} as varchar)"
+                    f" = cast({self._at(alias, step.parent, parent)} as varchar)"
                     for child, parent in zip(step.child_columns, step.parent_columns, strict=True)
                 )
                 self.lines.append(f"left join {relation(step.parent)} as {alias} on {on}")
                 by_prefix[prefix] = alias
             self.alias[table] = by_prefix[path]
+
+    def _at(self, alias: str, table: str, column: str) -> str:
+        self.read.setdefault(table, set()).add(column)
+        return f"{alias}.{quote(column)}"
+
+    def column(self, table: str, column: str) -> str:
+        """`column` of `table` (a table key) as the query reads it, through its alias."""
+        return self._at(self.alias[table], table, column)
+
+    def cast(self, table: str, column: str, kind: ColumnKind) -> str:
+        return f"cast({self.column(table, column)} as {SQL_TYPES[kind]})"
 
 
 def _parts(
@@ -187,28 +202,51 @@ def _parts(
         table, column = find_column(semantic.model, path)
         assert table is not None and column is not None
         kind = column_kind(semantic.model, column)
-        return _cast(clauses.alias[table], path.rpartition(".")[2], kind), kind
+        return clauses.cast(table, path.rpartition(".")[2], kind), kind
 
     condition = where_sql(metric.where, column_of) if metric.where is not None else None
     value = None
     if metric.kind == "simple":
+        assert metric.table is not None
         assert metric.column is not None and metric.column_kind is not None
-        value = _cast("t0", metric.column, metric.column_kind)
+        value = clauses.cast(metric.table, metric.column, metric.column_kind)
     return aggregate_sql(metric, value, condition), clauses
+
+
+def _query(
+    semantic: SemanticModel, name: str, relation: Relation, by_month: bool
+) -> tuple[str, _From]:
+    metric = semantic.metrics[name]
+    aggregate, clauses = _parts(semantic, metric, relation)
+    joins = "\n".join(clauses.lines)
+    if not by_month:
+        return f"select {aggregate} as value\n{joins}", clauses
+    assert metric.time is not None
+    table, column = metric.time.rpartition(".")[0], metric.time.rpartition(".")[2]
+    month = f"cast(date_trunc('month', cast({clauses.column(table, column)} as timestamp)) as date)"
+    return (
+        f"select {month} as month, {aggregate} as value\n{joins}\ngroup by 1\norder by 1",
+        clauses,
+    )
 
 
 def query(semantic: SemanticModel, name: str, relation: Relation, *, by_month: bool = False) -> str:
     """A simple metric or row count as a query: one row with its `value`, or, `by_month`, a
     row per calendar month of its time column (`month` the month's first day)."""
+    return _query(semantic, name, relation, by_month)[0]
+
+
+def columns_read(semantic: SemanticModel, name: str) -> dict[str, set[str]]:
+    """Every column `query` reads for a simple metric or row count, by table key, its
+    `by_month` query's time column included: the columns its aggregate, filter, time and
+    joins name. Every table the query reads is a key, the metric's own table always, even
+    when no column of it is named (a row count with no filter: `count(*)`).
+
+    Recorded while the query is written rather than found in its text, so it cannot
+    miss a column however the column is quoted or aliased.
+    """
     metric = semantic.metrics[name]
-    aggregate, clauses = _parts(semantic, metric, relation)
-    joins = "\n".join(clauses.lines)
-    if not by_month:
-        return f"select {aggregate} as value\n{joins}"
-    assert metric.time is not None
-    table, column = metric.time.rpartition(".")[0], metric.time.rpartition(".")[2]
-    month = f"cast(date_trunc('month', cast({clauses.alias[table]}.{quote(column)} as timestamp)) as date)"
-    return f"select {month} as month, {aggregate} as value\n{joins}\ngroup by 1\norder by 1"
+    return _query(semantic, name, str, by_month=metric.time is not None)[1].read
 
 
 def scalar(semantic: SemanticModel, name: str, relation: Relation) -> str:
