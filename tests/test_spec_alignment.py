@@ -9,10 +9,11 @@ import pandas as pd
 import pytest
 
 from model2data.generate import kinds
-from model2data.generate.core import generate_data_from_dbml
+from model2data.generate.core import generate_data_from_dbml, get_capped_tables
 from model2data.generate.faker import (
     generate_column_values,
     get_duplicate_unique_columns,
+    is_free_text_type,
     reset_duplicate_unique_columns,
 )
 from model2data.generate.hints import validate_hints
@@ -113,6 +114,137 @@ def test_a_unique_foreign_key_takes_each_parent_at_most_once():
     user_ids = data["profiles"]["user_id"]
     assert user_ids.is_unique
     assert user_ids.isin(data["users"]["id"]).all()
+
+
+@pytest.mark.parametrize("data_type", ["binary", "BINARY", "varbinary", "bytea", "blob", "bytes"])
+def test_a_byte_column_is_short_hex_text(data_type):
+    # `binary` is also a Faker provider; reaching it returned 1 MiB per value,
+    # about 3 MB of text per CSV cell, which dbt's seed loader refuses.
+    column = ColumnDef("hk", data_type, {"pk"})
+    values = generate_column_values(column, row_count=200, ensure_unique=True)
+    assert all(isinstance(v, str) and len(v) == 32 for v in values)
+    assert all(int(v, 16) >= 0 for v in values)
+    assert len(set(values)) == 200
+    # Written as text, so the seed column has to load as VARCHAR.
+    assert is_free_text_type(data_type)
+
+
+def _backwards_reference(parent_values: int, child_rows: int):
+    """A dimension whose key references a fact's non-unique column.
+
+    The shape ERD Studio 1.6.7 saved and its DBML export writes as stored:
+    `Ref: dim_product.product_key > fct_order.product_key`.
+    """
+    tables = {
+        "fct_order": TableDef(
+            "fct_order",
+            [
+                ColumnDef("order_id", "int", {"pk"}),
+                ColumnDef(
+                    "product_key", "int", {"not null"}, note={"min": 1, "max": parent_values}
+                ),
+            ],
+        ),
+        "dim_product": TableDef(
+            "dim_product",
+            [ColumnDef("product_key", "int", {"pk"}), ColumnDef("product_name", "varchar", set())],
+        ),
+    }
+    refs = [
+        {
+            "source_table": "dim_product",
+            "source_column": "product_key",
+            "target_table": "fct_order",
+            "target_column": "product_key",
+        }
+    ]
+    return generate_data_from_dbml(
+        tables,
+        refs,
+        base_rows=200,
+        row_overrides={"dim_product": child_rows},
+        seed=7,
+        as_of=AS_OF,
+    )
+
+
+def test_a_unique_reference_to_too_few_parent_values_caps_the_table():
+    data = _backwards_reference(parent_values=12, child_rows=50)
+    keys = data["dim_product"]["product_key"]
+    distinct = data["fct_order"]["product_key"].nunique()
+    assert distinct == 12
+    assert len(keys) == distinct
+    assert keys.is_unique
+    assert keys.isin(data["fct_order"]["product_key"]).all()
+    assert get_duplicate_unique_columns() == []
+    assert get_capped_tables() == [
+        "dim_product: 12 rows, not 50 (product_key is a unique reference to "
+        "fct_order.product_key, which holds 12 distinct value(s))"
+    ]
+
+
+def test_a_unique_reference_with_enough_parent_values_keeps_its_row_count():
+    data = _backwards_reference(parent_values=150, child_rows=50)
+    assert len(data["dim_product"]) == 50
+    assert data["dim_product"]["product_key"].is_unique
+    assert get_capped_tables() == []
+
+
+def test_a_unique_self_reference_is_not_capped():
+    tables = {
+        "employee": TableDef(
+            "employee",
+            [
+                ColumnDef("employee_id", "int", {"pk"}),
+                ColumnDef("buddy_id", "int", {"unique"}),
+            ],
+        )
+    }
+    refs = [
+        {
+            "source_table": "employee",
+            "source_column": "buddy_id",
+            "target_table": "employee",
+            "target_column": "employee_id",
+        }
+    ]
+    data = generate_data_from_dbml(tables, refs, base_rows=20, seed=1, as_of=AS_OF)
+    assert len(data["employee"]) == 20
+    assert get_capped_tables() == []
+
+
+def test_a_unique_reference_into_a_table_generated_later_is_not_capped():
+    # A cycle broken at a nullable link generates `accounts` before `users`, so
+    # at the cap there is no parent column to count yet: nothing to cap against.
+    tables = {
+        "accounts": TableDef(
+            "accounts",
+            [ColumnDef("id", "int", {"pk"}), ColumnDef("owner_user_id", "int", {"unique"})],
+        ),
+        "users": TableDef(
+            "users",
+            [ColumnDef("id", "int", {"pk"}), ColumnDef("account_id", "int", {"not null"})],
+        ),
+    }
+    refs = [
+        {
+            "source_table": "accounts",
+            "source_column": "owner_user_id",
+            "target_table": "users",
+            "target_column": "id",
+        },
+        {
+            "source_table": "users",
+            "source_column": "account_id",
+            "target_table": "accounts",
+            "target_column": "id",
+        },
+    ]
+    data = generate_data_from_dbml(
+        tables, refs, base_rows=20, row_overrides={"users": 5}, seed=2, as_of=AS_OF
+    )
+    assert len(data["accounts"]) == 20
+    assert get_capped_tables() == []
 
 
 def test_a_unique_foreign_key_with_too_few_parents_is_reported():
