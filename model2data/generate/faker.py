@@ -872,6 +872,14 @@ def generate_column_values(
             values = _deduplicate(values, _seeded_uuid, column_name=unique_label)
 
     # -----------------------------------------------------
+    # Raw bytes
+    # -----------------------------------------------------
+    elif base_type in _BYTE_TYPES:
+        values = [_seeded_bytes_hex() for _ in range(row_count)]
+        if ensure_unique:
+            values = _deduplicate(values, _seeded_bytes_hex, column_name=unique_label)
+
+    # -----------------------------------------------------
     # Integers
     # -----------------------------------------------------
     elif is_integer_type(base_type):
@@ -1362,6 +1370,24 @@ def _paragraphs_text(provider: _LoremProvider, max_nb_chars: int) -> str:
             size += len(paragraph)
         text.pop()
     return "".join(text)
+
+
+# Declared types that hold raw bytes. A seed is CSV, so their values are written
+# as hex text (the seed column is VARCHAR, see `is_free_text_type`). `binary`
+# needs this most: it is also the name of a Faker provider, and the generic
+# fallback used to call it, which returns a whole MiB of random bytes per value
+# -- 3 MB of text per cell, past what dbt's CSV seed loader will read.
+_BYTE_TYPES = frozenset({"binary", "varbinary", "bytea", "blob", "bytes"})
+
+
+def _seeded_bytes_hex() -> str:
+    """16 random bytes from the seeded stream, as 32 hex characters.
+
+    The width of an MD5 digest, the commonest thing a binary key column holds
+    (a Data Vault hash key, a content hash), and wide enough that a unique
+    column never needs a second draw in practice.
+    """
+    return f"{random.getrandbits(128):032x}"
 
 
 def _seeded_uuid() -> str:

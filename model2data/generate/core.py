@@ -67,6 +67,61 @@ def get_unresolved_composite_keys() -> list[str]:
     return list(_dedup_state["unresolved_composite_keys"])
 
 
+# Tables the most recent run generated with fewer rows than asked, because a
+# `pk` or `unique` column of theirs references another table's column: each row
+# needs a parent value of its own, so the table cannot outgrow the parent
+# column's distinct values. Asking for more used to repeat parent values in a
+# key column and fail its generated `unique` test.
+_capped_tables: list[str] = []
+
+
+def reset_capped_tables() -> None:
+    """Clear the record of tables cut to fit a unique reference."""
+    _capped_tables.clear()
+
+
+def get_capped_tables() -> list[str]:
+    """Return "table: N rows, not M (reason)" labels for tables cut to fit."""
+    return list(_capped_tables)
+
+
+def _unique_reference_cap(
+    table_def: TableDef,
+    table_name: str,
+    fk_lookup: dict[tuple[str, str], tuple[str, str]],
+    generated: dict[str, pd.DataFrame],
+    row_count: int,
+) -> tuple[int, Optional[str]]:
+    """The rows this table can hold with every unique referencing column unique.
+
+    A `pk` or `unique` column that references a column of an already-generated
+    table takes each parent value at most once, so the table holds at most as
+    many rows as that parent column holds distinct values. Self-references are
+    left alone (the parent column is this table's own, built in the same pass),
+    and so is a parent with no values at all, which a cap of zero would not
+    help. Returns the row count to use and, when it is lower, why.
+    """
+    capped, reason = row_count, None
+    for column in table_def.columns:
+        if "pk" not in column.settings and "unique" not in column.settings:
+            continue
+        fk_target = fk_lookup.get((table_name, column.name))
+        if not fk_target or fk_target[0] == table_name:
+            continue
+        parent_table, parent_column = fk_target
+        parent_df = generated.get(parent_table)
+        if parent_df is None or parent_column not in parent_df.columns:
+            continue
+        distinct = int(parent_df[parent_column].dropna().nunique())
+        if 0 < distinct < capped:
+            capped = distinct
+            reason = (
+                f"{column.name} is a unique reference to {parent_table}.{parent_column}, "
+                f"which holds {distinct} distinct value(s)"
+            )
+    return capped, reason
+
+
 # ---------------------------------------------------------
 # Public API
 # ---------------------------------------------------------
@@ -145,6 +200,7 @@ def generate_data_from_dbml(
     reset_cycle_state()
     reset_dedup_state()
     reset_duplicate_unique_columns()
+    reset_capped_tables()
     reset_row_pools()
 
     # ---------------------------------------------------------
@@ -162,6 +218,12 @@ def generate_data_from_dbml(
     for table_name in ordered_tables:
         table_def = tables[table_name]
         row_count = _determine_row_count(table_def.name, base_rows, row_overrides)
+        asked = row_count
+        row_count, cap_reason = _unique_reference_cap(
+            table_def, table_name, fk_lookup, generated, row_count
+        )
+        if cap_reason is not None:
+            _capped_tables.append(f"{table_name}: {row_count} rows, not {asked} ({cap_reason})")
 
         # Give this table its own RNG stream before a single value of it is
         # drawn. One stream for the whole run meant re-rolling a table
