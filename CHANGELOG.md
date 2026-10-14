@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [1.16.1] - 2026-10-13
+## [1.16.1] - 2026-10-14
 
 Output is byte-identical to 1.16.0: the same model, seed and `--as-of` write the same files.
 
