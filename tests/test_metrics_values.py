@@ -180,6 +180,21 @@ def test_a_metric_without_time_has_no_months(values):
     assert values["with_undated"].by_month is None
 
 
+def test_a_duplicated_parent_key_does_not_repeat_rows_in_a_total():
+    # Lines are dated by their order: the total joins no order, so a repeated order 1
+    # (as the `messy` defects preset repeats keys) cannot count lines 1 and 2 twice.
+    frames = _frames()
+    frames["orders"] = pd.concat([frames["orders"], frames["orders"].iloc[[0]]])
+    semantic = resolve(SHOP, load(METRICS, SHOP))
+    found = known_values(semantic, frames, seed=3, as_of="2025-03-01").values
+    assert found["lines_qty"].value == 11  # not 16, lines 1 and 2 again
+    assert found["lines_count"].value == 5
+    assert "join" not in query(semantic, "lines_qty", quote)
+    assert "join" in query(semantic, "lines_qty", quote, by_month=True)
+    # A filter on the order still needs it, and only it.
+    assert query(semantic, "paid_or_big", quote).count("left join") == 1
+
+
 def test_the_json_is_stable_text():
     metrics = load(
         "model2data-metrics: 0.1.0\nmodel: shop\ninfer: false\nmetrics:\n"
