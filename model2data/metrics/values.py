@@ -13,6 +13,10 @@ How the values are computed:
   any case) being null as dbt's seed loader reads them. Each column a metric
   touches is then cast to the SQL type of its kind, in the same SQL the dbt
   tests run (`model2data.metrics.sql`). DuckDB runs it, on one thread.
+- Only the columns some metric's query reads are read (`columns_read`), so a
+  wide table costs what its few metric columns cost. That gives the same
+  values: a column's CSV text depends on that column alone, and a query cannot
+  see a column it does not name.
 - Simple metrics and row counts are SQL aggregates. A ratio is its
   numerator's total over its denominator's, null when the denominator is null
   or zero; a derived metric is its expression over its inputs' totals, with
@@ -44,7 +48,7 @@ import pandas as pd
 from model2data.metrics import expression as expr
 from model2data.metrics.check import SPEC_VERSION
 from model2data.metrics.semantic import ResolvedMetric, SemanticModel
-from model2data.metrics.sql import query, quote
+from model2data.metrics.sql import columns_read, query, quote
 
 Number = Union[int, Decimal]
 _PLACES = Decimal("0.000001")
@@ -144,15 +148,42 @@ def _empty(metric: ResolvedMetric) -> Optional[Number]:
     return 0 if metric.kind == "count" or metric.agg in ("count", "count_distinct") else None
 
 
-def _as_text(frame: pd.DataFrame) -> pd.DataFrame:
-    """`frame` as its seed file reads back: every column text, `""` and `null` null."""
-    buffer = io.StringIO(frame.to_csv(index=False))
-    text = pd.read_csv(buffer, dtype=str, keep_default_na=False, na_values=[], na_filter=False)
-    return text.apply(lambda column: column.map(_null_or_text)).astype(object)
+def _text_columns(frame: pd.DataFrame, columns: list[Any]) -> pd.DataFrame:
+    """`columns` of `frame` as its seed file reads them back: every value the text of its
+    CSV field, nulls left as `""` (`_NULL_OR_TEXT` makes them null in DuckDB).
+
+    pandas writes each column of a CSV by that column's own type and values, and quotes
+    each field on its own, so a column's text is the same whether the other columns are
+    written beside it or not. One column with an empty field is written as `""`, not as
+    a blank line, so no row is lost when a single column is written. Read as `object`
+    rather than `str`: with no NA filtering every field is a Python string either way, and
+    pandas 3 reads `str` as its own string type, which DuckDB cannot scan.
+    """
+    buffer = io.StringIO(frame[columns].to_csv(index=False))
+    return pd.read_csv(buffer, dtype=object, keep_default_na=False, na_values=[], na_filter=False)
 
 
-def _null_or_text(value: Any) -> Any:
-    return None if value == "" or str(value).lower() == "null" else value
+# What dbt's seed loader reads as null: an empty field, or `null` in any case. The letters
+# are spelled out rather than compared with `lower()`, which folds non-ASCII letters too:
+# in Python only `n`, `u`, `l` and their capitals lower to those letters, so these are
+# exactly the fields for which `field.lower() == "null"`.
+_NULL_OR_TEXT = (
+    "case when {value} = '' or regexp_full_match({value}, '[Nn][Uu][Ll][Ll]') "
+    "then null else {value} end"
+)
+
+
+def _kept(frame: pd.DataFrame, read: set[str]) -> list[Any]:
+    """The columns of `frame` to load, in its order: those the queries read.
+
+    DuckDB matches identifiers without regard to case, so a column is kept when any name
+    read folds to its name; keeping one more than needed costs only memory. A table whose
+    rows a metric counts without naming any of its columns (`count(*)`) keeps its first
+    column, which has a value, or a null, on every row, so the count is the same.
+    """
+    folded = {name.casefold() for name in read}
+    kept = [column for column in frame.columns if str(column).casefold() in folded]
+    return kept or list(frame.columns[:1])
 
 
 def known_values(
@@ -165,35 +196,41 @@ def known_values(
     """Every metric of `semantic` over `frames` (by table key: what the seeds hold)."""
     import duckdb
 
+    computed = [
+        name for name, metric in semantic.metrics.items() if metric.kind in ("simple", "count")
+    ]
+    read: dict[str, set[str]] = {}
+    for name in computed:
+        for table, columns in columns_read(semantic, name).items():
+            read.setdefault(table, set()).update(columns)
+    keys = [table for table in semantic.entities if table in read]
+    for key in keys:
+        if key not in frames:
+            raise ValueError(f"no generated rows for table {key!r}, which a metric reads")
+    names = {key: f"m2d_{index}" for index, key in enumerate(keys)}
+    relation = names.__getitem__
+
     connection = duckdb.connect(":memory:")
     try:
         connection.execute("set threads = 1")
-        names: dict[str, str] = {}
-        used = {
-            table
-            for metric in semantic.metrics.values()
-            if metric.table is not None
-            for table in (metric.table, *metric.joins)
-        }
-        for index, key in enumerate(table for table in semantic.entities if table in used):
-            if key not in frames:
-                raise ValueError(f"no generated rows for table {key!r}, which a metric reads")
-            names[key] = f"m2d_{index}"
-            text = _as_text(frames[key])
+        for key in keys:
+            # One table's text at a time: it is freed once DuckDB holds its own copy.
+            text = _text_columns(frames[key], _kept(frames[key], read[key]))
             connection.register(f"{names[key]}_frame", text)
-            columns = ", ".join(f"cast({quote(c)} as varchar) as {quote(c)}" for c in text.columns)
+            columns = ", ".join(
+                f"{_NULL_OR_TEXT.format(value=f'cast({quote(c)} as varchar)')} as {quote(c)}"
+                for c in text.columns
+            )
             connection.execute(
                 f"create table {names[key]} as select {columns} from {names[key]}_frame"
             )
             connection.unregister(f"{names[key]}_frame")
+            del text
         raw: dict[str, tuple[Any, Optional[dict[str, Any]]]] = {}
-        for name, metric in semantic.metrics.items():
-            if metric.kind not in ("simple", "count"):
-                continue
-            relation = names.__getitem__
+        for name in computed:
             total = connection.execute(query(semantic, name, relation)).fetchone()
             by_month = None
-            if metric.time is not None:
+            if semantic.metrics[name].time is not None:
                 rows = connection.execute(query(semantic, name, relation, by_month=True)).fetchall()
                 by_month = {
                     month.strftime("%Y-%m"): value for month, value in rows if month is not None

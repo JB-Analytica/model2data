@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.16.1] - 2026-10-14
+
+Output is byte-identical to 1.16.0: the same model, seed and `--as-of` write the same files.
+
+### Performance
+- **Known metric values read only the columns the metrics read.** `metric_values.json`
+  used to turn every column of every table a metric reads into text, through several
+  full copies, and load all of it into DuckDB. It now loads only the columns some metric's
+  query names (its measure, filters, time column and join keys, recorded as the query is
+  written), turns them into text one table at a time, and makes `""` and `null` null in
+  the load's SQL rather than in a pandas pass. The values are the same: a column's CSV text
+  does not depend on the columns beside it, and a query reads nothing it does not name. On
+  the `saas_platform` example at 50,000 rows, with a counts-and-a-few-measures set of
+  metrics, the extra memory falls from about 420 MB to under 60 MB and the time from 1.6 s
+  to 0.5 s; with metrics on nearly every column the saving is smaller (about 265 MB to
+  155 MB).
+
 ## [1.16.0] - 2026-10-13
 
 The v1.15.0 GitHub release never reached PyPI (its package still said 1.14.0), so its fixes
