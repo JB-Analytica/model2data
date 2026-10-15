@@ -5,11 +5,11 @@ Two dialects of the same thing:
 - **warehouse SQL** (`query`, `scalar`), which the known values run on DuckDB
   and the generated dbt tests run on DuckDB or Postgres. It reads relations a
   caller names (a DuckDB table, a dbt `ref()`), joins the tables a metric's
-  filter and time are on along their many-to-one path with `left join` (a row
-  whose parent is missing stays, and fails any filter on the parent, as a null
-  does), and casts every column it reads to the type its kind is read as
-  (`model2data.metrics.columns.SQL_TYPES`), so the answer does not depend on
-  how a CSV loader guessed the column's type.
+  filter is on (and, by month, its time) along their many-to-one path with
+  `left join` (a row whose parent is missing stays, and fails any filter on the
+  parent, as a null does), and casts every column it reads to the type its kind
+  is read as (`model2data.metrics.columns.SQL_TYPES`), so the answer does not
+  depend on how a CSV loader guessed the column's type.
 - **ANSI SQL for Ossie** (`ansi`), over `dataset.field` names, with no joins:
   an Ossie consumer joins along the relationships the document declares.
 
@@ -152,11 +152,15 @@ def aggregate_sql(
 class _From:
     """The `from` and `join` clauses of a simple metric, and the alias of each table in them.
 
+    Joins only the tables in `needed` (of `metric.joins`, in its order): a table the
+    query reads no column of stays out, so a parent with a duplicated key cannot repeat
+    the metric's rows in a query that does not need it.
+
     Every column the query reads is written by `column`, which also records it in `read`
     (by table key), so `columns_read` knows them from the same code that writes them.
     """
 
-    def __init__(self, metric: ResolvedMetric, relation: Relation):
+    def __init__(self, metric: ResolvedMetric, relation: Relation, needed: set[str]):
         assert metric.table is not None
         self.lines = [f"from {relation(metric.table)} as t0"]
         self.alias = {metric.table: "t0"}
@@ -164,6 +168,8 @@ class _From:
         by_prefix: dict[tuple, str] = {(): "t0"}
         table_of = {"t0": metric.table}
         for table, path in metric.joins.items():
+            if table not in needed:
+                continue
             for length in range(1, len(path) + 1):
                 prefix = path[:length]
                 if prefix in by_prefix:
@@ -194,9 +200,18 @@ class _From:
 
 
 def _parts(
-    semantic: SemanticModel, metric: ResolvedMetric, relation: Relation
+    semantic: SemanticModel, metric: ResolvedMetric, relation: Relation, by_month: bool
 ) -> tuple[str, _From]:
-    clauses = _From(metric, relation)
+    # The total joins what its filter reads; by month, the time column's table as well.
+    needed = (
+        {condition.column.rpartition(".")[0] for condition in metric.where.conditions()}
+        if metric.where is not None
+        else set()
+    )
+    if by_month:
+        assert metric.time is not None
+        needed.add(metric.time.rpartition(".")[0])
+    clauses = _From(metric, relation, needed)
 
     def column_of(path: str) -> tuple[str, ColumnKind]:
         table, column = find_column(semantic.model, path)
@@ -217,7 +232,7 @@ def _query(
     semantic: SemanticModel, name: str, relation: Relation, by_month: bool
 ) -> tuple[str, _From]:
     metric = semantic.metrics[name]
-    aggregate, clauses = _parts(semantic, metric, relation)
+    aggregate, clauses = _parts(semantic, metric, relation, by_month)
     joins = "\n".join(clauses.lines)
     if not by_month:
         return f"select {aggregate} as value\n{joins}", clauses

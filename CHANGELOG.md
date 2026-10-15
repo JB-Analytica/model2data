@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.16.2] - 2026-10-15
+
+Metric totals no longer count a row more than once when the table their time column is on
+repeats a key. On data without repeated keys, the data and `metric_values.json` are
+byte-identical to 1.16.1; only the SQL of some generated metric tests changes.
+
+### Fixed
+- **A metric's total no longer joins the table its time column is on.** The query for a
+  metric's total value (in `metric_values.json` and in the generated dbt test) joined every
+  table the metric's filter *or time column* is on, although the total reads no time column.
+  When the defects repeat a key in that parent table (the `messy` preset does), the join
+  repeats the metric's rows and the total comes out too high: on the `saas_platform` example
+  (seed 42, 500 rows, `messy`), the row count of `api_usage`, dated by
+  `organizations.created_at`, came out as 502 rather than 500. The total now joins only the
+  tables its filter reads; the by-month values still join the time column's table.
+  - **Output change, deliberate:** on data without repeated keys the values are the same
+    and `metric_values.json` is byte-identical, but a generated metric test whose metric is
+    dated by a parent's column now reads one table fewer, so its SQL text differs. With
+    repeated parent keys, totals change to the right numbers.
+
 ## [1.16.1] - 2026-10-14
 
 Output is byte-identical to 1.16.0: the same model, seed and `--as-of` write the same files.
