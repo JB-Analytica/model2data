@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.16.2] - 2026-10-15
+
+Metric totals no longer count a row more than once when the table their time column is on
+repeats a key. On data without repeated keys, the data and `metric_values.json` are
+byte-identical to 1.16.1; only the SQL of some generated metric tests changes.
+
 ### Fixed
 - **A metric's total no longer joins the table its time column is on.** The query for a
   metric's total value (in `metric_values.json` and in the generated dbt test) joined every
