@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- **The README and the PyPI page were rewritten** around the problem model2data solves and the
+  answer to it: the problem first, then what the engine gives you, a shortened before and after,
+  who it is for, and model2data studio with a CLI / Free / Pro comparison and its pricing. The
+  capability list and the limitations were tightened, and the limitation claiming no support for
+  incremental models, which `--days` contradicted, is gone.
+
 ## [1.16.1] - 2026-10-14
 
 Output is byte-identical to 1.16.0: the same model, seed and `--as-of` write the same files.

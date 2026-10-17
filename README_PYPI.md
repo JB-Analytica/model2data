@@ -7,100 +7,60 @@
 [![codecov](https://codecov.io/gh/JB-Analytica/model2data/branch/main/graph/badge.svg)](https://codecov.io/gh/JB-Analytica/model2data)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/JB-Analytica/model2data/blob/main/LICENSE)
 
-Built and maintained by [JB Analytica](https://www.jbanalytica.com/) — data platform architecture and analytics engineering.
+**Realistic, test-passing data for any data model, and the dbt project around it, in one command.**
 
-**Turn a data model into a running analytics stack in one command.**
-
-Give `model2data` a data model — a `.model2data.yml` file, or a [DBML](https://dbml.dbdiagram.io/docs/)
-schema hand-written or exported from an existing database — and it generates realistic,
-relationship-preserving synthetic data *and* a complete, runnable dbt project around it: seeds,
-staging models, tests, and a DuckDB or Postgres profile. Add a metrics file and it also knows
-what your revenue comes to, and writes a dbt test that proves it. No sample data to hunt down,
-no dbt boilerplate to hand-write, no production data to risk exposing.
-
-![model2data generating a project with metrics and running it with dbt](https://raw.githubusercontent.com/JB-Analytica/model2data/main/assets/demo.gif)
+You describe the tables. model2data generates data whose foreign keys resolve, whose dates make
+sense and whose revenue adds up to a number it tells you in advance, and it writes a dbt project
+that loads, builds and tests that data with one `dbt build`. No production access, no
+hand-made CSVs, no dbt boilerplate.
 
 ```bash
 pip install model2data
 model2data --file examples/ecommerce.model2data.yml --rows 200 --seed 42   # examples/ is in the GitHub repository
-cd dbt_ecommerce && dbt build
+cd dbt_ecommerce && dbt build                                               # PASS=59 ERROR=0
 ```
 
-> **Prefer a browser?** [model2data studio](https://studio.jbanalytica.com) is the same
-> engine as a web app: write DBML, watch the entity diagram redraw as you type, see what every
-> column will generate before you generate it, then export CSVs or a runnable dbt project.
-> Nothing to install, free to start.
+![model2data generating a project with metrics and running it with dbt](https://raw.githubusercontent.com/JB-Analytica/model2data/main/assets/demo.gif)
+
+> **Rather design the model than type it?** [**model2data studio**](https://studio.jbanalytica.com)
+> is this engine in the browser: draw the schema, see every column's values before you generate,
+> shape the data on a sample of your own, and export a dbt project with a star schema or Data
+> Vault on top. [Start free, no install →](https://studio.jbanalytica.com)
 
 ---
 
-## What you get
+## The problem
 
-**Values that look real.** Column names are matched against about 40 common patterns — `email`,
-`first_name`, `city`, `phone`, `company`, ... — so a column called `email` gets real-looking
-emails, not `Lorem ipsum`. Type a column with any Faker provider (`billing_country state`,
-`sku ean13`) to pick its generator outright, and `--locale nl_BE` makes every person and address
-come from one country. → [The model file](https://github.com/JB-Analytica/model2data/blob/main/docs/model-file.md)
+Every data project starts the same way: the model is ready and the data isn't.
 
-**Foreign keys that resolve.** Tables are generated in dependency order and every foreign key
-points at a parent row that exists — onto a primary key or a unique one — and
-`after: customers.created_at` keeps an order on or after the sign-up of the customer it points
-at (`validate` suggests it where a date could fall before its parent's). Integer primary keys
-number the rows 1..N, in order. Composite primary and unique keys hold, and a column that repeats a
-parent's value through a foreign key (`orders.customer_email`) holds the email of the order's
-own customer.
-→ [The model file](https://github.com/JB-Analytica/model2data/blob/main/docs/model-file.md)
+- **Production data is off-limits.** Privacy, a pending contract, a source system nobody has
+  access to yet. The pipeline waits; the client demo waits.
+- **Hand-made mock data breaks on contact.** Two CSVs are fine. Ten tables later, orders point at
+  customers who don't exist, shipments leave before they are ordered, and every `relationships`
+  test fails for reasons that have nothing to do with your SQL.
+- **Random data proves nothing.** A dashboard over `Lorem ipsum` and uniform noise can't tell you
+  whether revenue is right, because nobody knows what revenue *should* be.
+- **Fixtures rot.** A CSV committed once is right the day it was exported; after that it drifts
+  from the model, and CI tests against the past.
 
-**A dbt project that runs.** Seeds, staging models that `ref()` them, `not_null`, `unique`,
-`relationships` and `accepted_values` tests, data tests written from the model's own hints, and
-a DuckDB (zero-config) or Postgres profile. One `dbt build` loads, builds and tests it, and
-`--unit-tests` adds dbt unit test fixtures. → [The generated dbt project](https://github.com/JB-Analytica/model2data/blob/main/docs/dbt-project.md)
+So teams spend days on throwaway data, or ship pipelines tested against nothing.
 
-**The same files, byte for byte.** The same model, `--seed`, `--as-of` and options give the same
-files on any machine, any day, with the same model2data version — safe to commit as fixtures,
-safe to diff in CI. `--table-seed orders=7` re-rolls one table and leaves every other one
-byte-identical. → [The determinism promise](https://github.com/JB-Analytica/model2data/blob/main/docs/generating.md#the-determinism-promise)
+## The solution
 
-**Days after the first.** A table marked `incremental` moves on day by day: `--days 7` or
-`--next` adds new rows and updates existing ones, an enum with `transitions` moves an order from
-`pending` to `shipped`, and each day is written as a batch or a changelog to load incrementally.
-→ [Days after the first](https://github.com/JB-Analytica/model2data/blob/main/docs/days.md)
+Write the model once. model2data reads it and produces data that behaves like the real thing, and
+the dbt project to prove it:
 
-**History tables.** `history: true` writes `<table>_history`, every version of every row with
-`valid_from`, `valid_to` and `is_current`: an SCD type 2 source to build snapshots against.
-→ [A source that keeps its history](https://github.com/JB-Analytica/model2data/blob/main/docs/history.md)
+| You need | model2data gives you |
+| --- | --- |
+| Data that looks real | `email` gets emails, `city` gets cities, `sku ean13` gets barcodes: about 40 name patterns and every Faker provider, in any locale. |
+| Joins that work | Tables generated in dependency order; every foreign key hits a row that exists. An order never predates its customer (`after: customers.created_at`). |
+| A project, not a pile of files | Seeds, staging models, `not_null`/`unique`/`relationships`/`accepted_values` tests and a DuckDB or Postgres profile. `dbt build` goes green. |
+| Numbers you can check | A metrics file defines revenue once; the run writes its exact value per month and a dbt test that the warehouse must reproduce. |
+| Fixtures you can commit | Same model, seed and `--as-of`: the same bytes, on any machine, any day. |
+| Data that fails on purpose | `--defects training` breaks each standard dbt test once and writes down which. |
 
-**When things happen.** `--business-hours`, `--growth` and `--seasonality` shape every timestamp
-(weekdays and working hours, a trend, a Q4 peak), or one column at a time. `updated_at` never
-lands before `created_at`, `after` orders any two columns, or a column after a parent's, and `when` gives `shipped_at` a value on shipped and delivered orders only. → [When things happen](https://github.com/JB-Analytica/model2data/blob/main/docs/time-shapes.md)
-
-**How the data is spread.** `--skew` lets a few customers place most of the orders; `weights`,
-`true_rate`, `null_rate` and `distinct` shape a column; `distribution` draws a number from a
-normal, lognormal or exponential curve. → [How the data is spread](https://github.com/JB-Analytica/model2data/blob/main/docs/distributions.md)
-
-**Defects on purpose.** `--defects training` breaks each standard dbt test once, `messy` puts a
-small share of every defect on every table, and a table can list its own: duplicate keys,
-orphans, nulls, invalid values, messy text, late-arriving rows. Every run with defects writes
-`EXPECTED_FAILURES.md`, so a test that does not fire shows. → [Defects on purpose](https://github.com/JB-Analytica/model2data/blob/main/docs/defects.md)
-
-**Metrics with known values** (new in 1.13.0). A metrics file beside the model defines revenue,
-orders, average order value. The run writes each metric's value over the generated data to
-`metric_values.json`, overall and per month, a dbt test per metric that must reproduce it on the
-warehouse, and an [Apache Ossie](https://github.com/apache/ossie) semantic model under `osi/`.
-New in 1.14.0: `--lightdash` writes the same metrics into the staging models' YAML as
-[Lightdash](https://www.lightdash.com/) reads them, filters, joins and ratios included, so the
-dashboard's revenue can be checked against the number the run already knows.
-→ [Metrics with known values](https://github.com/JB-Analytica/model2data/blob/main/docs/metrics.md)
-
-**Validate in CI.** `model2data validate` checks models and metrics files and prints GitHub
-annotations; `uses: JB-Analytica/model2data@v1` fails a pull request that breaks one. A
-pre-commit hook and a GitLab CI snippet do the same. → [Validate models in CI](https://github.com/JB-Analytica/model2data/blob/main/docs/ci.md)
-
-**Use it from an agent.** `uvx model2data@latest guide` prints instructions written for a coding
-agent, shipped with the installed version; [LLMS.md](https://github.com/JB-Analytica/model2data/blob/main/LLMS.md) takes an LLM from a plain-English
-description to a running project. → [Agents and LLMs](https://github.com/JB-Analytica/model2data/blob/main/docs/agents.md)
-
-**Or in the browser.** [model2data studio](https://studio.jbanalytica.com)
-is the same engine with a DBML editor and a live diagram.
+Nothing but a schema goes in; nothing but synthetic data comes out. It is MIT licensed and runs
+anywhere Python 3.10 to 3.14 does.
 
 ---
 
@@ -108,7 +68,8 @@ is the same engine with a DBML editor and a live diagram.
 
 In: a model (here the `orders` table of
 [`examples/ecommerce.model2data.yml`](https://github.com/JB-Analytica/model2data/blob/main/examples/ecommerce.model2data.yml)) and, optionally, the
-metrics that matter ([`examples/ecommerce.metrics.yml`](https://github.com/JB-Analytica/model2data/blob/main/examples/ecommerce.metrics.yml)):
+metrics that matter ([`examples/ecommerce.metrics.yml`](https://github.com/JB-Analytica/model2data/blob/main/examples/ecommerce.metrics.yml)). DBML,
+hand-written or exported from an existing database, works as input too.
 
 ```yaml
   orders:
@@ -126,20 +87,11 @@ metrics that matter ([`examples/ecommerce.metrics.yml`](https://github.com/JB-An
 ```yaml
 metrics:
   revenue:
-    label: Revenue
     measure: orders.total_amount
     agg: sum
     where:
       orders.status: [processing, shipped, delivered]
     time: orders.order_date
-    format: currency
-  orders:
-    count: orders
-    where:
-      orders.status: [processing, shipped, delivered]
-    time: orders.order_date
-  average_order_value:
-    ratio: {numerator: revenue, denominator: orders}
 ```
 
 ```bash
@@ -147,90 +99,148 @@ model2data --file examples/ecommerce.model2data.yml --metrics examples/ecommerce
   --rows 200 --seed 42 --as-of 2026-01-31
 ```
 
-Out: a dbt project.
+Out: a dbt project that runs.
 
 ```
 dbt_ecommerce/
-├── seeds/raw/                  customers.csv, orders.csv, order_items.csv, products.csv,
-│                               product_reviews.csv, __seed_config.yml
+├── seeds/raw/                  customers.csv, orders.csv, order_items.csv, products.csv, ...
 ├── models/staging/             stg_<table>.sql + stg_<table>.yml (with tests), for each table
-├── data-tests/metrics/         metric_revenue.sql, metric_orders.sql,
-│                               metric_average_order_value.sql, metric_units_sold.sql
-├── macros/                     generate_schema_name.sql, model2data_hint_tests.sql
-├── osi/ecommerce.yml           the model and its metrics as Apache Ossie 0.1.1
-├── metric_values.json          each metric's known value
-├── ecommerce.model2data.yml    the model, and
-├── ecommerce.metrics.yml       its metrics, copied as given
+├── data-tests/metrics/         one test per metric: the warehouse must match the known value
+├── osi/ecommerce.yml           the model and its metrics as Apache Ossie
+├── metric_values.json          each metric's known value, overall and per month
 ├── dbt_project.yml
-└── profiles.yml                DuckDB
+└── profiles.yml                DuckDB, zero config
 ```
-
-`dbt build` loads the seeds, builds the staging models and runs every test, the four metric
-tests included:
 
 ```
 Finished running 5 seeds, 49 data tests, 5 view models in 0 hours 0 minutes and 0.71 seconds (0.71s).
 
-Completed successfully
-
 Done. PASS=59 WARN=0 ERROR=0 SKIP=0 NO-OP=0 REUSED=0 TOTAL=59
 ```
 
-And `metric_values.json` says what a dashboard on this data must show:
-
-```json
-{
-  "model2data-metrics": "0.1.0",
-  "model": "ecommerce",
-  "run": {
-    "seed": 42,
-    "as_of": "2026-01-31"
-  },
-  "rounding": "counts, and sums, minimums and maximums of integer columns, are exact; every other value is rounded to 6 decimal places, half to even",
-  "metrics": {
-    "revenue": {
-      "kind": "simple",
-      "label": "Revenue",
-      "value": 220291.8,
-      "time": "orders.order_date",
-      "by_month": {
-        "2025-01": 3967.88,
-        "2025-02": 10676.66,
-        ...
-        "2026-01": 31879.13
-      }
-    },
-    "orders": { "kind": "count", "label": "Orders", "value": 92, ... },
-    "average_order_value": { "kind": "ratio", "label": "Average order value", "value": 2394.476087, ... },
-    "units_sold": { "kind": "simple", "label": "Units sold", "value": 734, ... }
-  }
-}
-```
-
-Run it again tomorrow, or on another machine, with the same model2data version, and every one
-of those files is the same.
+And `metric_values.json` says what a dashboard on this data must show: revenue 220,291.80 over
+92 orders, month by month. If your semantic layer or BI tool says otherwise, the bug is in the
+SQL, and you know it before a stakeholder does.
 
 ---
 
 ## Who it's for
 
-Analytics engineers hit the same wall constantly: you need realistic data to build or test a
-pipeline, but production data is off-limits (privacy, access, scale), and hand-rolling mock CSVs
-is tedious and doesn't scale past two tables. model2data closes that gap. Nothing but a schema
-definition goes in; nothing but synthetic data comes out.
+- **Consultants who need a demo before source access.** Write the client's model after the
+  kick-off call, generate a year of their business, and show a working dbt project and dashboard
+  in week one, without touching production.
+- **Analytics engineers who want real fixtures in CI.** Commit the model, generate with `--seed`
+  and `--as-of`, and every CI run builds against the same bytes. `--days` hands an incremental
+  model tomorrow's batch.
+- **Trainers who need data that fails for the right reason.** `--defects training` makes
+  `unique`, `not_null`, `relationships` and `accepted_values` each fail once, and says where.
+- **Teams who define metrics once.** Write revenue in one file, let `dbt build` prove the SQL,
+  and hand the definitions to Apache Ossie or Lightdash.
 
-- **A consultant who needs a client demo before source access.** Write the client's model from a
-  kick-off call, generate a year of their data, and show a working dbt project and dashboard in
-  the first week, without touching production.
-- **An analytics engineer who wants fixtures in CI.** Commit the model, generate with `--seed`
-  and `--as-of`, and every CI run builds against the same bytes. `--days` gives an incremental
-  model the next day's batch to process.
-- **A trainer who needs data that fails on purpose.** `--defects training` breaks each standard
-  dbt test once and says which, so a class sees `unique`, `not_null`, `relationships` and
-  `accepted_values` fail for the right reason.
-- **A team defining metrics once.** Write revenue in one metrics file, check every number the
-  semantic layer or dashboard shows against `metric_values.json`, let `dbt build` prove the SQL,
-  and hand the definitions on as Apache Ossie or straight to Lightdash.
+---
+
+## model2data studio: design the model, ship the project
+
+The CLI is the engine. [**model2data studio**](https://studio.jbanalytica.com) is where models get
+designed, shown to a client and handed to a team, and it is built by the same people on the same
+engine, so what you preview is byte for byte what you export.
+
+![model2data studio: the model editor beside its live diagram](https://raw.githubusercontent.com/JB-Analytica/model2data/main/assets/studio-editor-and-diagram.png)
+
+What it adds to the CLI:
+
+- **A live diagram as you type.** Write YAML or DBML (dbdiagram schemas work unchanged), or paste
+  SQL `CREATE TABLE` statements, and the entity diagram redraws as you type. Click a column to
+  see everything that joins to it. Drag a column onto another to draw the reference.
+- **See the data before you generate it.** Every column shows an example of the value it will
+  get, and columns nothing recognises are flagged, so placeholder data never slips through.
+- **Shape it like your data.** Drop in a CSV sample, or just summary statistics when even a sample
+  can't leave the warehouse, and the studio proposes ranges, distributions, null rates, enum
+  weights, seasonality and skew, each with a before-and-after chart. The file is profiled in your
+  browser and never uploaded.
+- **More than staging.** Export the dbt project with a Kimball star schema, a Data Vault, or a
+  dbt semantic layer on top, real models with tests, derived from the same schema.
+- **Regenerate in CI.** An API key, the `model2data-studio` CLI and an MCP server let a pipeline
+  or a coding agent pull fresh data from the saved project, so fixtures follow the model instead
+  of the last export.
+- **Share it.** A read-only link that also embeds as a clean diagram in Notion, Confluence or a
+  wiki.
+
+| | CLI (this repo) | Studio Free | Studio Pro |
+| --- | --- | --- | --- |
+| Engine: realistic, FK-correct, deterministic data | ✓ | ✓ | ✓ |
+| Live diagram, value previews, model checks | | ✓ | ✓ |
+| Rows per table | unlimited | 100 | 50,000 |
+| Saved projects | | 2 | unlimited |
+| Share links and embeds | | ✓ | ✓ |
+| CSV export | ✓ | ✓ | ✓ |
+| dbt project download | ✓ (staging) | preview | ✓ |
+| Shape from a sample, visual shaping | | preview | ✓ |
+| Star schema, Data Vault, semantic layer | | preview | ✓ |
+| API keys, CI pulls, MCP server | | | ✓ |
+
+**Pro is EUR 99 a month** (or EUR 990 a year); **Team is EUR 399 a month for five seats.**
+For a consultant, that's less than an hour of the time it replaces on the first project.
+
+**[Open the studio, free →](https://studio.jbanalytica.com)** ·
+[Plans and pricing](https://www.jbanalytica.com/model2data/pricing/)
+
+Keep using the CLI for scripting and committed fixtures; it stays free and open source. Use the
+studio when the model is still being designed, when someone else needs to see it, or when the
+project needs more than a staging layer.
+
+---
+
+## Everything the engine does
+
+**Values that look real.** About 40 column-name patterns (`email`, `first_name`, `city`, `phone`,
+`company`, ...), any Faker provider as a type (`billing_country state`, `sku ean13`), and
+`--locale nl_BE` for people and addresses from one country. → [The model file](https://github.com/JB-Analytica/model2data/blob/main/docs/model-file.md)
+
+**Foreign keys that resolve.** Every foreign key points at a parent row that exists, onto a
+primary or a unique key; composite keys hold; `after: customers.created_at` keeps a child's date
+after its parent's; a column that repeats a parent's value through a foreign key holds the right
+parent's value. → [The model file](https://github.com/JB-Analytica/model2data/blob/main/docs/model-file.md)
+
+**A dbt project that runs.** Seeds, staging models, schema tests, tests from the model's own hints,
+optional unit test fixtures (`--unit-tests`), and a DuckDB or Postgres profile.
+→ [The generated dbt project](https://github.com/JB-Analytica/model2data/blob/main/docs/dbt-project.md)
+
+**The same files, byte for byte.** Same model, `--seed`, `--as-of` and options, same files, with
+the same model2data version. `--table-seed orders=7` re-rolls one table and leaves the rest alone.
+→ [The determinism promise](https://github.com/JB-Analytica/model2data/blob/main/docs/generating.md#the-determinism-promise)
+
+**Days after the first.** `--days 7` or `--next` adds new rows and updates existing ones; enum
+`transitions` move an order from `pending` to `shipped`; each day is a batch or a changelog.
+→ [Days after the first](https://github.com/JB-Analytica/model2data/blob/main/docs/days.md)
+
+**History tables.** `history: true` writes every version of every row with `valid_from`,
+`valid_to` and `is_current`, an SCD type 2 source. → [History tables](https://github.com/JB-Analytica/model2data/blob/main/docs/history.md)
+
+**When things happen.** `--business-hours`, `--growth` and `--seasonality` shape timestamps;
+`updated_at` never precedes `created_at`; `when` fills `shipped_at` only on shipped orders.
+→ [When things happen](https://github.com/JB-Analytica/model2data/blob/main/docs/time-shapes.md)
+
+**How the data is spread.** `--skew` lets a few customers place most orders; `weights`,
+`true_rate`, `null_rate`, `distinct` and normal, lognormal or exponential `distribution`s shape a
+column. → [How the data is spread](https://github.com/JB-Analytica/model2data/blob/main/docs/distributions.md)
+
+**Defects on purpose.** `--defects training` or `messy`, or a table's own list: duplicate keys,
+orphans, nulls, invalid values, messy text, late-arriving rows. `EXPECTED_FAILURES.md` says what
+should fail. → [Defects on purpose](https://github.com/JB-Analytica/model2data/blob/main/docs/defects.md)
+
+**Metrics with known values.** Each metric's value in `metric_values.json`, a dbt test per metric,
+an Apache Ossie semantic model, and with `--lightdash` the same metrics as Lightdash reads them.
+→ [Metrics with known values](https://github.com/JB-Analytica/model2data/blob/main/docs/metrics.md)
+
+**Validate in CI.** `model2data validate` prints GitHub annotations; `uses: JB-Analytica/model2data@v1`
+fails a pull request that breaks a model. Pre-commit and GitLab CI too. → [Validate models in CI](https://github.com/JB-Analytica/model2data/blob/main/docs/ci.md)
+
+**Use it from an agent.** `uvx model2data@latest guide` prints instructions written for a coding
+agent; [LLMS.md](https://github.com/JB-Analytica/model2data/blob/main/LLMS.md) takes an LLM from a plain-English description to a running project.
+→ [Agents and LLMs](https://github.com/JB-Analytica/model2data/blob/main/docs/agents.md)
+
+---
 
 ## How it works
 
@@ -241,23 +251,16 @@ model (.model2data.yml or DBML) + metrics file (optional)
   -> dbt build
 ```
 
-1. **Read.** Reads the model — its tables, columns, keys, references and generation hints — from
-   a `.model2data.yml` document, checking it against [the spec](https://github.com/JB-Analytica/model2data/blob/main/model2data/spec/README.md), or
-   from DBML, which it converts to the same model first. A metrics file is checked against
-   [its spec](https://github.com/JB-Analytica/model2data/blob/main/model2data/spec/metrics/README.md) and against the model.
-2. **Generate.** Produces synthetic values per column — typed generation for known SQL types
-   (int, date, timestamp, ...), then a Faker provider named as the type (`sku ean13`), then
-   name-aware inference for everything else (`email`, `phone`, `city`, ...), foreign keys
-   resolved against already-generated parent rows. The metrics file is never read here: the data
-   is the same with or without it.
-3. **Scaffold.** Writes a complete dbt project around that data: CSV seeds, staging models that
-   `ref()` those seeds, `not_null`/`unique`/`relationships` tests, `accepted_values` tests for
-   enum-typed columns, singular SQL tests for composite primary/unique keys, tests from the
-   model's hints, table and column `description:` fields from the model, and a profile for
-   DuckDB (zero-config, file-based) or Postgres.
-4. **Compute metrics.** With `--metrics`, computes each metric over the generated data and writes
-   its known value, a dbt test that checks it, and the Apache Ossie file; with `--lightdash`,
-   Lightdash metrics and dimensions in the staging models' YAML.
+1. **Read.** The model is checked against [the spec](https://github.com/JB-Analytica/model2data/blob/main/model2data/spec/README.md) (DBML is converted
+   to the same model first), and a metrics file against [its spec](https://github.com/JB-Analytica/model2data/blob/main/model2data/spec/metrics/README.md)
+   and the model. A model with errors is refused with every issue and where it is.
+2. **Generate.** Typed generation for SQL types, then a Faker provider named as the type, then
+   name-aware inference; foreign keys resolve against parent rows already generated. The metrics
+   file is never read here, so the data is the same with or without it.
+3. **Scaffold.** CSV seeds, staging models that `ref()` them, schema and hint tests, descriptions
+   from the model, and a DuckDB or Postgres profile.
+4. **Compute metrics.** Each metric's known value, a dbt test that checks it, the Apache Ossie
+   file and, with `--lightdash`, Lightdash metrics in the staging YAML.
 
 ---
 
@@ -271,32 +274,16 @@ uvx model2data --help                  # or run it without installing
 
 Python 3.10 to 3.14. The examples used on this page are in [`examples/`](https://github.com/JB-Analytica/model2data/tree/main/examples/).
 
----
-
-## dbt-core versions
-
-model2data requires **dbt-core >= 1.11**, tracking [dbt's own version support
-policy](https://docs.getdbt.com/docs/dbt-versions): dbt Labs supports each minor release for one
-year, and 1.11 is the oldest that still is. Generated projects build cleanly — no deprecation
-warnings — on every supported dbt-core version, and CI proves it on each push by running a real
-`dbt build` against both the stated floor and the newest release.
-
-If you're pinned to an older dbt-core, use model2data 0.5.x, which supported down to 1.8.5.
-
----
-
-## License
-
-MIT License. See [LICENSE](https://github.com/JB-Analytica/model2data/blob/main/LICENSE). Built and maintained by [JB Analytica](https://www.jbanalytica.com).
-Try [model2data studio](https://studio.jbanalytica.com) — model2data in the browser, nothing to install.
+Or skip the install: [model2data studio](https://studio.jbanalytica.com) runs the same engine in
+the browser.
 
 ---
 
 ## Documentation
 
-- [The model file](https://github.com/JB-Analytica/model2data/blob/main/docs/model-file.md) — `.model2data.yml`, DBML as input, `validate`, `convert`
-- [Generating a project](https://github.com/JB-Analytica/model2data/blob/main/docs/generating.md) — row counts, `--as-of`, the determinism promise, `--table-seed`, `--locale`
-- [The generated dbt project](https://github.com/JB-Analytica/model2data/blob/main/docs/dbt-project.md) — `dbt build`, Postgres, unit tests, hint tests, structure
+- [The model file](https://github.com/JB-Analytica/model2data/blob/main/docs/model-file.md): `.model2data.yml`, DBML as input, `validate`, `convert`
+- [Generating a project](https://github.com/JB-Analytica/model2data/blob/main/docs/generating.md): row counts, `--as-of`, the determinism promise, `--table-seed`, `--locale`
+- [The generated dbt project](https://github.com/JB-Analytica/model2data/blob/main/docs/dbt-project.md): `dbt build`, Postgres, unit tests, hint tests, structure
 - [Days after the first](https://github.com/JB-Analytica/model2data/blob/main/docs/days.md) and [history tables](https://github.com/JB-Analytica/model2data/blob/main/docs/history.md)
 - [When things happen](https://github.com/JB-Analytica/model2data/blob/main/docs/time-shapes.md) and [how the data is spread](https://github.com/JB-Analytica/model2data/blob/main/docs/distributions.md)
 - [Defects on purpose](https://github.com/JB-Analytica/model2data/blob/main/docs/defects.md)
@@ -305,3 +292,68 @@ Try [model2data studio](https://studio.jbanalytica.com) — model2data in the br
 - [Agents and LLMs](https://github.com/JB-Analytica/model2data/blob/main/docs/agents.md), and [LLMS.md](https://github.com/JB-Analytica/model2data/blob/main/LLMS.md)
 - The [model spec](https://github.com/JB-Analytica/model2data/blob/main/model2data/spec/README.md) and the [metrics spec](https://github.com/JB-Analytica/model2data/blob/main/model2data/spec/metrics/README.md)
 - [Examples](https://github.com/JB-Analytica/model2data/blob/main/examples/README.md) and the [changelog](https://github.com/JB-Analytica/model2data/blob/main/CHANGELOG.md)
+
+---
+
+## dbt-core versions
+
+model2data requires **dbt-core >= 1.11**, tracking [dbt's own version support
+policy](https://docs.getdbt.com/docs/dbt-versions): 1.11 is the oldest minor release dbt Labs
+still supports. Generated projects build without deprecation warnings on every supported
+version, and CI proves it on each push with a real `dbt build` against both the floor and the
+newest release. Pinned to an older dbt-core? model2data 0.5.x supports down to 1.8.5.
+
+---
+
+## Design decisions and limitations
+
+- **DuckDB by default**, because it needs no setup. Postgres is supported with
+  `--adapter postgres`; other adapters need their profile adjusted by hand.
+- **Deterministic synthetic data**, for testing, demos and prototyping. It is not a replacement
+  for real data, a migration tool or a real-time generator.
+- **Metrics describe, never steer.** Adding or changing a metric changes no generated data, only
+  the known values and tests computed from it.
+- **Generation is heuristic.** It looks real and keeps every key and rule the model states, but it
+  won't reproduce every quirk of a production distribution. (The studio's *Shape from a sample*
+  gets closer, from your own data's statistics.)
+- **The generated project stops at staging.** Marts are yours to write, or the studio's Pro export
+  adds a star schema, Data Vault or semantic layer.
+- **Composite foreign keys** are generated as independent single-column keys: each column is valid,
+  the combination only when the child declares it as a key (`keys`).
+- A reference onto a column that is not a key is allowed with a warning; its values are drawn
+  from the ones the parent column holds.
+
+---
+
+## Project status
+
+model2data is stable and actively developed, and follows semantic versioning. CI runs a real
+`dbt build` against the oldest supported and the newest dbt-core on every push and checks the
+output of a spread of models byte for byte. The [changelog](https://github.com/JB-Analytica/model2data/blob/main/CHANGELOG.md) names every release
+that changes what a seed produces.
+
+Open for contributions: more database adapters (Snowflake, BigQuery), and example mart-layer
+models on top of staging.
+
+## Contributing
+
+Issues and pull requests are welcome: bugs, feature requests, example models, generators. See
+[CONTRIBUTING.md](https://github.com/JB-Analytica/model2data/blob/main/CONTRIBUTING.md) for guidelines, [DEVELOPMENT.md](https://github.com/JB-Analytica/model2data/blob/main/DEVELOPMENT.md) for the local
+setup and release process, and our [Code of Conduct](https://github.com/JB-Analytica/model2data/blob/main/CODE_OF_CONDUCT.md).
+
+## License
+
+MIT. See [LICENSE](https://github.com/JB-Analytica/model2data/blob/main/LICENSE).
+
+---
+
+<p align="center">
+  <a href="https://www.jbanalytica.com">
+    <img src="https://raw.githubusercontent.com/JB-Analytica/model2data/main/assets/jba-icon-dark-bg.svg" alt="JB Analytica" height="40">
+  </a>
+  <br>
+  Built and maintained by <a href="https://www.jbanalytica.com"><strong>JB Analytica</strong></a>:
+  Data & Analytics Engineering · Data Platform Architecture · Modern BI.
+  <br>
+  Designing a model? Try <a href="https://studio.jbanalytica.com"><strong>model2data studio</strong></a>, free in the browser.
+</p>
