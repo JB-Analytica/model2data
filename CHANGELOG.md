@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.16.3] - 2026-10-17
+
+Documentation only: the same model, seed and `--as-of` write the same files as 1.16.2.
+
+### Changed
+- **The README and the PyPI page were rewritten** around the problem model2data solves and the
+  answer to it: the problem first, then what the engine gives you, a shortened before and after,
+  who it is for, and model2data studio with a CLI / Free / Pro comparison and its pricing. The
+  capability list and the limitations were tightened, and the limitation claiming no support for
+  incremental models, which `--days` contradicted, is gone.
+
 ## [1.16.2] - 2026-10-15
 
 Metric totals no longer count a row more than once when the table their time column is on
