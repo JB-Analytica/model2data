@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.16.2] - 2026-10-17
+
+Documentation only: the same model, seed and `--as-of` write the same files as 1.16.1.
+
 ### Changed
 - **The README and the PyPI page were rewritten** around the problem model2data solves and the
   answer to it: the problem first, then what the engine gives you, a shortened before and after,
