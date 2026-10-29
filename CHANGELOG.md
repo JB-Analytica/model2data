@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.16.4] - 2026-10-29
+
+No change to the package: the same model, seed and `--as-of` write the same files as 1.16.3, and
+the dependency ranges are unchanged.
+
 ### Security
 - **The lockfile no longer pins dependencies with known vulnerabilities.** A Trivy scan of
   `uv.lock` found one critical (`certifi`) and several high-severity CVEs, all in transitive or
