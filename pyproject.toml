@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "model2data"
-version = "1.16.3"
+version = "1.16.4"
 description = "Turn a data model into realistic synthetic data, a runnable dbt project and metrics with known values"
 readme = "README_PYPI.md"
 requires-python = ">=3.10"
@@ -53,7 +53,9 @@ postgres = [
 dev = [
   "pytest",
   "pytest-cov",
-  "pre-commit",
+  # Only on 3.11+: filelock and virtualenv, which it pulls in, ship their security
+  # fixes for 3.11+ only, and nobody runs the hooks on 3.10.
+  "pre-commit; python_version >= '3.11'",
   "ruff>=0.1.0",
   "ty>=0.0.4",
   "types-pyyaml",
