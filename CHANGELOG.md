@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Security
+- **The lockfile no longer pins dependencies with known vulnerabilities.** A Trivy scan of
+  `uv.lock` found one critical (`certifi`) and several high-severity CVEs, all in transitive or
+  development dependencies. They were upgraded to fixed releases, and `pre-commit` is now a dev
+  dependency on Python 3.11+ only, since the fixed `filelock` and `virtualenv` it pulls in no
+  longer support 3.10. The package's own dependency ranges are unchanged.
+- **CI now runs Trivy** on every pull request, every push to `main` and weekly. Fixable high
+  and critical findings fail the run, and every finding is reported to GitHub code scanning.
+
 ## [1.16.3] - 2026-10-17
 
 Documentation only: the same model, seed and `--as-of` write the same files as 1.16.2.

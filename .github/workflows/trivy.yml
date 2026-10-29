@@ -1,0 +1,62 @@
+name: Trivy
+
+# Scans the repository (uv.lock, workflows, secrets) for known vulnerabilities.
+# Runs on every pull request and push to main, and weekly, because new CVEs are
+# published against dependencies that have not changed.
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+    - uses: actions/checkout@v4
+
+    # trivy-action is pinned by commit SHA, not tag: its tags were force-pushed
+    # to malicious commits in March 2026. v0.36.0 was released after the cleanup.
+    - name: Fail on fixable HIGH or CRITICAL findings
+      uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+      with:
+        version: v0.76.1
+        scan-type: fs
+        scan-ref: .
+        scanners: vuln,secret,misconfig
+        severity: HIGH,CRITICAL
+        ignore-unfixed: true
+        exit-code: "1"
+        format: table
+
+    # Report every severity to the Security tab. Skipped on pull requests, where
+    # forks get no security-events permission.
+    - name: Write a SARIF report
+      if: ${{ always() && github.event_name != 'pull_request' }}
+      uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+      with:
+        version: v0.76.1
+        scan-type: fs
+        scan-ref: .
+        scanners: vuln,secret,misconfig
+        format: sarif
+        output: trivy-results.sarif
+        skip-setup-trivy: true
+
+    - name: Upload to GitHub code scanning
+      if: ${{ always() && github.event_name != 'pull_request' }}
+      uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+      with:
+        sarif_file: trivy-results.sarif
+        category: trivy
