@@ -353,6 +353,17 @@ newest release. Pinned to an older dbt-core? model2data 0.5.x supports down to 1
 - A reference onto a column that is not a key is allowed with a warning; its values are drawn
   from the ones the parent column holds.
 
+## In the wild
+
+**[Shaper](https://taleshape.com) by Taleshape.** Jorin Vogel's demo starts from one
+`.model2data.yml` file for a network of eight outpatient clinics: 1,500 patients, 6,000
+appointments and a dbt project, all in DuckDB. Shaper reads the same DuckDB file, and an AI agent wrote the dashboard on
+top of it. [Blog post](https://taleshape.com/blog/dashboards-as-code-for-your-dbt-project/),
+[live dashboard](https://demo.taleshape.com/view/clinic-overview),
+[repo](https://github.com/taleshape-com/model2data-shaper-demo).
+
+Built something on model2data? Open an issue and we'll add it here.
+
 ---
 
 ## Project status
