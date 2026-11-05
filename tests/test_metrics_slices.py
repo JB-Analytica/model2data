@@ -314,7 +314,11 @@ def test_a_ratio_is_computed_per_period_from_its_inputs(semantic) -> None:
 
 def test_a_filter_narrows_every_period(semantic) -> None:
     narrowed = filtered(semantic, {"orders.status": ["open"]}).semantic
-    assert by_period(narrowed, _dated(), "quarter")["revenue"] == {"2025-Q1": 30, "2025-Q2": 60}
+    assert by_period(narrowed, _dated(), "quarter")["revenue"] == {
+        "2024-Q4": None,  # it has rows, but none the filter keeps, as a month would
+        "2025-Q1": 30,
+        "2025-Q2": 60,
+    }
 
 
 def test_a_metric_with_no_time_has_no_periods(semantic) -> None:
