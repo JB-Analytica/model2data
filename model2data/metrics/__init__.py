@@ -10,6 +10,9 @@ generator never reads it: a model generates the same data with or without one.
     >>> found = metrics.load("coffee_webshop.metrics.yml", model)   # MetricsError on errors
     >>> semantic = metrics.resolve(model, found)    # entities, relationships, dimensions, metrics
     >>> values = metrics.known_values(semantic, frames)     # over a run's generated tables
+    >>> narrowed = metrics.filtered(semantic, {"orders.status": ["paid"]})
+    >>> metrics.known_values(narrowed.semantic, frames)     # the same, on those rows
+    >>> metrics.breakdowns(semantic, frames, [("revenue", "customers.country")])
     >>> export = metrics.to_ossie(semantic)                 # Apache Ossie 0.1.1
     >>> export.to_yaml(), export.lossiness
     >>> metrics.to_lightdash(semantic).to_yaml()           # Lightdash meta, dbt YAML
@@ -44,6 +47,7 @@ from model2data.metrics.semantic import (
     SemanticModel,
     resolve,
 )
+from model2data.metrics.slices import Breakdown, Filtered, Member, breakdowns, filtered
 from model2data.metrics.types import (
     AGGREGATIONS,
     FORMATS,
@@ -64,11 +68,13 @@ __all__ = [
     "OSSIE_VERSION",
     "SCHEMA_URL",
     "SPEC_VERSION",
+    "Breakdown",
     "Condition",
     "Dimension",
     "DimensionOverride",
     "Entity",
     "ExpressionError",
+    "Filtered",
     "Graph",
     "Join",
     "KnownValue",
@@ -76,6 +82,7 @@ __all__ = [
     "LightdashExport",
     "Loss",
     "Measure",
+    "Member",
     "Metric",
     "Metrics",
     "MetricsError",
@@ -90,6 +97,8 @@ __all__ = [
     "from_dict",
     "inferred_metrics",
     "is_metrics_file",
+    "breakdowns",
+    "filtered",
     "known_values",
     "load",
     "metric_test_sql",

@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.17.0] - 2026-11-05
+
+No change to what a run writes: the same model, seed and `--as-of` write the same files as 1.16.4.
+
+### Added
+- **`metrics.filtered(semantic, members)` narrows every metric to rows whose dimension is one of
+  the given members**, `None` for null. The result goes through `known_values` as usual, so totals,
+  months, ratios and derived metrics all follow. A metric that cannot reach the dimension along one
+  many-to-one path stays as it was and is listed in `unfiltered`.
+- **`metrics.breakdowns(semantic, frames, wanted)` gives a metric's value per member of a
+  dimension**, built from the same SQL as its total. A ratio or derived metric is computed per
+  member from its inputs per member. Members are largest first and capped at 12: the rest are summed
+  as `other` for a sum or a count, and left out with a `note` for anything else.
+
 ## [1.16.4] - 2026-10-29
 
 No change to the package: the same model, seed and `--as-of` write the same files as 1.16.3, and
