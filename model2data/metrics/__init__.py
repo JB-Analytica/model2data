@@ -13,6 +13,7 @@ generator never reads it: a model generates the same data with or without one.
     >>> narrowed = metrics.filtered(semantic, {"orders.status": ["paid"]})
     >>> metrics.known_values(narrowed.semantic, frames)     # the same, on those rows
     >>> metrics.breakdowns(semantic, frames, [("revenue", "customers.country")])
+    >>> metrics.by_period(semantic, frames, "week")         # any grain, ISO weeks
     >>> export = metrics.to_ossie(semantic)                 # Apache Ossie 0.1.1
     >>> export.to_yaml(), export.lossiness
     >>> metrics.to_lightdash(semantic).to_yaml()           # Lightdash meta, dbt YAML
@@ -47,7 +48,15 @@ from model2data.metrics.semantic import (
     SemanticModel,
     resolve,
 )
-from model2data.metrics.slices import Breakdown, Filtered, Member, breakdowns, filtered
+from model2data.metrics.slices import (
+    GRAINS,
+    Breakdown,
+    Filtered,
+    Member,
+    breakdowns,
+    by_period,
+    filtered,
+)
 from model2data.metrics.types import (
     AGGREGATIONS,
     FORMATS,
@@ -64,6 +73,7 @@ from model2data.metrics.values import KnownValue, KnownValues, known_values
 __all__ = [
     "AGGREGATIONS",
     "FORMATS",
+    "GRAINS",
     "OPERATORS",
     "OSSIE_VERSION",
     "SCHEMA_URL",
@@ -98,6 +108,7 @@ __all__ = [
     "inferred_metrics",
     "is_metrics_file",
     "breakdowns",
+    "by_period",
     "filtered",
     "known_values",
     "load",

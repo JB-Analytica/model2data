@@ -235,7 +235,12 @@ def _parts(
 
 
 def _query(
-    semantic: SemanticModel, name: str, relation: Relation, by_month: bool, by: str | None = None
+    semantic: SemanticModel,
+    name: str,
+    relation: Relation,
+    by_month: bool,
+    by: str | None = None,
+    grain: str = "month",
 ) -> tuple[str, _From]:
     metric = semantic.metrics[name]
     aggregate, clauses = _parts(semantic, metric, relation, by_month, by)
@@ -248,7 +253,8 @@ def _query(
         return f"select {aggregate} as value\n{joins}", clauses
     assert metric.time is not None
     table, column = metric.time.rpartition(".")[0], metric.time.rpartition(".")[2]
-    month = f"cast(date_trunc('month', cast({clauses.column(table, column)} as timestamp)) as date)"
+    instant = f"cast({clauses.column(table, column)} as timestamp)"
+    month = f"cast(date_trunc('{grain}', {instant}) as date)"
     return (
         f"select {month} as month, {aggregate} as value\n{joins}\ngroup by 1\norder by 1",
         clauses,
@@ -262,11 +268,13 @@ def query(
     *,
     by_month: bool = False,
     by: str | None = None,
+    grain: str = "month",
 ) -> str:
     """A simple metric or row count as a query: one row with its `value`; `by_month`, a
-    row per calendar month of its time column (`month` the month's first day); or `by` a
-    column path in the metric's `joins`, a row per `member` of that column."""
-    return _query(semantic, name, relation, by_month, by)[0]
+    row per calendar month of its time column (`month` the month's first day), or per
+    `grain` of it (`day`, `week`, `quarter`, `year`; still in a column called `month`); or
+    `by` a column path in the metric's `joins`, a row per `member` of that column."""
+    return _query(semantic, name, relation, by_month, by, grain)[0]
 
 
 def columns_read(semantic: SemanticModel, name: str, by: str | None = None) -> dict[str, set[str]]:

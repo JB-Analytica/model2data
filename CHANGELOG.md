@@ -20,6 +20,10 @@ No change to what a run writes: the same model, seed and `--as-of` write the sam
   dimension**, built from the same SQL as its total. A ratio or derived metric is computed per
   member from its inputs per member. Members are largest first and capped at 12: the rest are summed
   as `other` for a sum or a count, and left out with a `note` for anything else.
+- **`metrics.by_period(semantic, frames, grain)` gives each metric's value per day, ISO week, month,
+  quarter or year** of its time column. Each period is grouped in the metric's own SQL rather than
+  added up from smaller periods, so averages, medians and distinct counts stay right. The `month`
+  grain equals `by_month` in `known_values`.
 
 ## [1.16.4] - 2026-10-29
 

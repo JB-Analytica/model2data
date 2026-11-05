@@ -1,7 +1,7 @@
-"""A run's metrics narrowed to dimension members, or broken down by a dimension.
+"""A run's metrics narrowed to members, broken down by a dimension, or per period.
 
-Both are the same metrics over the same tables, so they cannot come to disagree
-with the totals in `known_values`:
+All three are the same metrics over the same tables, so they cannot come to
+disagree with the totals in `known_values`:
 
 - `filtered` adds a condition to each metric's own filter and hands back a
   semantic model, which `known_values` then computes as usual: per month, and
@@ -9,6 +9,9 @@ with the totals in `known_values`:
 - `breakdowns` runs a metric's own query with a `group by`. A ratio or derived
   metric is computed per member from its inputs per member, exactly as its total
   is from theirs.
+- `by_period` is `by_month` at another grain: each period is grouped in the
+  metric's own SQL, never added up from smaller periods, which would be wrong for
+  an average, a median or a distinct count.
 
 A dimension applies to a metric when the metric's table reaches the dimension's
 table along exactly one many-to-one path, or is that table. Anything else would
@@ -36,9 +39,19 @@ from model2data.metrics.graph import Graph
 from model2data.metrics.semantic import ResolvedMetric, SemanticModel
 from model2data.metrics.sql import columns_read, query
 from model2data.metrics.types import Condition, Where
-from model2data.metrics.values import Number, _empty, _evaluate, _exact, _rounded, _tables
+from model2data.metrics.values import (
+    Number,
+    _assemble,
+    _empty,
+    _evaluate,
+    _exact,
+    _rounded,
+    _tables,
+)
 
 DEFAULT_MEMBERS = 12
+# Weeks are ISO weeks, starting on Monday.
+GRAINS: tuple[str, ...] = ("day", "week", "month", "quarter", "year")
 
 
 @dataclass
@@ -249,3 +262,49 @@ def _fill(
         breakdown.other = _rounded(total, _exact(metric))
     else:
         breakdown.note = f"{len(rest)} smaller members left out: {name} cannot be added up"
+
+
+def _period(start: dt.date, grain: str) -> str:
+    """How a period is written: `2025-01-06` for a day or the Monday of a week, `2025-01`,
+    `2025-Q1`, `2025`. They sort in time order within a grain."""
+    if grain in ("day", "week"):
+        return start.isoformat()
+    if grain == "month":
+        return start.strftime("%Y-%m")
+    if grain == "quarter":
+        return f"{start.year}-Q{(start.month + 2) // 3}"
+    return str(start.year)
+
+
+def by_period(
+    semantic: SemanticModel, frames: Mapping[str, pd.DataFrame], grain: str
+) -> dict[str, Optional[dict[str, Optional[Number]]]]:
+    """Each metric's value per `grain` of its time column, None for one with no time.
+
+    As `by_month` in `known_values` at any other grain: a period appears when a row of
+    the metric's table has a time in it, and a ratio or derived metric has periods when
+    every metric it is computed from has a time.
+    """
+    if grain not in GRAINS:
+        raise ValueError(f"{grain!r} is not one of {', '.join(GRAINS)}")
+    computed = [
+        name for name, metric in semantic.metrics.items() if metric.kind in ("simple", "count")
+    ]
+    read: dict[str, set[str]] = {}
+    for name in computed:
+        for table, columns in columns_read(semantic, name).items():
+            read.setdefault(table, set()).update(columns)
+    raw: dict[str, tuple[Any, Optional[dict[str, Any]]]] = {}
+    with _tables(semantic, frames, read) as (connection, relation):
+        for name in computed:
+            periods = None
+            if semantic.metrics[name].time is not None:
+                sql = query(semantic, name, relation, by_month=True, grain=grain)
+                periods = {
+                    _period(start, grain): value
+                    for start, value in connection.execute(sql).fetchall()
+                    if start is not None
+                }
+            raw[name] = (None, periods)
+    values = _assemble(semantic, raw, seed=None, as_of=None).values
+    return {name: known.by_month for name, known in values.items()}

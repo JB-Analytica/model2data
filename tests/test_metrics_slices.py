@@ -8,7 +8,7 @@ import pandas as pd
 import pytest
 from test_metrics_values import SHOP, _frames
 
-from model2data.metrics import breakdowns, filtered, known_values, load, resolve
+from model2data.metrics import breakdowns, by_period, filtered, known_values, load, resolve
 
 METRICS = """
 model2data-metrics: 0.1.0
@@ -23,6 +23,7 @@ metrics:
   customers_n: {count: customers}
   mixed: {expression: revenue + customers_n}
   lines_n: {count: lines}
+  paid_share: {ratio: {numerator: paid, denominator: orders_n}}
 """
 
 
@@ -113,6 +114,31 @@ def test_a_member_that_is_not_of_the_columns_kind_is_refused(semantic, path, val
         filtered(semantic, {path: [value]})
 
 
+def test_a_decimal_that_is_not_a_number_is_refused(semantic) -> None:
+    with pytest.raises(ValueError, match="is not a value of"):
+        filtered(semantic, {"orders.amount": ["NaN"]})
+
+
+def test_a_boolean_that_is_neither_is_refused(semantic) -> None:
+    with pytest.raises(ValueError, match="is not a value of"):
+        filtered(semantic, {"customers.vip": ["maybe"]})
+
+
+@pytest.mark.parametrize(
+    ("path", "member", "metric", "expected"),
+    [
+        ("customers.vip", "true", "orders_n", 1),
+        ("customers.joined_on", "2024-12-03", "orders_n", 1),
+        ("orders.placed_at", "2025-02-01 00:00:00", "orders_n", 1),
+        ("orders.amount", "10.5", "orders_n", 1),
+        ("orders.id", "2", "orders_n", 1),
+    ],
+)
+def test_a_member_is_read_as_its_columns_kind(semantic, path, member, metric, expected) -> None:
+    narrowed = filtered(semantic, {path: [member]}).semantic
+    assert known_values(narrowed, _frames()).values[metric].value == expected
+
+
 def test_a_text_member_cannot_escape_its_quotes(semantic) -> None:
     narrowed = filtered(semantic, {"orders.status": ["paid' or '1'='1"]}).semantic
     assert known_values(narrowed, _frames()).values["orders_n"].value == 0
@@ -159,6 +185,13 @@ def test_a_ratio_is_computed_per_member_from_its_inputs(semantic) -> None:
 def test_a_derived_metric_is_computed_per_member_from_its_inputs(semantic) -> None:
     found = breakdowns(semantic, _frames(), [("doubled", "orders.status")])[0]
     assert _members(found)["paid"] == 21
+
+
+def test_a_member_one_input_has_no_rows_in_counts_as_its_empty_value(semantic) -> None:
+    found = breakdowns(semantic, _frames(), [("paid_share", "orders.status")])[0]
+
+    assert _members(found)["paid"] == 1
+    assert _members(found)["open"] == 0
 
 
 def test_a_breakdown_of_a_filtered_metric(semantic) -> None:
@@ -220,3 +253,77 @@ def test_a_breakdown_of_something_unknown_is_refused(semantic) -> None:
 def test_the_same_frames_give_the_same_breakdown(semantic) -> None:
     first = breakdowns(semantic, _frames(), [("revenue", "orders.status")])
     assert first == breakdowns(semantic, _frames(), [("revenue", "orders.status")])
+
+
+def _dated() -> dict[str, pd.DataFrame]:
+    frames = _frames()
+    frames["orders"] = pd.DataFrame(
+        {
+            "id": [1, 2, 3, 4],
+            "customer_id": [None] * 4,
+            "store_id": [None] * 4,
+            "status": ["paid", "paid", "open", "open"],
+            "amount": [10.0, 20.0, 30.0, 60.0],
+            "placed_at": [
+                "2024-12-30 09:00:00",  # the Monday of the week 2025 starts in
+                "2025-01-05 23:59:59",  # the Sunday of that week
+                "2025-01-06 00:00:00",
+                "2025-04-01 12:00:00",
+            ],
+            "note": [None] * 4,
+        }
+    )
+    return frames
+
+
+@pytest.mark.parametrize(
+    ("grain", "expected"),
+    [
+        (
+            "day",
+            {"2024-12-30": 10, "2025-01-05": 20, "2025-01-06": 30, "2025-04-01": 60},
+        ),
+        ("week", {"2024-12-30": 30, "2025-01-06": 30, "2025-03-31": 60}),
+        ("month", {"2024-12": 10, "2025-01": 50, "2025-04": 60}),
+        ("quarter", {"2024-Q4": 10, "2025-Q1": 50, "2025-Q2": 60}),
+        ("year", {"2024": 10, "2025": 110}),
+    ],
+)
+def test_a_metric_per_period(semantic, grain, expected) -> None:
+    assert by_period(semantic, _dated(), grain)["revenue"] == expected
+
+
+def test_the_month_grain_is_by_month(semantic) -> None:
+    months = by_period(semantic, _frames(), "month")
+    for name, known in known_values(semantic, _frames()).values.items():
+        assert months[name] == known.by_month
+
+
+def test_an_average_is_grouped_not_added_up(semantic) -> None:
+    years = by_period(semantic, _dated(), "year")["average_amount"]
+    assert years is not None
+    assert years["2025"] == Decimal("36.666667")
+
+
+def test_a_ratio_is_computed_per_period_from_its_inputs(semantic) -> None:
+    assert by_period(semantic, _dated(), "year")["per_order"] == {
+        "2024": 10,
+        "2025": Decimal("36.666667"),
+    }
+
+
+def test_a_filter_narrows_every_period(semantic) -> None:
+    narrowed = filtered(semantic, {"orders.status": ["open"]}).semantic
+    assert by_period(narrowed, _dated(), "quarter")["revenue"] == {"2025-Q1": 30, "2025-Q2": 60}
+
+
+def test_a_metric_with_no_time_has_no_periods(semantic) -> None:
+    months = known_values(semantic, _frames()).values
+    undated = [name for name, known in months.items() if known.by_month is None]
+    found = by_period(semantic, _frames(), "week")
+    assert all(found[name] is None for name in undated)
+
+
+def test_a_grain_that_is_not_one_is_refused(semantic) -> None:
+    with pytest.raises(ValueError, match="fortnight"):
+        by_period(semantic, _frames(), "fortnight")
