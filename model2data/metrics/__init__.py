@@ -10,6 +10,10 @@ generator never reads it: a model generates the same data with or without one.
     >>> found = metrics.load("coffee_webshop.metrics.yml", model)   # MetricsError on errors
     >>> semantic = metrics.resolve(model, found)    # entities, relationships, dimensions, metrics
     >>> values = metrics.known_values(semantic, frames)     # over a run's generated tables
+    >>> narrowed = metrics.filtered(semantic, {"orders.status": ["paid"]})
+    >>> metrics.known_values(narrowed.semantic, frames)     # the same, on those rows
+    >>> metrics.breakdowns(semantic, frames, [("revenue", "customers.country")])
+    >>> metrics.by_period(semantic, frames, "week")         # any grain, ISO weeks
     >>> export = metrics.to_ossie(semantic)                 # Apache Ossie 0.1.1
     >>> export.to_yaml(), export.lossiness
     >>> metrics.to_lightdash(semantic).to_yaml()           # Lightdash meta, dbt YAML
@@ -44,6 +48,15 @@ from model2data.metrics.semantic import (
     SemanticModel,
     resolve,
 )
+from model2data.metrics.slices import (
+    GRAINS,
+    Breakdown,
+    Filtered,
+    Member,
+    breakdowns,
+    by_period,
+    filtered,
+)
 from model2data.metrics.types import (
     AGGREGATIONS,
     FORMATS,
@@ -60,15 +73,18 @@ from model2data.metrics.values import KnownValue, KnownValues, known_values
 __all__ = [
     "AGGREGATIONS",
     "FORMATS",
+    "GRAINS",
     "OPERATORS",
     "OSSIE_VERSION",
     "SCHEMA_URL",
     "SPEC_VERSION",
+    "Breakdown",
     "Condition",
     "Dimension",
     "DimensionOverride",
     "Entity",
     "ExpressionError",
+    "Filtered",
     "Graph",
     "Join",
     "KnownValue",
@@ -76,6 +92,7 @@ __all__ = [
     "LightdashExport",
     "Loss",
     "Measure",
+    "Member",
     "Metric",
     "Metrics",
     "MetricsError",
@@ -90,6 +107,9 @@ __all__ = [
     "from_dict",
     "inferred_metrics",
     "is_metrics_file",
+    "breakdowns",
+    "by_period",
+    "filtered",
     "known_values",
     "load",
     "metric_test_sql",

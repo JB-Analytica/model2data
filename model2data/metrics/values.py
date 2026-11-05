@@ -38,7 +38,8 @@ from __future__ import annotations
 
 import io
 import json
-from collections.abc import Mapping
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from decimal import ROUND_HALF_EVEN, Context, Decimal, localcontext
 from typing import Any, Optional, Union
@@ -186,29 +187,19 @@ def _kept(frame: pd.DataFrame, read: set[str]) -> list[Any]:
     return kept or list(frame.columns[:1])
 
 
-def known_values(
-    semantic: SemanticModel,
-    frames: Mapping[str, pd.DataFrame],
-    *,
-    seed: Optional[int] = None,
-    as_of: Optional[str] = None,
-) -> KnownValues:
-    """Every metric of `semantic` over `frames` (by table key: what the seeds hold)."""
+@contextmanager
+def _tables(
+    semantic: SemanticModel, frames: Mapping[str, pd.DataFrame], read: Mapping[str, set[str]]
+) -> Iterator[tuple[Any, Callable[[str], str]]]:
+    """A DuckDB connection holding the `read` columns of `frames` as their seeds read,
+    and the relation name of each table key."""
     import duckdb
 
-    computed = [
-        name for name, metric in semantic.metrics.items() if metric.kind in ("simple", "count")
-    ]
-    read: dict[str, set[str]] = {}
-    for name in computed:
-        for table, columns in columns_read(semantic, name).items():
-            read.setdefault(table, set()).update(columns)
     keys = [table for table in semantic.entities if table in read]
     for key in keys:
         if key not in frames:
             raise ValueError(f"no generated rows for table {key!r}, which a metric reads")
     names = {key: f"m2d_{index}" for index, key in enumerate(keys)}
-    relation = names.__getitem__
 
     connection = duckdb.connect(":memory:")
     try:
@@ -226,7 +217,28 @@ def known_values(
             )
             connection.unregister(f"{names[key]}_frame")
             del text
-        raw: dict[str, tuple[Any, Optional[dict[str, Any]]]] = {}
+        yield connection, names.__getitem__
+    finally:
+        connection.close()
+
+
+def known_values(
+    semantic: SemanticModel,
+    frames: Mapping[str, pd.DataFrame],
+    *,
+    seed: Optional[int] = None,
+    as_of: Optional[str] = None,
+) -> KnownValues:
+    """Every metric of `semantic` over `frames` (by table key: what the seeds hold)."""
+    computed = [
+        name for name, metric in semantic.metrics.items() if metric.kind in ("simple", "count")
+    ]
+    read: dict[str, set[str]] = {}
+    for name in computed:
+        for table, columns in columns_read(semantic, name).items():
+            read.setdefault(table, set()).update(columns)
+    raw: dict[str, tuple[Any, Optional[dict[str, Any]]]] = {}
+    with _tables(semantic, frames, read) as (connection, relation):
         for name in computed:
             total = connection.execute(query(semantic, name, relation)).fetchone()
             by_month = None
@@ -236,8 +248,6 @@ def known_values(
                     month.strftime("%Y-%m"): value for month, value in rows if month is not None
                 }
             raw[name] = (total[0] if total else None, by_month)
-    finally:
-        connection.close()
     return _assemble(semantic, raw, seed=seed, as_of=as_of)
 
 

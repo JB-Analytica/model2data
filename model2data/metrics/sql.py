@@ -200,7 +200,11 @@ class _From:
 
 
 def _parts(
-    semantic: SemanticModel, metric: ResolvedMetric, relation: Relation, by_month: bool
+    semantic: SemanticModel,
+    metric: ResolvedMetric,
+    relation: Relation,
+    by_month: bool,
+    by: str | None = None,
 ) -> tuple[str, _From]:
     # The total joins what its filter reads; by month, the time column's table as well.
     needed = (
@@ -211,6 +215,8 @@ def _parts(
     if by_month:
         assert metric.time is not None
         needed.add(metric.time.rpartition(".")[0])
+    if by is not None:
+        needed.add(by.rpartition(".")[0])
     clauses = _From(metric, relation, needed)
 
     def column_of(path: str) -> tuple[str, ColumnKind]:
@@ -229,37 +235,60 @@ def _parts(
 
 
 def _query(
-    semantic: SemanticModel, name: str, relation: Relation, by_month: bool
+    semantic: SemanticModel,
+    name: str,
+    relation: Relation,
+    by_month: bool,
+    by: str | None = None,
+    grain: str = "month",
 ) -> tuple[str, _From]:
     metric = semantic.metrics[name]
-    aggregate, clauses = _parts(semantic, metric, relation, by_month)
+    aggregate, clauses = _parts(semantic, metric, relation, by_month, by)
     joins = "\n".join(clauses.lines)
+    if by is not None:
+        table, column = by.rpartition(".")[0], by.rpartition(".")[2]
+        member = clauses.column(table, column)
+        return f"select {member} as member, {aggregate} as value\n{joins}\ngroup by 1", clauses
     if not by_month:
         return f"select {aggregate} as value\n{joins}", clauses
     assert metric.time is not None
     table, column = metric.time.rpartition(".")[0], metric.time.rpartition(".")[2]
-    month = f"cast(date_trunc('month', cast({clauses.column(table, column)} as timestamp)) as date)"
+    instant = f"cast({clauses.column(table, column)} as timestamp)"
+    month = f"cast(date_trunc('{grain}', {instant}) as date)"
     return (
         f"select {month} as month, {aggregate} as value\n{joins}\ngroup by 1\norder by 1",
         clauses,
     )
 
 
-def query(semantic: SemanticModel, name: str, relation: Relation, *, by_month: bool = False) -> str:
-    """A simple metric or row count as a query: one row with its `value`, or, `by_month`, a
-    row per calendar month of its time column (`month` the month's first day)."""
-    return _query(semantic, name, relation, by_month)[0]
+def query(
+    semantic: SemanticModel,
+    name: str,
+    relation: Relation,
+    *,
+    by_month: bool = False,
+    by: str | None = None,
+    grain: str = "month",
+) -> str:
+    """A simple metric or row count as a query: one row with its `value`; `by_month`, a
+    row per calendar month of its time column (`month` the month's first day), or per
+    `grain` of it (`day`, `week`, `quarter`, `year`; still in a column called `month`); or
+    `by` a column path in the metric's `joins`, a row per `member` of that column."""
+    return _query(semantic, name, relation, by_month, by, grain)[0]
 
 
-def columns_read(semantic: SemanticModel, name: str) -> dict[str, set[str]]:
+def columns_read(semantic: SemanticModel, name: str, by: str | None = None) -> dict[str, set[str]]:
     """Every column `query` reads for a simple metric or row count, by table key, its
     `by_month` query's time column included: the columns its aggregate, filter, time and
     joins name. Every table the query reads is a key, the metric's own table always, even
     when no column of it is named (a row count with no filter: `count(*)`).
 
     Recorded while the query is written rather than found in its text, so it cannot
-    miss a column however the column is quoted or aliased.
+    miss a column however the column is quoted or aliased. With `by`, those of its query
+    per member of that column instead.
     """
+    if by is not None:
+        return _query(semantic, name, str, by_month=False, by=by)[1].read
     metric = semantic.metrics[name]
     return _query(semantic, name, str, by_month=metric.time is not None)[1].read
 
