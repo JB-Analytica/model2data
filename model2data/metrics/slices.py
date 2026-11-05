@@ -135,16 +135,49 @@ def _keeping(path: str, members: Sequence[Any], kind: ColumnKind) -> Where:
     return Where(terms=alternatives, any=True)
 
 
-def filtered(semantic: SemanticModel, members: Mapping[str, Sequence[Any]]) -> Filtered:
+def _within(path: str, start: Any, end: Any, kind: ColumnKind) -> Where:
+    """The filter for rows whose date or timestamp `path` falls from `start` to `end`.
+
+    Both ends are included and either may be None. A timestamp's `end` given as a day
+    means all of that day, which is what a date picker's last day means.
+    """
+    if kind not in ("date", "timestamp"):
+        raise ValueError(f"{path} is not a date or a timestamp ({kind})")
+    operators: dict[str, Any] = {}
+    if start is not None:
+        operators["gte"] = _value(start, kind, path)
+    if end is not None:
+        written = str(end)
+        if kind == "timestamp" and len(written) == 10:
+            day = dt.date.fromisoformat(_value(written, "date", path))
+            operators["lt"] = (day + dt.timedelta(days=1)).isoformat()
+        else:
+            operators["lte"] = _value(end, kind, path)
+    return Where(terms=[Where(terms=[Condition(path, operators)])])
+
+
+def filtered(
+    semantic: SemanticModel,
+    members: Mapping[str, Sequence[Any]],
+    *,
+    ranges: Optional[Mapping[str, tuple[Any, Any]]] = None,
+) -> Filtered:
     """Every metric narrowed to rows whose dimension is one of its members.
 
-    `members` maps a column path to the values to keep, None for null. Dimensions
-    together narrow as `and`. A dimension with no members keeps everything.
+    `members` maps a column path to the values to keep, None for null. `ranges` maps a
+    date or timestamp column to its `(start, end)`, both included, None for open. All of
+    them together narrow as `and`. A dimension with no members keeps everything, and so
+    does a range open at both ends.
     """
     wanted = {path: kept for path, kept in members.items() if len(kept) > 0}
     terms = [
         (path.rpartition(".")[0], _keeping(path, kept, _column(semantic, path)[1]))
         for path, kept in wanted.items()
+    ]
+    terms += [
+        (path.rpartition(".")[0], _within(path, start, end, _column(semantic, path)[1]))
+        for path, (start, end) in (ranges or {}).items()
+        if start is not None or end is not None
     ]
     metrics = dict(semantic.metrics)
     missed: set[str] = set()

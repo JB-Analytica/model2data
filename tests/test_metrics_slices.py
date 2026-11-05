@@ -331,3 +331,70 @@ def test_a_metric_with_no_time_has_no_periods(semantic) -> None:
 def test_a_grain_that_is_not_one_is_refused(semantic) -> None:
     with pytest.raises(ValueError, match="fortnight"):
         by_period(semantic, _frames(), "fortnight")
+
+
+def _within(semantic, **ranges):
+    wanted = {"orders.placed_at": ranges["placed"]} if "placed" in ranges else {}
+    if "joined" in ranges:
+        wanted["customers.joined_on"] = ranges["joined"]
+    return known_values(filtered(semantic, {}, ranges=wanted).semantic, _dated())
+
+
+def test_a_range_includes_both_ends(semantic) -> None:
+    found = _within(semantic, placed=("2025-01-05", "2025-01-06"))
+    assert found.values["revenue"].value == 50
+
+
+def test_a_timestamps_last_day_means_all_of_it(semantic) -> None:
+    found = _within(semantic, placed=("2025-01-05", "2025-01-05"))
+    assert found.values["orders_n"].value == 1  # the one at 23:59:59
+
+
+def test_an_exact_end_is_taken_as_written(semantic) -> None:
+    found = _within(semantic, placed=(None, "2025-01-05 23:00:00"))
+    assert found.values["orders_n"].value == 1
+
+
+def test_a_range_can_be_open_at_either_end(semantic) -> None:
+    assert _within(semantic, placed=("2025-01-06", None)).values["orders_n"].value == 2
+    assert _within(semantic, placed=(None, "2024-12-31")).values["orders_n"].value == 1
+
+
+def test_a_range_open_at_both_ends_keeps_everything(semantic) -> None:
+    assert _within(semantic, placed=(None, None)).to_json() == (
+        known_values(semantic, _dated()).to_json()
+    )
+
+
+def test_a_range_on_a_date_column(semantic) -> None:
+    narrowed = filtered(semantic, {}, ranges={"customers.joined_on": ("2025-01-01", None)})
+    assert known_values(narrowed.semantic, _frames()).values["customers_n"].value == 2
+
+
+def test_a_range_narrows_with_members(semantic) -> None:
+    both = filtered(
+        semantic, {"orders.status": ["paid"]}, ranges={"orders.placed_at": ("2025-01-01", None)}
+    )
+    assert known_values(both.semantic, _dated()).values["orders_n"].value == 1
+
+
+def test_a_range_lists_what_it_cannot_reach(semantic) -> None:
+    found = filtered(semantic, {}, ranges={"orders.placed_at": ("2025-01-01", None)})
+    assert "customers_n" in found.unfiltered
+
+
+@pytest.mark.parametrize(
+    ("path", "start", "match"),
+    [
+        ("orders.status", "2025-01-01", "not a date or a timestamp"),
+        ("orders.placed_at", "soon", "is not a value of"),
+    ],
+)
+def test_a_bad_range_is_refused(semantic, path, start, match) -> None:
+    with pytest.raises(ValueError, match=match):
+        filtered(semantic, {}, ranges={path: (start, None)})
+
+
+def test_a_bad_last_day_is_refused(semantic) -> None:
+    with pytest.raises(ValueError, match="is not a value of"):
+        filtered(semantic, {}, ranges={"orders.placed_at": (None, "2025-13-01")})

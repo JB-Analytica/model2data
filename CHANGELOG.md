@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.18.0] - 2026-11-05
+
+No change to what a run writes: the same model, seed and `--as-of` write the same files as 1.17.0.
+
+### Added
+- **`metrics.filtered` takes `ranges`**, a date or timestamp column's `(start, end)`, both included
+  and either open. A timestamp's end given as a day means all of that day.
+
 ## [1.17.0] - 2026-11-05
 
 No change to what a run writes: the same model, seed and `--as-of` write the same files as 1.16.4.
