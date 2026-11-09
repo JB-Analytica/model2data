@@ -218,7 +218,9 @@ def test_calls_from_many_threads_agree_and_convert_once(semantic, conversions) -
 def test_closed_frames_refuse_to_compute(semantic) -> None:
     with prepare(_frames()) as prepared:
         known_values(semantic, prepared)
+        assert "tables loaded" in repr(prepared)
     assert prepared.closed
+    assert repr(prepared).endswith("closed>")
     with pytest.raises(ValueError, match="closed"):
         known_values(semantic, prepared)
     prepared.close()  # closing twice is fine
