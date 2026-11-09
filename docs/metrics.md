@@ -148,6 +148,26 @@ command writes. From Python, `model2data.metrics` loads and checks a file (`load
 resolves it with the model into one semantic representation (`resolve`), and computes
 (`known_values`) and exports (`to_ossie`, `to_lightdash`, `write_lightdash`) from it.
 
+`known_values`, `by_period`, `breakdowns` and a `filtered` view's values each read the frames the
+way their seeds are, which costs a CSV round trip per column. To ask many questions of the same
+frames, prepare them once: `metrics.prepare(frames)` gives a `PreparedFrames` that every one of
+those functions accepts in place of the plain mapping, with the same values byte for byte. Each
+column is converted and loaded into one in-memory DuckDB database the first time a call needs it,
+and every later call queries that database. It is safe to use from several threads; close it, or
+use it as a context manager, when done:
+
+```python
+with metrics.prepare(frames) as prepared:
+    values = metrics.known_values(semantic, prepared)
+    quarters = metrics.by_period(semantic, prepared, "quarter")
+    web = metrics.filtered(semantic, {"orders.channel": ["web"]}).semantic
+    web_months = metrics.by_period(web, prepared, "month")
+```
+
+`metrics.is_additive(metric)` says whether a metric's values for separate rows add up to its
+total (a row count, a sum or a count), and `metrics.period_label(start, grain)` gives the label
+`by_period` uses for a period (`2025-01-06`, `2025-01`, `2025-Q1`, `2025`).
+
 The e-commerce example has a metrics file too, [`examples/ecommerce.metrics.yml`](../examples/ecommerce.metrics.yml)
 (revenue, orders, average order value, units sold); the [README](../README.md#before-and-after)
 shows what a run with it writes.

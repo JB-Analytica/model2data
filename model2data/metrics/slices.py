@@ -200,8 +200,16 @@ def filtered(
     return Filtered(replace(semantic, metrics=metrics), tuple(unfiltered))
 
 
-def _additive(metric: ResolvedMetric) -> bool:
+def is_additive(metric: ResolvedMetric) -> bool:
+    """Whether `metric`'s values for separate sets of rows add up to its value for all of
+    them: a row count, or a sum or count of a column. An average, a median, a minimum, a
+    maximum, a distinct count, a ratio or a derived metric does not, so its members or
+    periods must not be summed into a total, and `breakdowns` leaves out the members past
+    its cap rather than summing them into `other`."""
     return metric.kind == "count" or metric.agg in ("sum", "count")
+
+
+_additive = is_additive  # the name it had before it was public
 
 
 def _sort_key(member: Member) -> tuple:
@@ -290,16 +298,23 @@ def _fill(
     breakdown.hidden = len(rest)
     if not rest:
         return
-    if _additive(metric):
+    if is_additive(metric):
         total = sum((item.value for item in rest if item.value is not None), Decimal(0))
         breakdown.other = _rounded(total, _exact(metric))
     else:
         breakdown.note = f"{len(rest)} smaller members left out: {name} cannot be added up"
 
 
-def _period(start: dt.date, grain: str) -> str:
-    """How a period is written: `2025-01-06` for a day or the Monday of a week, `2025-01`,
-    `2025-Q1`, `2025`. They sort in time order within a grain."""
+def period_label(start: dt.date, grain: str) -> str:
+    """The label `by_period` gives the `grain` period starting on `start`: `2025-01-06` for a
+    day or the Monday of an ISO week, `2025-01` for a month, `2025-Q1` for a quarter, `2025`
+    for a year. Labels sort in time order within a grain.
+
+    `start` may be any day of the period for a month, a quarter or a year; for a week it
+    must be the Monday, since a week is labelled by the day it starts.
+    """
+    if grain not in GRAINS:
+        raise ValueError(f"{grain!r} is not one of {', '.join(GRAINS)}")
     if grain in ("day", "week"):
         return start.isoformat()
     if grain == "month":
@@ -307,6 +322,9 @@ def _period(start: dt.date, grain: str) -> str:
     if grain == "quarter":
         return f"{start.year}-Q{(start.month + 2) // 3}"
     return str(start.year)
+
+
+_period = period_label  # the name it had before it was public
 
 
 def by_period(
@@ -334,7 +352,7 @@ def by_period(
             if semantic.metrics[name].time is not None:
                 sql = query(semantic, name, relation, by_month=True, grain=grain)
                 periods = {
-                    _period(start, grain): value
+                    period_label(start, grain): value
                     for start, value in connection.execute(sql).fetchall()
                     if start is not None
                 }
