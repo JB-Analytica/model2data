@@ -38,6 +38,8 @@ from __future__ import annotations
 
 import io
 import json
+import threading
+from collections import Counter
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -187,19 +189,204 @@ def _kept(frame: pd.DataFrame, read: set[str]) -> list[Any]:
     return kept or list(frame.columns[:1])
 
 
+def _load(connection: Any, name: str, text: pd.DataFrame, row: Optional[str] = None) -> None:
+    """Create table `name` from text columns, each null where dbt's seed loader reads one.
+
+    With `row`, the table also has that column: each row's position in the frame, 0 first,
+    which is the order the rows are stored in.
+    """
+    columns = [
+        f"{_NULL_OR_TEXT.format(value=f'cast({quote(c)} as varchar)')} as {quote(c)}"
+        for c in text.columns
+    ]
+    if row is not None:
+        text = text.assign(**{row: range(len(text))})
+        columns.insert(0, quote(row))
+    connection.register(f"{name}_frame", text)
+    order = f" order by {quote(row)}" if row is not None else ""
+    connection.execute(
+        f"create table {name} as select {', '.join(columns)} from {name}_frame{order}"
+    )
+    connection.unregister(f"{name}_frame")
+
+
+def _row_column(frame: pd.DataFrame) -> str:
+    """A name for the row-number column that no column of `frame` has, compared the way
+    `_kept` compares names, so no query can name it."""
+    taken = {str(column).casefold() for column in frame.columns}
+    name = "__m2d_row"
+    while name.casefold() in taken:
+        name = f"_{name}"
+    return name
+
+
+class PreparedFrames(Mapping[str, pd.DataFrame]):
+    """A run's frames, read the way their seeds are once, for asking many questions of.
+
+    Every function of `model2data.metrics` that computes over frames takes these in
+    place of the plain mapping and gives the same values, byte for byte. What it saves is
+    the reading. Each column a query needs is turned into its seed's text the first time
+    some call needs it, and loaded into one in-memory DuckDB database that every later call
+    queries, so no column is converted or loaded twice. Use it when the same frames answer
+    more than one call (`known_values`, `by_period` at several grains, `breakdowns`, a
+    `filtered` view each); a single call gains nothing.
+
+    It is a read-only mapping of the frames it was given. The frames must not change
+    while it is in use: what it loaded would no longer be what they hold.
+
+    Calls from several threads at once are safe. Converting and loading happen under a
+    lock, so a column is converted once however many threads ask for it; each call then
+    queries through a DuckDB cursor of its own, outside the lock.
+
+    The database lives until `close()`, the end of a `with` block, or the object being
+    garbage collected. Close it while no call is running; a call after that raises
+    `ValueError`.
+
+        >>> with metrics.prepare(frames) as prepared:
+        ...     values = metrics.known_values(semantic, prepared)
+        ...     quarters = metrics.by_period(semantic, prepared, "quarter")
+    """
+
+    def __init__(self, frames: Mapping[str, pd.DataFrame]) -> None:
+        self._frames = dict(frames)
+        self._lock = threading.Lock()
+        self._connection: Any = None
+        self._closed = False
+        # Table key -> the database table holding its loaded columns, and those columns.
+        self._loaded: dict[str, tuple[str, list[Any]]] = {}
+        # Table key -> its tables' row-number column, which no view shows.
+        self._rows: dict[str, str] = {}
+        self._made = 0
+        # Tables a call is reading, and tables replaced by a wider one, dropped when unread.
+        self._reading: Counter[str] = Counter()
+        self._replaced: set[str] = set()
+
+    def __getitem__(self, key: str) -> pd.DataFrame:
+        return self._frames[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._frames)
+
+    def __len__(self) -> int:
+        return len(self._frames)
+
+    def __repr__(self) -> str:
+        state = "closed" if self._closed else f"{len(self._loaded)} tables loaded"
+        return f"<PreparedFrames {list(self._frames)!r}, {state}>"
+
+    def __enter__(self) -> PreparedFrames:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.close()
+
+    @property
+    def closed(self) -> bool:
+        return self._closed
+
+    def close(self) -> None:
+        """Close the DuckDB database, and with it everything loaded. Closing twice is fine."""
+        with self._lock:
+            self._closed = True
+            self._loaded.clear()
+            if self._connection is not None:
+                self._connection.close()
+                self._connection = None
+
+    @contextmanager
+    def _relations(self, wanted: Mapping[str, tuple[str, list[Any]]]) -> Iterator[Any]:
+        """A cursor in which each relation name of `wanted` is a view of its table key's
+        loaded table, which holds at least the columns asked for."""
+        import duckdb
+
+        with self._lock:
+            if self._closed:
+                raise ValueError("these prepared frames are closed")
+            if self._connection is None:
+                self._connection = duckdb.connect(":memory:")
+                self._connection.execute("set threads = 1")
+            tables = {
+                relation: self._table(key, columns) for relation, (key, columns) in wanted.items()
+            }
+            rows = {relation: self._rows[key] for relation, (key, _) in wanted.items()}
+            self._reading.update(tables.values())
+            cursor = self._connection.cursor()
+        try:
+            for relation, table in tables.items():
+                # Temporary, so the view is this cursor's alone; it shows the frame's
+                # columns only, never the row number.
+                cursor.execute(
+                    f"create temp view {relation} as "
+                    f"select * exclude ({quote(rows[relation])}) from {table}"
+                )
+            yield cursor
+        finally:
+            cursor.close()
+            with self._lock:
+                self._reading.subtract(tables.values())
+                unread = {table for table in self._replaced if self._reading[table] <= 0}
+                self._replaced -= unread
+                if self._connection is not None:
+                    for table in sorted(unread):
+                        self._connection.execute(f"drop table {table}")
+
+    def _table(self, key: str, columns: list[Any]) -> str:
+        """The table holding `columns` of `key`, converting and loading the ones that are
+        not loaded yet. Called under the lock."""
+        table, loaded = self._loaded.get(key, ("", []))
+        missing = [column for column in columns if column not in loaded]
+        if not missing:
+            return table
+        self._made += 1
+        wider = f"m2d_prepared_{self._made}"
+        frame = self._frames[key]
+        row = self._rows.setdefault(key, _row_column(frame))
+        text = _text_columns(frame, missing)
+        if not table:
+            _load(self._connection, wider, text, row)
+        else:
+            # Only the new columns are converted; the loaded ones are kept, matched to the
+            # new ones by row number and stored in the frame's order, as the first load was.
+            _load(self._connection, f"{wider}_new", text, row)
+            self._connection.execute(
+                f"create table {wider} as select * from {table} "
+                f"join {wider}_new using ({quote(row)}) order by {quote(row)}"
+            )
+            self._connection.execute(f"drop table {wider}_new")
+            self._replaced.add(table)
+        self._loaded[key] = (wider, [*loaded, *missing])
+        return wider
+
+
+def prepare(frames: Mapping[str, pd.DataFrame]) -> PreparedFrames:
+    """`frames` (by table key, what the seeds hold) prepared for many metric calls; frames
+    already prepared are returned as they are. See `PreparedFrames`."""
+    return frames if isinstance(frames, PreparedFrames) else PreparedFrames(frames)
+
+
 @contextmanager
 def _tables(
     semantic: SemanticModel, frames: Mapping[str, pd.DataFrame], read: Mapping[str, set[str]]
 ) -> Iterator[tuple[Any, Callable[[str], str]]]:
     """A DuckDB connection holding the `read` columns of `frames` as their seeds read,
-    and the relation name of each table key."""
-    import duckdb
+    and the relation name of each table key.
 
+    Plain frames are read for this call alone, into a database of its own. Prepared frames
+    give a cursor on their shared database, with the same relation names.
+    """
     keys = [table for table in semantic.entities if table in read]
     for key in keys:
         if key not in frames:
             raise ValueError(f"no generated rows for table {key!r}, which a metric reads")
     names = {key: f"m2d_{index}" for index, key in enumerate(keys)}
+
+    if isinstance(frames, PreparedFrames):
+        wanted = {names[key]: (key, _kept(frames[key], read[key])) for key in keys}
+        with frames._relations(wanted) as cursor:
+            yield cursor, names.__getitem__
+        return
+
+    import duckdb
 
     connection = duckdb.connect(":memory:")
     try:
@@ -207,15 +394,7 @@ def _tables(
         for key in keys:
             # One table's text at a time: it is freed once DuckDB holds its own copy.
             text = _text_columns(frames[key], _kept(frames[key], read[key]))
-            connection.register(f"{names[key]}_frame", text)
-            columns = ", ".join(
-                f"{_NULL_OR_TEXT.format(value=f'cast({quote(c)} as varchar)')} as {quote(c)}"
-                for c in text.columns
-            )
-            connection.execute(
-                f"create table {names[key]} as select {columns} from {names[key]}_frame"
-            )
-            connection.unregister(f"{names[key]}_frame")
+            _load(connection, names[key], text)
             del text
         yield connection, names.__getitem__
     finally:

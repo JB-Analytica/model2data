@@ -78,6 +78,15 @@ _case(
     "--days",
     "2",
 )
+# The e-commerce example with its own metrics file and the Lightdash meta: recorded on 1.18.0,
+# before metric calls could share prepared frames, which must not change a byte of it.
+_case(
+    "metrics-ecommerce",
+    _ECOM,
+    "--metrics",
+    str(EXAMPLES / "ecommerce.metrics.yml"),
+    "--lightdash",
+)
 for _locale in ("en_US", "nl_BE", "de_DE", "fr_FR", "ja_JP"):
     _case(f"locale-{_locale}", _ECOM, "--locale", _locale)
 

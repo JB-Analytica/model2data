@@ -14,6 +14,9 @@ generator never reads it: a model generates the same data with or without one.
     >>> metrics.known_values(narrowed.semantic, frames)     # the same, on those rows
     >>> metrics.breakdowns(semantic, frames, [("revenue", "customers.country")])
     >>> metrics.by_period(semantic, frames, "week")         # any grain, ISO weeks
+    >>> with metrics.prepare(frames) as prepared:           # many calls, frames read once
+    ...     metrics.known_values(semantic, prepared)
+    ...     metrics.by_period(semantic, prepared, "quarter")
     >>> export = metrics.to_ossie(semantic)                 # Apache Ossie 0.1.1
     >>> export.to_yaml(), export.lossiness
     >>> metrics.to_lightdash(semantic).to_yaml()           # Lightdash meta, dbt YAML
@@ -56,6 +59,8 @@ from model2data.metrics.slices import (
     breakdowns,
     by_period,
     filtered,
+    is_additive,
+    period_label,
 )
 from model2data.metrics.types import (
     AGGREGATIONS,
@@ -68,7 +73,13 @@ from model2data.metrics.types import (
     Ratio,
     Where,
 )
-from model2data.metrics.values import KnownValue, KnownValues, known_values
+from model2data.metrics.values import (
+    KnownValue,
+    KnownValues,
+    PreparedFrames,
+    known_values,
+    prepare,
+)
 
 __all__ = [
     "AGGREGATIONS",
@@ -97,6 +108,7 @@ __all__ = [
     "Metrics",
     "MetricsError",
     "OssieExport",
+    "PreparedFrames",
     "Ratio",
     "Relationship",
     "ResolvedMetric",
@@ -106,6 +118,7 @@ __all__ = [
     "check_document",
     "from_dict",
     "inferred_metrics",
+    "is_additive",
     "is_metrics_file",
     "breakdowns",
     "by_period",
@@ -115,6 +128,8 @@ __all__ = [
     "metric_test_sql",
     "metrics_stem",
     "parse_expression",
+    "period_label",
+    "prepare",
     "resolve",
     "sibling_model",
     "to_lightdash",

@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.19.0] - 2026-11-09
+
+No change to what a run writes: the same model, seed and `--as-of` write the same files as 1.18.0.
+
+### Added
+- **`metrics.prepare(frames)` reads a run's frames once for many metric calls.** It gives a
+  `PreparedFrames`, a read-only mapping of the frames that `known_values`, `by_period`,
+  `breakdowns` and every `filtered` view's values accept in place of the plain mapping, with the
+  same values byte for byte. Each column a query needs is turned into its seed's text and loaded
+  into one in-memory DuckDB database the first time a call needs it, and never again; every later
+  call queries that database. A table widened for a later call is matched to its new columns by
+  row number, never by the order DuckDB returns rows in. It is safe to share between threads, and
+  closes with `close()` or at the end of a `with` block. Plain mappings work as before.
+- **`metrics.is_additive(metric)`** says whether a metric's values for separate sets of rows add up
+  to its value for all of them: a row count, or a sum or count of a column.
+- **`metrics.period_label(start, grain)`** gives the label `by_period` uses for a period:
+  `2025-01-06` for a day or an ISO week, `2025-01`, `2025-Q1`, `2025`. It, and the `_period` name
+  it had before, now raise `ValueError` for a grain that is not one of `GRAINS`, where `_period`
+  used to return the year.
+
+### Changed
+- **Many metric calls over the same frames are about three times faster with prepared frames.** Over
+  the coffee webshop example at 25,000 rows per table, fifteen calls (`known_values`, `by_period`
+  by month and by quarter, two `breakdowns`, and five `filtered` views with `known_values` and
+  `by_period` each) took 4.6 s with plain frames and 1.5 s with one prepared object, most of the
+  difference being the CSV round trip each call made per column.
+
 ## [1.18.0] - 2026-11-05
 
 No change to what a run writes: the same model, seed and `--as-of` write the same files as 1.17.0.
