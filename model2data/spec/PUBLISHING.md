@@ -22,6 +22,8 @@ On the website (`JB-Analytica/jba-website`), serve this directory's files at the
 
 | URL | File |
 | --- | --- |
+| `https://www.jbanalytica.com/model2data/spec/dashboards/0.1.0/dashboard.schema.json` | `model2data/spec/dashboards/dashboard.schema.json` of engine 1.20.0 |
+| `https://www.jbanalytica.com/model2data/spec/dashboards/0.1.0/README.md` (optional, or render it as a page) | `model2data/spec/dashboards/README.md` of engine 1.20.0 |
 | `https://www.jbanalytica.com/model2data/spec/metrics/0.1.0/metrics.schema.json` | `model2data/spec/metrics/metrics.schema.json` of engine 1.13.0 |
 | `https://www.jbanalytica.com/model2data/spec/metrics/0.1.0/README.md` (optional, or render it as a page) | `model2data/spec/metrics/README.md` of engine 1.13.0 |
 | `https://www.jbanalytica.com/model2data/spec/0.5.0/model.schema.json` | `model2data/spec/model.schema.json` of engine 1.16.0 |
@@ -42,10 +44,13 @@ Requirements:
 - **`Content-Type: application/schema+json`** (or `application/json`).
 - Copy the file from the released engine version, not from a branch: the tag that ships each
   version (0.2.0: engine 1.8.0; 0.3.0: engine 1.9.0; 0.4.0: engine 1.11.0; 0.5.0: engine 1.16.0;
-  metrics 0.1.0: engine 1.13.0).
+  metrics 0.1.0: engine 1.13.0; dashboards 0.1.0: engine 1.20.0).
 - The metrics spec is versioned on its own, under `/spec/metrics/<version>/`, beside the model
   spec's versions; a metrics file's first line points at it the same way:
   `# yaml-language-server: $schema=https://www.jbanalytica.com/model2data/spec/metrics/0.1.0/metrics.schema.json`.
+- The dashboard spec is versioned on its own too, under `/spec/dashboards/<version>/`; a dashboard
+  file's first line is
+  `# yaml-language-server: $schema=https://www.jbanalytica.com/model2data/spec/dashboards/0.1.0/dashboard.schema.json`.
 
 Check it:
 
@@ -55,7 +60,8 @@ curl -s https://www.jbanalytica.com/model2data/spec/0.5.0/model.schema.json | py
 ```
 
 The second command must print the URL itself. Check the metrics schema the same way, at
-`/model2data/spec/metrics/0.1.0/metrics.schema.json`.
+`/model2data/spec/metrics/0.1.0/metrics.schema.json`, and the dashboard schema at
+`/model2data/spec/dashboards/0.1.0/dashboard.schema.json`.
 
 ## 2. Register the file pattern with SchemaStore
 
@@ -88,6 +94,19 @@ A second entry registers the metrics files:
 
 (`*.metrics.yml` is a common name; if SchemaStore asks for something narrower, register it
 without `fileMatch`, so a file that points at the schema on its first line still validates.)
+
+A third entry registers the dashboard files:
+
+```json
+{
+  "name": "model2data dashboard",
+  "description": "A dashboard over a model2data model's metrics and columns: pages of KPI, chart, filter, table and text tiles on a 12-column grid (dashboard spec 0.1.0)",
+  "fileMatch": ["*.dashboard.yml", "*.dashboard.yaml"],
+  "url": "https://www.jbanalytica.com/model2data/spec/dashboards/0.1.0/dashboard.schema.json"
+}
+```
+
+(The same holds for `*.dashboard.yml` if SchemaStore asks for something narrower.)
 
 The schema stays hosted on our site (SchemaStore links to it, it does not copy it), so a
 new spec version only needs the `url` updated in a follow-up PR (an entry already registered

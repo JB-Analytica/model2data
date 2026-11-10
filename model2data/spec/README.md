@@ -56,7 +56,9 @@ nothing else. DBML, dbt YAML and other formats are read by converting them into 
 
 What the model's numbers mean -- revenue, orders, average order value -- is written in a second,
 optional document beside it, `<name>.metrics.yml`, defined by the [metrics
-spec](metrics/README.md) and versioned on its own. The generator never reads it.
+spec](metrics/README.md) and versioned on its own. The generator never reads it. Dashboards over
+those metrics and the model's columns are files of their own, `<name>.dashboard.yml`, defined by
+the [dashboard spec](dashboards/README.md); they name metrics and columns and hold no values.
 
 ## What is normative
 

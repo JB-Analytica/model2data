@@ -1,0 +1,91 @@
+# yaml-language-server: $schema=https://www.jbanalytica.com/model2data/spec/dashboards/0.1.0/dashboard.schema.json
+model2data-dashboard: 0.1.0
+model: coffee_webshop
+title: Coffee webshop sales
+pages:
+  - id: overview
+    name: Overview
+    grain: month                        # what the line and stacked tiles are on
+    tiles:
+      - id: intro
+        kind: text
+        text: Revenue, orders and the web's share of them, by month.
+        place: {x: 0, y: 0, w: 12, h: 1}
+      - id: revenue
+        kind: kpi
+        title: Revenue
+        metric: revenue
+        compare: previous               # the last complete month against the one before
+        place: {x: 0, y: 1, w: 3, h: 2}
+      - id: orders
+        kind: kpi
+        title: Orders
+        metric: orders
+        place: {x: 3, y: 1, w: 3, h: 2}
+      - id: average-order-value
+        kind: kpi
+        title: Average order value
+        metric: average_order_value
+        comparison: Target 120
+        place: {x: 6, y: 1, w: 3, h: 2}
+      - id: channel
+        kind: filter
+        title: Channel
+        dimension: orders.channel       # narrows every tile on the page
+        place: {x: 9, y: 1, w: 3, h: 2}
+      - id: revenue-over-time
+        kind: line
+        title: Revenue by month
+        metric: revenue
+        place: {x: 0, y: 3, w: 8, h: 6}
+      - id: revenue-by-category
+        kind: donut
+        title: Revenue by category
+        metric: revenue
+        by: products.category
+        place: {x: 8, y: 3, w: 4, h: 6}
+      - id: orders-by-channel
+        kind: stacked
+        title: Orders per quarter, by channel
+        metric: orders
+        grain: quarter
+        by: orders.channel
+        place: {x: 0, y: 9, w: 6, h: 6}
+      - id: revenue-by-country
+        kind: bar
+        title: Revenue by country
+        metric: revenue
+        by: customers.country
+        place: {x: 6, y: 9, w: 6, h: 6}
+  - id: detail
+    name: Orders
+    tiles:
+      - id: order-date
+        kind: filter
+        title: Order date
+        dimension: orders.order_date    # a date column: a date range
+        place: {x: 0, y: 0, w: 4, h: 2}
+      - id: web-share
+        kind: kpi
+        title: Web share of revenue
+        metric: web_share
+        place: {x: 4, y: 0, w: 4, h: 2}
+      - id: coffee-units
+        kind: kpi
+        title: Coffee units sold
+        metric: coffee_units_sold
+        place: {x: 8, y: 0, w: 4, h: 2}
+      - id: latest-orders
+        kind: table
+        title: Orders
+        table: orders
+        columns: [id, order_date, channel, status, total_amount]
+        rows: 20
+        place: {x: 0, y: 2, w: 8, h: 7}
+      - id: open-question
+        kind: note
+        title: To check
+        text: |
+          Should pending orders count towards revenue?
+          The metric leaves them out today.
+        place: {x: 8, y: 2, w: 4, h: 3}

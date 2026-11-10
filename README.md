@@ -233,6 +233,12 @@ should fail. → [Defects on purpose](docs/defects.md)
 an Apache Ossie semantic model, and with `--lightdash` the same metrics as Lightdash reads them.
 → [Metrics with known values](docs/metrics.md)
 
+**Dashboards as files.** A `<name>.dashboard.yml` lays out KPI, chart, filter and table tiles
+over the model's metrics and columns, and holds no values. `model2data dashboard check` checks it
+offline, with the line and column of every issue and a suggestion for every unknown name;
+[model2data studio](https://studio.jbanalytica.com) draws it with the numbers.
+→ [The dashboard spec](model2data/spec/dashboards/README.md)
+
 **Validate in CI.** `model2data validate` prints GitHub annotations; `uses: JB-Analytica/model2data@v1`
 fails a pull request that breaks a model. Pre-commit and GitLab CI too. → [Validate models in CI](docs/ci.md)
 

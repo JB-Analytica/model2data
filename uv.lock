@@ -786,7 +786,7 @@ wheels = [
 
 [[package]]
 name = "model2data"
-version = "1.19.0"
+version = "1.20.0"
 source = { editable = "." }
 dependencies = [
     { name = "dbt-core" },

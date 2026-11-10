@@ -13,6 +13,8 @@ from faker import Faker
 from typer.core import TyperGroup
 from typer.models import ParameterInfo
 
+from model2data import dashboards
+from model2data.dashboards.check import declared_model
 from model2data.dbt.hint_tests import DEFAULT_TOLERANCE, SEVERITIES
 from model2data.dbt.naming import dbt_names, for_dbt
 from model2data.dbt.project import (
@@ -940,15 +942,18 @@ def validate_command(
         dir_okay=False,
         readable=True,
         help=(
-            "The model a metrics file (*.metrics.yml) is checked against. Default: the model "
-            "beside it with the same stem (coffee.model2data.yml for coffee.metrics.yml)."
+            "The model a metrics file (*.metrics.yml) or a dashboard (*.dashboard.yml) is "
+            "checked against. Default: the model beside it with the same stem "
+            "(coffee.model2data.yml for coffee.metrics.yml)."
         ),
     ),
 ):
     """Check that models conform to spec 0.5.0 (or 0.2.x-0.4.x), printing every issue with its path.
 
     Takes one or more files and/or --glob patterns. A metrics file (*.metrics.yml) is checked
-    against metrics spec 0.1.0 and against its model. Exits 1 when any file has an error;
+    against metrics spec 0.1.0 and against its model; a dashboard (*.dashboard.yml) against
+    dashboard spec 0.1.0 and the names of the model and metrics beside it, as `dashboard check`
+    does. Exits 1 when any file has an error;
     warnings are printed, and the file conforms. A warning that a child's date `can fall
     before` its parent's names the `after: <table>.<column>` to add.
     """
@@ -966,6 +971,11 @@ def validate_command(
         against: Optional[Path] = None
         if is_metrics_file(file):
             issues, against = _metrics_issues(file, _given(model_option))
+        elif dashboards.is_dashboard_file(file):
+            found, against, _ = _dashboard_issues(file, _given(model_option), None)
+            issues = [
+                Issue(issue.path, issue.message, issue.line, issue.severity) for issue in found
+            ]
         else:
             issues = validate(file)
         if output_format == "github":
@@ -980,6 +990,11 @@ def validate_command(
                 model_note = f", checked against {against.name}" if against is not None else ""
                 typer.echo(
                     f"✅ {shown} conforms to metrics spec {METRICS_SPEC_VERSION}{model_note}."
+                )
+            elif dashboards.is_dashboard_file(file):
+                model_note = f", checked against {against.name}" if against is not None else ""
+                typer.echo(
+                    f"✅ {shown} conforms to dashboard spec {dashboards.SPEC_VERSION}{model_note}."
                 )
             else:
                 typer.echo(f"✅ {shown} conforms to spec {_spec_of(file)}.")
@@ -1065,6 +1080,7 @@ class GuideTopic(str, Enum):
     setup = "setup"
     triage = "triage"
     tune = "tune"
+    dashboards = "dashboards"
 
 
 _MODEL_PATTERNS = ("*.model2data.yml", "*.model2data.yaml", "*.model2data.json", "*.dbml")
@@ -1089,6 +1105,7 @@ def guide_command(
             "setup: no model here yet -- install, write one, first run. "
             "triage: what validate, generate and dbt build printed, and what to do. "
             "tune: every option, model key and exit code. "
+            "dashboards: write a *.dashboard.yml over the model's metrics and check it. "
             "Default: picked from the current directory (a *.model2data.yml or *.dbml "
             "file in it means triage)."
         ),
@@ -1237,3 +1254,187 @@ def metrics_export_command(
     _print_losses(
         "Not expressible in Ossie 0.1.1 itself, carried in custom_extensions", export.lossiness
     )
+
+
+dashboard_app = typer.Typer(
+    help=(
+        "Dashboards as files (dashboard spec 0.1.0): check a *.dashboard.yml against the "
+        "spec and against the names of its model and metrics. `model2data guide dashboards` "
+        "says how to write one."
+    ),
+    no_args_is_help=True,
+)
+app.add_typer(dashboard_app, name="dashboard")
+
+_MODEL_SUFFIXES = (".model2data.yml", ".model2data.yaml", ".model2data.json", ".dbml")
+_METRICS_SUFFIXES = (".metrics.yml", ".metrics.yaml", ".metrics.json")
+
+
+def _beside(folder: Path, suffixes: tuple[str, ...]) -> list[Path]:
+    """The files directly in `folder` whose names end in one of `suffixes`, by name."""
+    return sorted(
+        path for path in folder.iterdir() if path.is_file() and path.name.lower().endswith(suffixes)
+    )
+
+
+def _dashboard_model(file: Path, text: str) -> tuple[Optional[Path], Optional[str]]:
+    """The model a dashboard is checked against when none is given, or why there is none.
+
+    In order: the model the file's `model` names, `<model>.model2data.yml` (or `.yaml`,
+    `.json`, `.dbml`) beside the file; the only model in the dashboard's folder.
+    """
+    folder = file.parent
+    declared = declared_model(text)
+    if declared:
+        for suffix in _MODEL_SUFFIXES:
+            candidate = folder / f"{declared}{suffix}"
+            if candidate.is_file():
+                return candidate, None
+    models = _beside(folder, _MODEL_SUFFIXES)
+    if len(models) == 1:
+        return models[0], None
+    if models:
+        names = ", ".join(path.name for path in models)
+        return None, (
+            f"several models beside it ({names}), and none named by the file: its metric, "
+            "table and column names are not checked; pass --model to check them"
+        )
+    return None, (
+        "no model beside it: its metric, table and column names are not checked; "
+        "pass --model to check them"
+    )
+
+
+def _dashboard_metrics(model_file: Path) -> Optional[Path]:
+    """The metrics file beside the model with its stem: coffee.metrics.yml for coffee.dbml."""
+    stem = _model_stem(model_file)
+    for suffix in _METRICS_SUFFIXES:
+        candidate = model_file.with_name(stem + suffix)
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _dashboard_issues(
+    file: Path, model_option: Optional[Path], metrics_option: Optional[Path]
+) -> tuple[list[dashboards.Issue], Optional[Path], Optional[Path]]:
+    """A dashboard's issues, checked against its model and metrics, and the model and
+    metrics files it was checked against (None where there was none)."""
+    try:
+        text = file.read_bytes().decode("utf-8-sig")
+    except UnicodeDecodeError as error:
+        message = f"{file.name} is not UTF-8 (byte {error.start} cannot be decoded)."
+        return [dashboards.Issue(None, None, message)], None, None
+    notes: list[dashboards.Issue] = []
+    model_file = model_option
+    if model_file is None:
+        model_file, why = _dashboard_model(file, text)
+        if why is not None:
+            notes.append(dashboards.Issue(None, None, why, "warning"))
+    name = dashboards.dashboard_name(file)
+    if dashboards.check_name(name) is not None:
+        notes.append(
+            dashboards.Issue(
+                None,
+                None,
+                f"its file name gives the dashboard the name {name!r}. {dashboards.NAME_RULE}",
+                "warning",
+            )
+        )
+    if model_file is None:
+        return [*notes, *dashboards.check_dashboard(text)], None, None
+
+    try:
+        model = load(model_file)
+    except ModelError:
+        problem = (
+            f"its model, {model_file.name}, does not conform: run `model2data validate "
+            f"{model_file.name}` and fix it first"
+        )
+        return [*notes, dashboards.Issue(None, None, problem)], model_file, None
+    metrics_file = metrics_option or _dashboard_metrics(model_file)
+    found: Optional[Metrics] = None
+    if metrics_file is not None:
+        try:
+            found = load_metrics(metrics_file, model, model_name=_model_stem(model_file))
+        except MetricsError:
+            problem = (
+                f"its metrics file, {metrics_file.name}, does not conform: run `model2data "
+                f"validate {metrics_file.name}` and fix it first"
+            )
+            return [*notes, dashboards.Issue(None, None, problem)], model_file, metrics_file
+    known = dashboards.known_names(model, found, model_name=_model_stem(model_file))
+    return [*notes, *dashboards.check_dashboard(text, known)], model_file, metrics_file
+
+
+def _issue_line(file: Path, issue: dashboards.Issue) -> str:
+    """`file:line:column: error|warning: message`, without the place when there is none."""
+    where = str(file)
+    if issue.line is not None:
+        where += f":{issue.line}"
+        if issue.column is not None:
+            where += f":{issue.column}"
+    return f"{where}: {issue.severity}: {issue.message}"
+
+
+@dashboard_app.command("check")
+def dashboard_check_command(
+    files: list[Path] = typer.Argument(  # noqa: B008
+        ...,
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+        help="The dashboards: *.dashboard.yml files.",
+    ),
+    model_option: Optional[Path] = typer.Option(  # noqa: B008
+        None,
+        "--model",
+        "-m",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+        help=(
+            "The model whose tables and columns the dashboards name. Default: "
+            "<model>.model2data.yml (or .dbml) beside the file for the `model` it names, "
+            "else the only model beside the file."
+        ),
+    ),
+    metrics_option: Optional[Path] = typer.Option(  # noqa: B008
+        None,
+        "--metrics",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+        help=(
+            "The model's metrics file. Default: <stem>.metrics.yml beside the model, else "
+            "the metrics the model implies."
+        ),
+    ),
+):
+    """Check dashboards against dashboard spec 0.1.0 and the names of their model and metrics.
+
+    Prints `file:line:column: error|warning: message` per issue, then a summary line per
+    file. An error is a way the file does not conform; a metric, `table.column` or table the
+    model does not have is a warning. Exits 1 when any file has an error, 0 otherwise.
+    """
+    failed = False
+    for file in files:
+        issues, model_file, metrics_file = _dashboard_issues(
+            file, _given(model_option), _given(metrics_option)
+        )
+        for issue in issues:
+            typer.echo(_issue_line(file, issue))
+        errors = sum(1 for issue in issues if issue.is_error)
+        warnings = len(issues) - errors
+        failed = failed or errors > 0
+        against = [path.name for path in (model_file, metrics_file) if path is not None]
+        note = f", checked against {' and '.join(against)}" if against else ""
+        typer.echo(
+            f"{file}: {errors} error{'' if errors == 1 else 's'}, "
+            f"{warnings} warning{'' if warnings == 1 else 's'}{note}"
+        )
+    if failed:
+        raise typer.Exit(1)

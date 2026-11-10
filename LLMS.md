@@ -6,7 +6,8 @@ project. Read this before authoring a DBML file for `model2data`.
 
 With model2data installed, `model2data guide` prints the instructions for the version you have:
 how to set it up here, what its output means and what to do about it (`guide triage`), and every
-option (`guide tune`). Run it first.
+option (`guide tune`), and how to write and check a dashboard file (`guide dashboards`). Run it
+first.
 
 ## What model2data does
 
@@ -294,6 +295,19 @@ generated project), a `TableGroup` its `groups`.
   `dbt build` runs a test per metric that must pass. A failing metric test means the metric's SQL
   and the data disagree; never edit `metric_values.json` to make it pass. The file must be passed;
   `generate` does not pick it up from beside the model.
+- When the user wants a dashboard over those metrics, write it as a file beside the model,
+  `<name>.dashboard.yml` (dashboard spec 0.1.0, `model2data/spec/dashboards/README.md`, example
+  `model2data/spec/examples/coffee_webshop_sales.dashboard.yml`): `model2data-dashboard: 0.1.0`,
+  optional `model` and `title`, then `pages`, each with `id`, `name`, optional `grain` and
+  `tiles`. A tile has `id`, `kind` (`kpi`, `line`, `bar`, `stacked`, `donut`, `table`, `filter`,
+  `text`, `note`) and `place: {x, y, w, h}` on a 12-column grid, and names a `metric`, a
+  dimension as `table.column` (`by`, `across`, `dimension`) or a `table` with `columns`; it
+  never holds a value. Keep page and tile ids when editing: links and comments point at them.
+  Check it with `model2data dashboard check <name>.dashboard.yml` (`file:line:column:
+  error|warning: message`, exit 1 on errors only; a metric or column the model lacks is a
+  warning with a suggestion). The engine does not draw dashboards;
+  [model2data studio](https://studio.jbanalytica.com) draws the file with the numbers of the
+  model's generated data. `model2data guide dashboards` has the rest.
 - model2data requires dbt-core >= 1.11 (tracking dbt's own supported-version policy). Everything
   here, `--unit-tests` included, works with a plain `pip install model2data`.
 
@@ -339,6 +353,8 @@ model2data validate FILE... [--model MODEL]   a metrics file (*.metrics.yml) is 
                                               --model, or the model beside it with its stem
 model2data metrics list   -f MODEL [--metrics FILE]                      every metric, inferred too
 model2data metrics export -f MODEL [--metrics FILE] --to ossie|lightdash [-o FILE]  without generating
+model2data dashboard check FILE... [--model MODEL] [--metrics FILE]   *.dashboard.yml against the
+                                              dashboard spec and the model's metrics and columns
 ```
 
 For anything not covered here, see [README.md](README.md) and [docs/](docs/README.md) — this file exists to make a schema
