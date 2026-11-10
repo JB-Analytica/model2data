@@ -20,5 +20,6 @@ The [README](../README.md) shows what model2data does; these pages say how each 
 - [Validate models in CI](ci.md) — the GitHub Action, pre-commit, GitLab CI.
 - [Using model2data from a coding agent or an LLM](agents.md) — `model2data guide`, LLMS.md.
 
-The formats themselves are specified in the package: the [model spec](../model2data/spec/README.md)
-and the [metrics spec](../model2data/spec/metrics/README.md), each with a JSON Schema.
+The formats themselves are specified in the package: the [model spec](../model2data/spec/README.md),
+the [metrics spec](../model2data/spec/metrics/README.md) and the
+[dashboard spec](../model2data/spec/dashboards/README.md), each with a JSON Schema.

@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.20.0] - 2026-11-10
+
+No change to what a run writes: the same model, seed and `--as-of` write the same files as 1.19.0.
+
+### Added
+- **Dashboard spec 0.1.0: dashboards as files.** A `<name>.dashboard.yml` beside the model lays out
+  pages of tiles on a 12-column grid: `kpi`, `line`, `bar`, `stacked`, `donut`, `table`, `filter`,
+  `text` and `note`. A tile names a metric, a dimension as `table.column` or a table, and never
+  holds a value or a data source. The spec is `model2data/spec/dashboards/README.md` with a JSON
+  Schema, `dashboard.schema.json`, to be served at
+  `https://www.jbanalytica.com/model2data/spec/dashboards/0.1.0/dashboard.schema.json`; an
+  example, `coffee_webshop_sales.dashboard.yml`, sits beside the coffee webshop model and metrics.
+  model2data studio draws a dashboard file with the numbers of the model's generated data.
+- **`model2data dashboard check FILE...`** checks dashboards against the spec and against the
+  names of their model and metrics, printing `file:line:column: error|warning: message`. An error
+  (bad YAML, an unknown key, a missing or repeated id, a value out of range) exits 1; a metric,
+  `table.column` or table the model does not have is a warning, as is a file name that breaks
+  the name rule (`^[a-z0-9][a-z0-9_-]{0,63}$`, so no dots) with the closest name it does have,
+  and so is a tile running past the grid. The model is `--model`, else
+  the model the file's `model` names (`<model>.model2data.yml` or `.dbml` beside it), else the
+  only model beside the file; the metrics are `--metrics`, else
+  `<stem>.metrics.yml` beside the model, else the metrics the model implies.
+  `model2data validate` checks a `*.dashboard.yml` the same way.
+- **`model2data.dashboards`**: `read_dashboard`, `check_dashboard`, `write_dashboard`, `from_dict`
+  and `known_names`, with `Dashboard`, `Page`, `Tile`, `Place`, `Issue` (line, column, severity,
+  message, path) and `DashboardError`. The writer puts keys in a fixed order and `place` and
+  `columns` on one line, and what it writes reads back as the same dashboard.
+- **`model2data guide dashboards`**: how a coding agent writes a dashboard file and checks it.
+
 ## [1.19.0] - 2026-11-09
 
 No change to what a run writes: the same model, seed and `--as-of` write the same files as 1.18.0.

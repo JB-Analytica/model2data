@@ -1,0 +1,152 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://www.jbanalytica.com/model2data/spec/dashboards/0.1.0/dashboard.schema.json",
+  "title": "model2data dashboard 0.1.0",
+  "description": "A dashboard over a model2data model's metrics and columns: a `<name>.dashboard.yml` file. It names metrics, `table.column` dimensions and tables, never a data source or a value. Normative together with README.md in this directory, which says what each tile shows and the checks a reader makes beyond this schema (unique ids among others). Where a field is text, a number is read as its text (`title: 2024` is the title \"2024\"); an optional field that is null is read as left out.",
+  "type": "object",
+  "required": ["model2data-dashboard"],
+  "properties": {
+    "model2data-dashboard": {
+      "description": "The version of the dashboard spec the file is written against. A reader refuses a minor version it does not implement (the spec is before 1.0.0).",
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "model": {
+      "description": "The `name` of the model the dashboard is for. A reader that checks the file against a model of another name warns.",
+      "type": ["string", "null"],
+      "minLength": 1
+    },
+    "title": {
+      "description": "The dashboard's title for people. The file name, not the title, is the dashboard's name.",
+      "$ref": "#/$defs/optionalName"
+    },
+    "pages": {
+      "description": "The pages, in the order they are shown.",
+      "type": ["array", "null"],
+      "maxItems": 20,
+      "items": {"$ref": "#/$defs/page"}
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "name": {
+      "description": "Text of at most 200 characters.",
+      "type": ["string", "number"],
+      "maxLength": 200
+    },
+    "optionalName": {
+      "description": "Text of at most 200 characters, or null for none.",
+      "type": ["string", "number", "null"],
+      "maxLength": 200
+    },
+    "grain": {
+      "description": "The period a value over time is computed per.",
+      "enum": ["day", "week", "month", "quarter", "year"]
+    },
+    "page": {
+      "type": "object",
+      "description": "One page of tiles on a grid 12 columns wide.",
+      "required": ["id", "name"],
+      "properties": {
+        "id": {
+          "description": "The page's id: unique among the file's pages, and kept when the page is edited, since links and comments anchor on it.",
+          "$ref": "#/$defs/name"
+        },
+        "name": {
+          "description": "The page's name for people.",
+          "$ref": "#/$defs/name"
+        },
+        "grain": {
+          "description": "What the page's tiles over time are on; `month` when left out. A tile's own `grain` overrides it.",
+          "anyOf": [{"$ref": "#/$defs/grain"}, {"type": "null"}]
+        },
+        "tiles": {
+          "description": "The page's tiles.",
+          "type": ["array", "null"],
+          "maxItems": 60,
+          "items": {"$ref": "#/$defs/tile"}
+        }
+      },
+      "additionalProperties": false
+    },
+    "place": {
+      "type": "object",
+      "description": "Where a tile sits: column `x`, row `y`, `w` columns wide, `h` rows high. Keep `x + w` at most 12.",
+      "required": ["x", "y", "w", "h"],
+      "properties": {
+        "x": {"description": "The column the tile starts in.", "type": "integer", "minimum": 0, "maximum": 11},
+        "y": {"description": "The row the tile starts on.", "type": "integer", "minimum": 0, "maximum": 1000},
+        "w": {"description": "The tile's width in columns.", "type": "integer", "minimum": 1, "maximum": 12},
+        "h": {"description": "The tile's height in rows.", "type": "integer", "minimum": 1, "maximum": 100}
+      },
+      "additionalProperties": false
+    },
+    "tile": {
+      "type": "object",
+      "description": "One tile. `kind` says what it shows and which of the other fields it reads; README.md lists them per kind.",
+      "required": ["id", "kind", "place"],
+      "properties": {
+        "id": {
+          "description": "The tile's id: unique among every tile of the file, on every page, and kept when the tile is edited, since links and comments anchor on it.",
+          "$ref": "#/$defs/name"
+        },
+        "kind": {
+          "description": "What the tile shows.",
+          "enum": ["kpi", "line", "bar", "stacked", "donut", "table", "filter", "text", "note"]
+        },
+        "title": {"description": "A heading on the tile.", "$ref": "#/$defs/optionalName"},
+        "metric": {
+          "description": "`kpi`, `line`, `bar`, `stacked`, `donut`: the metric shown, by name.",
+          "$ref": "#/$defs/optionalName"
+        },
+        "comparison": {
+          "description": "`kpi`: text shown under the number. It is not computed.",
+          "$ref": "#/$defs/optionalName"
+        },
+        "compare": {
+          "description": "`kpi`: `previous` shows the last complete period against the one before it, on the tile's `grain` (else the page's).",
+          "enum": ["previous", null]
+        },
+        "grain": {
+          "description": "`line`, `stacked`, and `kpi` with `compare`: a grain of the tile's own, over the page's.",
+          "anyOf": [{"$ref": "#/$defs/grain"}, {"type": "null"}]
+        },
+        "by": {
+          "description": "`bar`, `donut`: the dimension broken down by, `table.column`. `line`: one line per member of it. `stacked`: what each bar is stacked by.",
+          "$ref": "#/$defs/optionalName"
+        },
+        "across": {
+          "description": "`stacked`: a dimension, `table.column`, whose members are the bars instead of periods.",
+          "$ref": "#/$defs/optionalName"
+        },
+        "dimension": {
+          "description": "`filter`: the dimension filtered on, `table.column`.",
+          "$ref": "#/$defs/optionalName"
+        },
+        "table": {
+          "description": "`table`: the table whose rows are shown, by its key in the model.",
+          "$ref": "#/$defs/optionalName"
+        },
+        "columns": {
+          "description": "`table`: the columns shown, by name; all of them when left out.",
+          "type": ["array", "null"],
+          "maxItems": 50,
+          "items": {"$ref": "#/$defs/name"}
+        },
+        "rows": {
+          "description": "`table`: how many rows are shown (10 when left out).",
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "maximum": 50
+        },
+        "text": {
+          "description": "`text`, `note`: the text, at most 2000 characters.",
+          "type": ["string", "number", "null"],
+          "maxLength": 2000
+        },
+        "place": {"$ref": "#/$defs/place"}
+      },
+      "additionalProperties": false
+    }
+  }
+}
