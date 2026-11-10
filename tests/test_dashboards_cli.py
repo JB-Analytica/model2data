@@ -211,3 +211,14 @@ def test_the_guide_has_a_dashboards_topic():
     assert result.exit_code == 0
     assert "model2data dashboard check" in result.output
     assert "https://studio.jbanalytica.com" in result.output
+
+
+def test_an_unreadable_file_still_reports(shop):
+    file = _write(shop, "sales.dashboard.yml", text="model2data-dashboard: 0.1.0\ntitle: [a\n")
+    result = runner.invoke(app, ["dashboard", "check", str(file)])
+    assert result.exit_code == 1
+    assert "error: Not valid YAML:" in result.output
+    file.write_bytes(b"model2data-dashboard: 0.1.0\ntitle: \xff\n")
+    result = runner.invoke(app, ["dashboard", "check", str(file)])
+    assert result.exit_code == 1
+    assert f"{file}: error: sales.dashboard.yml is not UTF-8" in result.output

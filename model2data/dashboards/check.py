@@ -107,12 +107,10 @@ def _load(text: str) -> tuple[Any, _Located]:
             node = loader.get_single_node()
         except _ProfileError as error:
             raise _Unreadable([Issue(error.line, error.column, f"{error.message}.")]) from None
-        except ComposerError as error:
-            if "single document" in str(error):
+        except yaml.YAMLError as error:
+            if isinstance(error, ComposerError) and "single document" in str(error):
                 message = "A dashboard is one YAML document; this file holds more than one."
                 raise _Unreadable([Issue(None, None, message)]) from None
-            raise _Unreadable([_yaml_issue(error)]) from None
-        except yaml.YAMLError as error:
             raise _Unreadable([_yaml_issue(error)]) from None
         if node is None:
             return None, located
@@ -279,15 +277,10 @@ class _Checker:
     # Where -----------------------------------------------------------------
 
     def at(self, path: PathKey) -> Position:
-        """Where the value at `path` is, or the nearest value holding it."""
+        """Where the value at `path` is (every value read from text has a place)."""
         if self.located is None:
             return _NOWHERE
-        while True:
-            if path in self.located.values:
-                return self.located.values[path]
-            if not path:
-                return _NOWHERE
-            path = path[:-1]
+        return self.located.values.get(path, _NOWHERE)
 
     def at_key(self, path: PathKey) -> Position:
         if self.located is not None and path in self.located.keys:

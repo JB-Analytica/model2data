@@ -754,3 +754,71 @@ def test_a_document_is_written_after_it_is_checked():
     assert issue.path == "pages.0"
     assert issue.line is None
     assert "page 'p' needs a name." in str(raised.value)
+
+
+# ---------------------------------------------------------------------------
+# Corners
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    "line, message",
+    [
+        ("title: 1.5", None),
+        ("title: .nan", "title must be text."),
+        ("model2data-dashboard: true", "not true."),
+        ("model2data-dashboard: '1'", "not '1'."),
+        ("model2data-dashboard:", "not null."),
+        ("model2data-dashboard: [1]", "not a list."),
+        ("model2data-dashboard: {a: 1}", "not a mapping."),
+    ],
+)
+def test_odd_scalars(line, message):
+    text = line + "\n" if line.startswith("model2data") else HEADER + line + "\n"
+    errors = _errors(text)
+    if message is None:
+        assert errors == []
+        assert read_dashboard(text).title == "1.5"
+    else:
+        assert message in errors[0].message, errors
+
+
+def test_a_key_that_is_not_text_is_refused():
+    (error,) = check_dashboard(HEADER + "? [a]\n: b\n")
+    assert error.message == "A key must be text."
+    assert (error.line, error.column) == (2, 3)
+
+
+def test_a_yaml_error_without_a_place():
+    import yaml
+
+    from model2data.dashboards.check import _yaml_issue
+
+    issue = _yaml_issue(yaml.YAMLError("x"))
+    assert (issue.line, issue.column) == (None, None)
+    assert issue.message.startswith("Not valid YAML:")
+
+
+def test_an_unknown_key_in_parsed_data_has_a_path_and_no_line():
+    with pytest.raises(DashboardError) as raised:
+        from_dict({"model2data-dashboard": "0.1.0", "x": 1})
+    (issue,) = raised.value.issues
+    assert (issue.path, issue.line) == ("x", None)
+
+
+def test_metrics_known_without_tables():
+    text = _one_tile("        kind: bar\n        metric: nope\n        by: a.b\n")
+    known = Known(metrics=frozenset({"revenue"}))
+    assert [issue.message for issue in _warnings(text, known)] == [
+        "tile 't': metric 'nope' is not a metric of this model."
+    ]
+
+
+def test_paths_and_names():
+    assert dashboard_name("notes.yml") == "notes"
+    assert check_dashboard(str(EXAMPLE)) == []
+    assert str(Issue(3, None, "m")) == "line 3: m"
+
+
+def test_a_dashboard_without_pages_is_written_with_an_empty_list():
+    text = write_dashboard(Dashboard())
+    assert text.endswith("model2data-dashboard: 0.1.0\npages: []\n")
+    assert read_dashboard(text) == Dashboard()
