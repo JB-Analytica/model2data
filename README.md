@@ -26,6 +26,11 @@ cd dbt_ecommerce && dbt build                                               # PA
 > is this engine in the browser: draw the schema, see every column's values before you generate,
 > shape the data on a sample of your own, and export a dbt project with a star schema or Data
 > Vault on top. [Start free, no install →](https://studio.jbanalytica.com)
+>
+> **Or ask Claude.** Add `https://studio.jbanalytica.com/mcp` as a connector in Claude Code,
+> Claude Desktop or claude.ai, sign in, and Claude builds the model, the data, metrics with known
+> answers and a dashboard from one sentence. Works on the free plan.
+> [![model2data studio MCP connector – tool definition quality and endpoint health on Glama](https://glama.ai/mcp/connectors/io.github.JB-Analytica/model2data-studio/badges/score.svg)](https://glama.ai/mcp/connectors/io.github.JB-Analytica/model2data-studio)
 
 ---
 
