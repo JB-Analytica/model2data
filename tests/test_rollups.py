@@ -1021,3 +1021,35 @@ def test_the_engine_refuses_a_sum_into_a_column_that_is_not_numeric():
     columns["last_shipped_on"].note = {"rollup": {"of": "order_items", "sum": "quantity"}}
     messages = [p.message for p in rollups.problems(tables, refs)]
     assert any("`sum` adds numbers" in m for m in messages), messages
+
+
+def _first_orders() -> dict:
+    """Customers whose first order date is a rollup of their orders' dates."""
+    document = _shop()
+    document["tables"]["customers"]["columns"]["first_order_at"] = {
+        "type": "timestamp",
+        "generate": {"rollup": {"of": "orders", "min": "ordered_at"}},
+    }
+    _column(document, "orders", "customer_id")["generate"] = {"at_least": 1}
+    return document
+
+
+def test_a_rollup_date_is_not_a_parent_date_to_keep_after():
+    model = from_dict(_first_orders())
+    assert not [w for w in model.warnings if "first_order_at" in str(w)], model.warnings
+
+
+def test_a_rollup_date_is_not_the_date_a_row_comes_into_being_with():
+    from model2data.generate.timeline import creation_column
+
+    tables, _ = _engine(_first_orders())
+    assert creation_column(tables["customers"]) is None
+    assert creation_column(tables["orders"]).name == "ordered_at"
+
+
+def test_a_customers_first_order_is_its_earliest_order():
+    frames = _generate(_first_orders())
+    orders = frames["orders"]
+    earliest = orders.groupby("customer_id")["ordered_at"].min()
+    customers = frames["customers"].set_index("id")
+    assert (customers["first_order_at"] == earliest.reindex(customers.index)).all()
