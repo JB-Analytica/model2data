@@ -404,7 +404,9 @@ def creation_column(table_def: TableDef) -> Optional[ColumnDef]:
     temporal = [
         column
         for column in table_def.columns
-        if not column.enum_values and _column_kind(column.data_type) is not None
+        if not column.enum_values
+        and _column_kind(column.data_type) is not None
+        and "rollup" not in (column.note or {})
     ]
     name = creation_column_name(
         [(column.name, bool(same_row_after(column.note))) for column in temporal]

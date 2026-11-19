@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.21.1] - 2026-11-19
+
+No change to what a run writes: the same model, seed and `--as-of` write the same files as 1.21.0.
+
+### Fixed
+- **`validate` no longer asks to keep a child's date after a parent's rollup.** With
+  `customers.first_order_at` a `rollup` of `orders.ordered_at`, `validate` warned that
+  `orders.ordered_at` "can fall before customers.first_order_at" and suggested
+  `after: customers.first_order_at`, an `after` validation itself refuses. A rollup is computed
+  from the child rows once every table is generated, so it is no longer taken for the date a row
+  comes into being with.
+
 ## [1.21.0] - 2026-11-19
 
 A model that uses neither `rollup` nor `at_least` writes the same files as 1.20.0 for the same

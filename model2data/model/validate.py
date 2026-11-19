@@ -445,7 +445,11 @@ class _Checks:
             type_text = column.get("type")
             if not isinstance(type_text, str) or self.enum_named(type_text):
                 continue
-            if kinds.is_temporal_type(type_text):
+            # A rollup is computed from the child rows once every table is
+            # generated: the row does not come into being with it.
+            if kinds.is_temporal_type(type_text) and "rollup" not in _mapping(
+                column.get("generate")
+            ):
                 after = _mapping(column.get("generate")).get("after")
                 entries = after if isinstance(after, list) else [after]
                 follows = any(isinstance(e, str) and "." not in e for e in entries)
