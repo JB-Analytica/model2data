@@ -963,3 +963,61 @@ def test_the_defects_check_skips_a_line_without_an_order(shop):
     lines.loc[0, "order_id"] = None
     seeded = {"orders": as_seeded(shop["orders"]), "order_items": as_seeded(lines)}
     assert fails(test, seeded)
+
+
+# ---------------------------------------------------------------------------
+# Engine-level checks a valid document never reaches
+# ---------------------------------------------------------------------------
+def test_the_engine_refuses_at_least_on_a_column_that_is_no_foreign_key():
+    tables, refs = _engine(_shop())
+    columns = {c.name: c for c in tables["order_items"].columns}
+    columns["quantity"].note = {"min": 1, "max": 6, "at_least": 1}
+    messages = [p.message for p in rollups.problems(tables, refs)]
+    assert '"at_least" only applies to foreign-key columns.' in messages, messages
+
+
+def test_the_engine_refuses_a_rollup_on_a_foreign_key():
+    tables, refs = _engine(_shop())
+    columns = {c.name: c for c in tables["orders"].columns}
+    columns["customer_id"].note = {"rollup": {"of": "order_items", "count": True}}
+    messages = [p.message for p in rollups.problems(tables, refs)]
+    assert any("cannot sit on a foreign key" in m for m in messages), messages
+
+
+def test_the_engine_refuses_a_sum_over_a_column_that_is_not_numeric():
+    tables, refs = _engine(_shop())
+    columns = {c.name: c for c in tables["orders"].columns}
+    columns["line_count"].note = {"rollup": {"of": "order_items", "sum": "shipped_on"}}
+    messages = [p.message for p in rollups.problems(tables, refs)]
+    assert any("`sum` names shipped_on" in m and "is not numeric" in m for m in messages), messages
+
+
+def test_a_rollup_that_reads_the_same_rollup_twice_is_not_a_cycle():
+    tables, refs = _engine(_shop())
+    from model2data.parse.dbml import ColumnDef
+
+    tables["customers"].columns.append(
+        ColumnDef(
+            "spend_squared",
+            "numeric(14,2)",
+            settings=set(),
+            note={"rollup": {"of": "orders", "sum": ["total_amount", "total_amount"]}},
+        )
+    )
+    assert not [p for p in rollups.problems(tables, refs) if "reads it back" in p.message]
+
+
+def test_the_engine_refuses_a_rollup_on_an_enum_column():
+    tables, refs = _engine(_shop())
+    columns = {c.name: c for c in tables["orders"].columns}
+    columns["line_count"].enum_values = ["few", "many"]
+    messages = [p.message for p in rollups.problems(tables, refs)]
+    assert '"rollup" cannot sit on an enum column.' in messages, messages
+
+
+def test_the_engine_refuses_a_sum_into_a_column_that_is_not_numeric():
+    tables, refs = _engine(_shop())
+    columns = {c.name: c for c in tables["orders"].columns}
+    columns["last_shipped_on"].note = {"rollup": {"of": "order_items", "sum": "quantity"}}
+    messages = [p.message for p in rollups.problems(tables, refs)]
+    assert any("`sum` adds numbers" in m for m in messages), messages
