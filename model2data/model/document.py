@@ -6,7 +6,7 @@ import copy
 from collections.abc import Mapping
 from typing import Any
 
-from model2data.model.errors import ModelError
+from model2data.model.errors import Issue, ModelError, format_path
 from model2data.model.types import (
     Column,
     Defect,
@@ -38,8 +38,48 @@ def from_dict(data: Mapping[str, Any]) -> Model:
     if errors:
         raise ModelError(errors, warnings)
     model = _build(_json_keys(data))
+    found = _rollup_issues(model)
+    errors = [issue for issue in found if issue.is_error]
+    warnings += [issue for issue in found if not issue.is_error]
+    if errors:
+        raise ModelError(errors, warnings)
     model.warnings = warnings
     return model
+
+
+def _rollup_issues(model: Model) -> list[Issue]:
+    """What is wrong with the model's `rollup` and `at_least`, checked as the engine reads them.
+
+    They depend on the foreign keys as the generator classifies them, so they are
+    checked on the conforming model (see generate.rollups), each at its hint's path.
+    """
+    if not any(
+        "rollup" in column.generate or "at_least" in column.generate
+        for table in model.tables.values()
+        for column in table.columns.values()
+    ):
+        return []
+    from model2data.generate import rollups
+    from model2data.model.engine import to_engine
+
+    inputs = to_engine(model)
+    issues = []
+    for problem in rollups.problems(inputs.tables, inputs.refs):
+        path: list = ["tables", problem.table, "columns", problem.column]
+        column = model.tables[problem.table].columns.get(problem.column)
+        if problem.hint != "references":
+            path += ["generate", problem.hint]
+        elif column is not None and column.references is not None:
+            path.append("references")
+        message = problem.message.removeprefix(f'"{problem.hint}" ').rstrip(".")
+        issues.append(
+            Issue(
+                format_path(path),
+                message,
+                severity="warning" if problem.warning else "error",
+            )
+        )
+    return issues
 
 
 def _extensions(mapping: Mapping) -> dict[str, Any]:
@@ -255,6 +295,15 @@ def uses_0_5(model: Model) -> bool:
     )
 
 
+def uses_0_6(model: Model) -> bool:
+    """Whether the model uses what spec 0.6.0 added: a column's `rollup` or `at_least`."""
+    return any(
+        "rollup" in column.generate or "at_least" in column.generate
+        for table in model.tables.values()
+        for column in table.columns.values()
+    )
+
+
 def uses_0_5_after(after: Any) -> bool:
     """Whether an `after` is in a form spec 0.5.0 added: a list, or `<table>.<column>`."""
     return isinstance(after, list) or (isinstance(after, str) and "." in after)
@@ -264,13 +313,16 @@ def document_version(model: Model) -> Any:
     """The version the model's document is written against.
 
     The version the model was read with, unless the model uses what that
-    version does not have: 0.5.0 when it uses a list or a parent's column in
+    version does not have: 0.6.0 when it uses `rollup` or `at_least` and was
+    read as 0.2-0.5, 0.5.0 when it uses a list or a parent's column in
     `after` and was read as
     0.2-0.4, 0.4.0 when it uses `when` and was read as 0.2 or 0.3, 0.3.0 when it uses `defects` or `incremental.history` and was read as
     0.2. A document without them is written as the version it was, as always.
     """
     version = model.version
     minor = str(version).split(".")[:2]
+    if uses_0_6(model) and minor in (["0", "2"], ["0", "3"], ["0", "4"], ["0", "5"]):
+        return "0.6.0"
     if uses_0_5(model) and minor in (["0", "2"], ["0", "3"], ["0", "4"]):
         return "0.5.0"
     if uses_0_4(model) and minor in (["0", "2"], ["0", "3"]):

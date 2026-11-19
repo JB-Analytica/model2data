@@ -15,7 +15,7 @@ runnable dbt project. You write the model; it writes everything else.
 Create `<name>.model2data.yml` in this directory. Start from this and replace the tables:
 
 ```yaml
-model2data: 0.5.0
+model2data: 0.6.0
 name: shop
 
 enums:
@@ -62,7 +62,7 @@ cd dbt_<name> && dbt build
 ```
 
 If `validate` warns that a date `can fall before customers.created_at`, add the `after` it
-names (`model2data guide triage`). Done looks like: `✅ <name>.model2data.yml conforms to spec 0.5.0.`, a summary with
+names (`model2data guide triage`). Done looks like: `✅ <name>.model2data.yml conforms to spec 0.6.0.`, a summary with
 `Columns using generic fallback text: 0` and no ⚠️ lines, and `dbt build` ending in
 `ERROR=0`. Anything else: `model2data guide triage`.
 

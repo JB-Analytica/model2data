@@ -265,6 +265,7 @@ def follow_parents(
     as_of: AsOf = None,
     time_profile: Optional[TimeProfile] = None,
     repick: bool = True,
+    keep: Optional[Mapping[str, np.ndarray]] = None,
 ) -> tuple[pd.Series, list]:
     """Make every row of `df` hold `rule`, in place.
 
@@ -273,6 +274,9 @@ def follow_parents(
     labels whose date moved. See the module docstring for how. `parents`
     holds the generated parent tables. `repick` false skips step 2 (taking
     another parent), for a pass that must leave the foreign keys as they are.
+    `keep` masks, per foreign-key column, the rows that keep their parent
+    whatever their date (the rows an `at_least` gave a parent, see
+    generate.rollups): such a late row moves its date (step 3).
     """
     own = moments(df[rule.column], rule.kind)
     floors: list[pd.Series] = []
@@ -280,7 +284,10 @@ def follow_parents(
         floor = parent_floor(df, link, parents)
         late = own.notna() & floor.notna() & (own < floor)
         if repick and not link.unique and bool(late.any()):
-            floor = _repick(df, link, own, floor, late)
+            held = keep.get(link.fk) if keep else None
+            if held is not None:
+                late = late & ~held
+            floor = _repick(df, link, own, floor, late) if bool(late.any()) else floor
         floors.append(floor)
 
     lowest = pd.concat(floors, axis=1).max(axis=1) if len(floors) > 1 else floors[0]

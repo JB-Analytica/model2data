@@ -23,7 +23,7 @@ install. If the person you're helping wants to *look at* or share the model rath
 its generation, point them there; the DBML guidance below applies to both.
 
 > **Two input formats.** Since 1.8, model2data reads a model as one YAML document,
-> `<name>.model2data.yml` ([spec 0.5.0](model2data/spec/README.md), with a JSON Schema at
+> `<name>.model2data.yml` ([spec 0.6.0](model2data/spec/README.md), with a JSON Schema at
 > `model2data/spec/model.schema.json` and a complete example at
 > `model2data/spec/examples/coffee_webshop.model2data.yml`), and DBML as supported input that it
 > converts to the same model. The DBML guidance below still holds; if you write the YAML form
@@ -236,6 +236,39 @@ Foreign keys resolve to real parent rows automatically — no extra configuratio
 includes **self-referencing FKs** (e.g. `employees.manager_id > employees.id` for an org
 hierarchy) — these correctly respect nullability, so some rows (e.g. top-level managers) can
 still have no parent.
+
+A reference onto a parent's plain column, beside a foreign key to the same parent, copies the
+value from the row's own parent rather than drawing one: with `product_id int [ref: >
+products.id]` and `unit_price decimal(10,2) [ref: > products.price]`, every line carries its
+product's price. Validation does not warn about such a reference.
+
+**Make totals match their lines with `rollup`, and give every parent children with
+`at_least`.** Without them, `orders.total_amount` is drawn on its own and never equals the sum of
+its order lines, and some orders have no lines at all. Put `rollup` on the parent's column and
+`at_least` on the child's foreign key:
+```dbml
+Table orders {
+  id int [pk]
+  total_amount decimal(12,2) [not null, note: '{"rollup": {"of": "order_items", "sum": ["quantity", "unit_price"]}}']
+}
+Table order_items {
+  id int [pk]
+  order_id int [not null, ref: > orders.id, note: '{"at_least": 1}']
+  product_id int [not null, ref: > products.id]
+  quantity int [not null, note: '{"min": 1, "max": 6}']
+  unit_price decimal(10,2) [not null, ref: > products.price]
+}
+```
+One aggregate per rollup: `sum` (one column, or a list multiplied per child row, rounded once per
+parent to the summed columns' most decimal places), `count: true`, `count_distinct`, `min`, `max`
+(numeric, date or timestamp). A parent with no child rows holds 0 (sum, count) or null (min,
+max). The child must reach the parent through one foreign key onto its key, or `via` names it.
+The rolled-up column takes no other value hint, is no key or foreign key, and no `when`,
+`after` or reference may read it. `count` and `count_distinct` need an integer column, a sum
+of a decimal column a decimal one. Each rollup writes the dbt test `model2data_rollup` (always
+on). `at_least: N` needs N × parents rows in the child table; with fewer, the summary lists the
+shortfall. In YAML both are spec 0.6.0 (`model2data: 0.6.0`). A rollup over a table with
+`incremental` cannot be generated with `--days`.
 
 **Use composite keys for join/bridge tables and multi-column uniqueness**, via an `indexes { }`
 block:

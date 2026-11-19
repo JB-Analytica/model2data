@@ -160,3 +160,50 @@ def test_dbt_build_passes_on_the_state_after_the_last_day(tmp_path, monkeypatch)
     seeds = _run_dbt("ls", "--resource-type", "seed", cwd=project_dir).stdout
     assert "day_00" not in seeds
     _run_dbt("build", cwd=project_dir)
+
+
+@pytest.mark.skipif(DBT is None, reason="dbt CLI not found on PATH")
+def test_rollup_tests_pass_and_catch_a_wrong_total(tmp_path, monkeypatch):
+    """A coffee webshop whose order totals are the sum of quantity x unit_price
+    over their lines: every rollup test passes on the generated data, and the
+    total's test fails once one order's total is changed in its seed."""
+    from test_rollups import _shop
+
+    from model2data.model import dump, from_dict
+
+    monkeypatch.chdir(tmp_path)
+    model = tmp_path / "shop.model2data.yml"
+    model.write_text(dump(from_dict(_shop())), encoding="utf-8")
+
+    generate_cli(
+        file=model,
+        rows=40,
+        rows_for=["orders=100", "order_items=220"],
+        seed=42,
+        name="rollups",
+        force=True,
+        adapter="duckdb",
+    )
+    project_dir = tmp_path / "dbt_rollups"
+    _run_dbt("deps", cwd=project_dir)
+    listed = _run_dbt("ls", "--resource-type", "test", cwd=project_dir).stdout
+    assert listed.count("model2data_rollup_stg_orders_") == 5, listed
+    _run_dbt("build", cwd=project_dir)
+
+    seed = next(p for p in (project_dir / "seeds").rglob("orders.csv"))
+    lines = seed.read_text().splitlines()
+    header = lines[0].split(",")
+    first = lines[1].split(",")
+    first[header.index("total_amount")] = "123456.78"
+    lines[1] = ",".join(first)
+    seed.write_text("\n".join(lines) + "\n")
+    failed = subprocess.run(
+        [str(DBT), "build", "--profiles-dir", "."],
+        cwd=project_dir,
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    assert failed.returncode != 0
+    assert "FAIL 1 model2data_rollup_stg_orders_sum_" in failed.stdout, failed.stdout
+    assert "ERROR=1 " in failed.stdout, failed.stdout

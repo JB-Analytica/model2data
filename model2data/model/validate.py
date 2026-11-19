@@ -1,4 +1,4 @@
-"""Does a document conform to spec 0.5.0 (or 0.2.x-0.4.x): the schema, then the checks beyond it.
+"""Does a document conform to spec 0.6.0 (or 0.2.x-0.5.x): the schema, then the checks beyond it.
 
 `check(document)` returns every issue it finds, each with the document path of
 the value at fault and a severity; it never stops at the first. The schema is
@@ -28,28 +28,31 @@ from model2data.generate import kinds
 from model2data.generate.timeline import creation_column_name
 from model2data.model.errors import Issue, PathPart, Suggestion, format_path
 
-SPEC_VERSION = "0.5.0"
+SPEC_VERSION = "0.6.0"
 # The columns `incremental.history` adds to `<table>_history`.
 HISTORY_COLUMNS = ("valid_from", "valid_to", "is_current")
 # The minor versions this reader implements. 0.3.0 only adds `defects` and
 # `incremental.history`, 0.4.0 only `when`, 0.5.0 only a list or a parent's
-# `<table>.<column>` in `after`, so an older
+# `<table>.<column>` in `after`, 0.6.0 only `rollup` and `at_least`, so an older
 # document reads exactly as it did; it just cannot use them.
-READS = ("0.2", "0.3", "0.4", "0.5")
+READS = ("0.2", "0.3", "0.4", "0.5", "0.6")
 _URL = "https://www.jbanalytica.com/model2data/spec/{}/model.schema.json"
 SCHEMA_URL = _URL.format(SPEC_VERSION)
 
 
 def schema_url(version: Any) -> str:
     """The schema URL a document of `version` points editors at: 0.2.0's for a 0.2 one,
-    0.3.0's for a 0.3 one, 0.4.0's for a 0.4 one, the current one otherwise."""
-    older = {"0.2": "0.2.0", "0.3": "0.3.0", "0.4": "0.4.0"}.get(_minor(version) or "")
+    0.3.0's for a 0.3 one, 0.4.0's for a 0.4 one, 0.5.0's for a 0.5 one, the current one
+    otherwise."""
+    older = {"0.2": "0.2.0", "0.3": "0.3.0", "0.4": "0.4.0", "0.5": "0.5.0"}.get(
+        _minor(version) or ""
+    )
     return _URL.format(older) if older else SCHEMA_URL
 
 
 def _minor(version: Any) -> Optional[str]:
     if isinstance(version, float):
-        return {0.2: "0.2", 0.3: "0.3", 0.4: "0.4", 0.5: "0.5"}.get(version)
+        return {0.2: "0.2", 0.3: "0.3", 0.4: "0.4", 0.5: "0.5", 0.6: "0.6"}.get(version)
     if isinstance(version, str):
         return ".".join(version.split(".")[:2])
     return None
@@ -57,7 +60,7 @@ def _minor(version: Any) -> Optional[str]:
 
 @lru_cache(maxsize=1)
 def schema() -> dict[str, Any]:
-    """The packaged, normative JSON Schema of spec 0.5.0, which also reads 0.2-0.4 documents."""
+    """The packaged, normative JSON Schema of spec 0.6.0, which also reads 0.2-0.5 documents."""
     text = resources.files("model2data").joinpath("spec/model.schema.json").read_text("utf-8")
     return json.loads(text)
 
@@ -101,7 +104,7 @@ def _version_issues(document: Mapping) -> list[Issue]:
     version = document.get("model2data")
     if version is None:
         return []  # reported by the schema as missing
-    if version in (0.2, 0.3, 0.4, 0.5) and not isinstance(version, bool):
+    if version in (0.2, 0.3, 0.4, 0.5, 0.6) and not isinstance(version, bool):
         return []
     if isinstance(version, str):
         parts = version.split(".")
@@ -112,7 +115,7 @@ def _version_issues(document: Mapping) -> list[Issue]:
                 Issue(
                     "model2data",
                     f"the document is written against spec {version}, and this reader "
-                    f"implements spec {SPEC_VERSION} (0.2.x, 0.3.x, 0.4.x and 0.5.x). "
+                    f"implements spec {SPEC_VERSION} (0.2.x to 0.6.x). "
                     + (
                         "Convert a 0.1 model, which is DBML, with `model2data convert`."
                         if parts[:2] == ["0", "1"]
@@ -684,6 +687,17 @@ class _Checks:
         )
         return True
 
+    def _needs_0_6(self, path: list[PathPart], what: str) -> bool:
+        """Report what 0.6.0 added (`what`) in a 0.2-0.5 document; True when it was reported."""
+        if self.minor not in ("0.2", "0.3", "0.4", "0.5"):
+            return False
+        self.add(
+            path,
+            f"`{what}` is spec 0.6.0, and the document is written against {self.minor}: "
+            "write `model2data: 0.6.0`",
+        )
+        return True
+
     def table_rows(self, key: str) -> Optional[int]:
         """The rows the document's `run` gives a table, or None when it leaves them to the reader."""
         run = _mapping(self.document.get("run"))
@@ -909,13 +923,22 @@ class _Checks:
             )
 
     # -- references ----------------------------------------------------
-    def _parent_issue(self, to: str) -> Optional[tuple[str, bool]]:
-        """Why `to` should not be referenced, and whether that is only a warning."""
+    def _parent_issue(
+        self, to: str, child: Optional[tuple[str, str]] = None
+    ) -> Optional[tuple[str, bool]]:
+        """Why `to` should not be referenced, and whether that is only a warning.
+
+        `child` is the referencing `(table, column)`: a reference onto a plain
+        column of a parent the table also has a foreign key to is copied from the
+        row's own parent (`generate.relationships.classify_refs`), and is fine.
+        """
         table_key, column = split_column_path(to)
         if table_key not in self.tables:
             return f"names the table {_show(table_key)}, which is not in the model", False
         if column not in self.columns.get(table_key, {}):
             return f"names the column {_show(column)}, which {table_key} does not have", False
+        if child is not None and self._mirrored(child[0], child[1], table_key):
+            return None
         if {column} not in self.key_sets(table_key):
             primary = self.primary_key(table_key)
             if column in primary:
@@ -943,10 +966,32 @@ class _Checks:
             to = reference
         if not isinstance(to, str) or "." not in to:
             return  # the schema has reported it
-        problem = self._parent_issue(to)
+        problem = self._parent_issue(to, (key, name))
         if problem:
             message, warning = problem
             self.add(path, message, warning=warning)
+
+    def _is_key_column(self, table_key: str, column: str) -> bool:
+        """A column the generator reads as one row per value: a one-column key, or `id`."""
+        return column.lower() == "id" or {column} in self.key_sets(table_key)
+
+    def _mirrored(self, key: str, name: str, parent: str) -> bool:
+        """Whether another column of `key` is a foreign key onto a key of `parent`."""
+        pairs = [
+            (child, parent_column)
+            for child, parent_column in self.parent_keys(key).get(parent, [])
+            if child != name
+        ]
+        for foreign_key in _list(_mapping(self.tables.get(key)).get("foreign_keys")):
+            if not isinstance(foreign_key, Mapping) or foreign_key.get("references") != parent:
+                continue
+            columns = _list(foreign_key.get("columns"))
+            to_columns = _list(foreign_key.get("to_columns"))
+            pairs += [pair for pair in zip(columns, to_columns, strict=False) if pair[0] != name]
+        return any(
+            isinstance(parent_column, str) and self._is_key_column(parent, parent_column)
+            for _, parent_column in pairs
+        )
 
     def _foreign_key(self, key: str, index: int, foreign_key: Mapping) -> None:
         path: list[PathPart] = ["tables", key, "foreign_keys", index]
@@ -1078,6 +1123,10 @@ class _Checks:
                             f"names {_show(text)}, which is not a member of {enum_name} "
                             f"(members: {', '.join(str(m) for m in members)})",
                         )
+
+        for hint in ("rollup", "at_least"):
+            if hint in generate:
+                self._needs_0_6([*gen_path, hint], hint)
 
         when = generate.get("when")
         if (
@@ -1432,7 +1481,7 @@ class _Checks:
                         suggestion=Suggestion(
                             format_path(path),
                             value,
-                            None if self.minor in (None, "0.5") else SPEC_VERSION,
+                            None if self.minor in (None, "0.5", "0.6") else "0.5.0",
                         ),
                     )
                 )

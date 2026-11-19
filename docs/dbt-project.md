@@ -54,6 +54,7 @@ dbt package, so `dbt build` still works offline):
 | `grain` on a table | `model2data_unique_combination` | none |
 | `generate: {after: table.column}` (a parent's column, see [When things happen](time-shapes.md)) | `model2data_not_before_parent`, one per parent column, in `macros/model2data_parent_tests.sql`: no row dated before the parent row it joins to | none |
 | an enum-typed column | `accepted_values` (always written) | none |
+| `generate: {rollup}` (see [The model file](model-file.md#totals-that-match-their-lines)) | `model2data_rollup` (always written, severity error), in `macros/model2data_rollup_tests.sql`: the column equals the aggregate of its child rows (0 or null with none) | a sum: half a unit of its last decimal place |
 
 `true_rate`, `weights`, `skew`, `distribution` and the temporal shape hints (`business_hours`,
 `growth`, `seasonality`) describe a statistical shape rather than a constraint a row can break, so
@@ -91,7 +92,8 @@ dbt_{project_name}/
 ├── {stem}.metrics.yml  # only with --metrics, copied as given
 ├── macros/
 │   ├── generate_schema_name.sql
-│   └── model2data_hint_tests.sql  # only when the model's hints write tests
+│   ├── model2data_hint_tests.sql  # only when the model's hints write tests
+│   └── model2data_rollup_tests.sql  # only when a column has a rollup
 ├── dbt_project.yml
 ├── profiles.yml  # DuckDB or Postgres config, depending on --adapter
 └── {project_name}_profile.duckdb  # DuckDB adapter only

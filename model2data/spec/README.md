@@ -1,4 +1,4 @@
-# The model2data model — spec 0.5.0
+# The model2data model — spec 0.6.0
 
 A model2data model is one document: the tables of a data model, their columns and keys, the
 relationships between them, the enums a column can be typed as, and how every column's values
@@ -79,7 +79,7 @@ The spec is versioned on its own, apart from the engine and the studio, with
 [semantic versioning](https://semver.org). The version is in the schema's `$id`:
 
 ```
-https://www.jbanalytica.com/model2data/spec/0.5.0/model.schema.json
+https://www.jbanalytica.com/model2data/spec/0.6.0/model.schema.json
 ```
 
 A patch release changes wording only. A minor release adds something optional. A major release
@@ -106,6 +106,11 @@ and either in a document that says an earlier version is an error. A writer writ
 version the document was read with, and 0.5.0 once it uses either. 0.5.0 also says, of the
 generated data of every document, as until 1.0.0 a minor release may, that an integer primary
 key numbers the rows 1 to n, in order (see [Keys](#keys)).
+
+0.6.0 adds a column's [`rollup` and `at_least`](#rollups), and nothing else: a 0.2 to 0.5
+document is a 0.6.0 document that uses neither, and reads as it always read. A document that
+uses either says `model2data: 0.6.0`, and either in a document that says an earlier version is
+an error. A writer writes the version the document was read with, and 0.6.0 once it uses either.
 
 0.2.0 replaced 0.1.0, which carried hints as JSON inside DBML notes. See
 [From 0.1](#from-01).
@@ -186,6 +191,11 @@ reference is generated like any foreign key -- every non-null child value is dra
 values the parent column actually holds, so each one exists in the parent -- but it does not
 imply one parent row per value, as a reference onto a key does.
 
+A reference onto a plain column of a parent the table also has a foreign key to (onto its
+primary key, a one-column key, or a unique column) is not drawn at all: the value is copied from
+the row's own parent. `unit_price: {references: products.price}` beside `product_id: {references:
+products.id}` gives every line its product's price. Such a reference is no warning.
+
 A date can be kept on or after a date of the parent row it points at: `after:
 customers.created_at` on `orders.order_date` places no order before its customer signed up
 (spec 0.5.0). `after` names a column of the same row, a parent's column as `<table>.<column>`
@@ -249,6 +259,54 @@ Several columns listed must all match. A row whose named column is null does not
 matching rows the column is generated as it would be without `when`, and none of them is null
 unless the column has a `null_rate`, which then counts only those rows. How the values a model
 without `when` generates are kept is the engine's (see `model2data.generate.when`).
+
+### Rollups
+
+`rollup` (spec 0.6.0) makes a parent's column the aggregate of its child rows, so a total
+matches its lines; `at_least` (spec 0.6.0) on a child's foreign key gives every parent row at
+least that many child rows.
+
+```yaml
+orders:
+  columns:
+    id: {type: bigint, pk: true}
+    total_amount:
+      type: numeric(12,2)
+      not_null: true
+      generate: {rollup: {of: order_items, sum: [quantity, unit_price]}}
+order_items:
+  columns:
+    id: {type: bigint, pk: true}
+    order_id: {type: bigint, not_null: true, references: orders.id, generate: {at_least: 1}}
+    product_id: {type: bigint, not_null: true, references: products.id}
+    quantity: {type: integer, not_null: true, generate: {min: 1, max: 6}}
+    unit_price: {type: "numeric(10,2)", not_null: true, references: products.price}
+```
+
+A rollup names the child table (`of`) and one aggregate over the child rows whose foreign key
+points at the row:
+
+| Aggregate | Value | No child rows |
+|-----------|-------|---------------|
+| `sum: column` | the column added up | 0 |
+| `sum: [a, b, ...]` | the columns multiplied on each child row, added up | 0 |
+| `count: true` | the child rows | 0 |
+| `count_distinct: column` | the distinct non-null values of the column | 0 |
+| `min: column`, `max: column` | the lowest or highest non-null value | null |
+
+- A child row with a null in a summed column adds nothing; min and max skip nulls.
+- A sum is rounded once per row, to the most decimal places of the summed columns: an integer
+  column has 0, a decimal type with a scale (`numeric(10,2)`) that scale, and one without 2.
+- The child reaches the table through exactly one foreign key onto its primary key, a one-column
+  key, or a unique column; with several, `via` names the child's column to group by.
+- Only direct children: a rollup of a grandchild is a rollup of a rollup, which is allowed.
+- A rollup is computed after every table is generated, from the rows the tables end up holding,
+  and draws nothing: every other column is what it would be without it.
+
+`at_least: N` gives every parent N rows of the table first, then draws the rest as the column
+does without it. With fewer rows than N × parents, as many parents as the rows allow are covered
+and the reader says so; it is not an error. A row so given its parent keeps it: where a date of
+the row must not fall before the parent's (`after`), the date moves instead.
 
 ### Modelling
 
@@ -438,7 +496,9 @@ reports each failure with the path of the value (`tables.orders.columns.status.g
 11. Every key and every target of `transitions` is a member of the column's enum.
 12. A `measure` aggregating by `sum`, `average`, `min`, `max` or `median` is on a numeric column.
 13. `defects`, `run.defects` and `incremental.history` only in a document of spec 0.3.0 or
-    later, and `when` only in a document of spec 0.4.0 or later.
+    later, `when` only in a document of spec 0.4.0 or later, a list or a parent's column in
+    `after` only in one of 0.5.0 or later, and `rollup` and `at_least` only in one of 0.6.0 or
+    later.
 14. Every defect has exactly one of `count` and `share`, names a column of its table, and gives a
     `type` and `column` no other entry of the table gives. `duplicate_keys` names a primary key
     or a unique column, or its table has a primary key; when `run` gives the table's rows, its
@@ -456,13 +516,26 @@ reports each failure with the path of the value (`tables.orders.columns.status.g
     same table that has no `when`, is not a foreign key and is not temporal; each value listed
     for it is a member of its enum, `true` or `false` for a boolean, a number for a numeric
     column (a whole one for an integer column), or text for any other.
+17. A `rollup` has `of` naming a table of the model and exactly one aggregate, whose columns are
+    columns of that table: numeric for `sum`, numeric, date or timestamp for `min` and `max`.
+    That table reaches the column's table through exactly one foreign key onto a key, or `via`
+    names one that does. The column is not a key, unique, a foreign key or an enum, carries no
+    other hint that decides its value (`min`, `max`, `distribution`, `null_rate`, `distinct`,
+    `weights`, `true_rate`, `skew`, `after`, `growth`, `seasonality`, `business_hours`,
+    `when`), and is of the aggregate's kind: an integer for `count` and `count_distinct`;
+    numeric for `sum`, and decimal when a summed column is; for `min` and `max`, numeric
+    (decimal for a decimal column) for a numeric column and the same kind (date, timestamp) for
+    a temporal one. No `when`, `after` or reference names a rolled-up column, and rollups do
+    not read each other in a cycle.
+18. `at_least` is on a foreign key that is not unique, `pk` or a one-column key.
 
 ### Warnings
 
 A reader reports these as warnings, with the path of the value; a document that has them
 conforms.
 
-1. A referenced parent column is not a primary key, a one-column key, or unique; or the
+1. A referenced parent column is not a primary key, a one-column key, or unique, and the table
+   has no foreign key onto a key of the same parent to copy it through; or the
    `to_columns` of a foreign key are not together the parent's primary key, one of its `keys`, or
    a unique column. The reference is generated as [References](#references) describes.
 2. A `grain` contains no key of its table (its primary key, a `keys` entry, or a `unique`
@@ -475,6 +548,8 @@ conforms.
    before its parent's. The warning names the `after` to add. A tool may offer it as a fix: the
    engine's warning carries the path and value to set (and the spec version the document then
    needs).
+4. A `rollup` by `min` or `max` is on a `not_null` column, and the child's foreign key has no
+   `at_least` of 1 or more: a row with no child rows holds null.
 
 ## From 0.1
 

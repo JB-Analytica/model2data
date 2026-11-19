@@ -17,14 +17,20 @@ says it created the project. Fix the **model file**, never the generated project
 - `❌ <file>: N errors`, then `- <path>: <message>`: the value at `<path>` is wrong
   (`tables.orders.columns.status.generate.weights`). Fix that value. Exit 1 until all are gone.
 - `⚠️  <file>: N warnings`: it conforms. A reference to a parent column that is not a key:
-  make the parent `pk` or `unique`. A `grain` without a key: add the key, or drop `grain`.
+  make the parent `pk` or `unique`, or give the table a foreign key to that parent's key (the
+  value is then copied from the row's own parent, and the warning goes away). A `grain` without a key: add the key, or drop `grain`.
   A warning `can fall before customers.created_at (...); add `after: customers.created_at``
   on `tables.orders.columns.order_date`: a child's date can precede its parent's creation (an
   order before its customer). Add exactly that `after` to the column's `generate` (a column with
   an `after` already takes a list: `after: [placed_at, customers.created_at]`), set
-  `model2data: 0.5.0`, and validate again. If the child may truly predate the parent, leave it.
+  `model2data: 0.6.0`, and validate again. If the child may truly predate the parent, leave it.
   An error `reaches users through more than one foreign key (sender_id, receiver_id)` on an
   `after`: choosing between two foreign keys to one parent is not built yet; drop that `after`.
+- An error on a `rollup`: it names the fix. `has 2 foreign keys onto ...`: add `via:` with the
+  child's column to group by. `cannot also have "min", ...`: drop the other hint, the rollup
+  decides the value. `names ..., a rollup`: a `when`, `after` or reference reads the rolled-up
+  column; point it at another column. A warning that min or max is null on a row with no child
+  rows: add `at_least: 1` to the child's foreign key, or drop `not_null`.
 - A metrics file (`<stem>.metrics.yml`) is checked against the model beside it. An error
   naming two paths: the filter's table is reached twice (two foreign keys to one table);
   filter on a column of the table in between instead. `cannot be reached`: the column is on
@@ -51,9 +57,12 @@ Take the first rule that applies to each line:
 5. `⚠️  Tables in an unresolved FK cycle`: every foreign key in the cycle is required.
    Make one `references` column in it nullable (drop `not_null`): that table is generated
    first, and the column is filled once its parent exists.
-6. `` ⚠️  No table has `incremental` `` after `--days`: add `incremental` to the tables that
+6. `⚠️  Foreign keys with too few rows for their at_least`: the table has fewer rows than
+   `at_least` × parents. Raise its rows (`run: {rows_per_table: {<table>: N}}`) or lower the
+   parent's.
+7. `` ⚠️  No table has `incremental` `` after `--days`: add `incremental` to the tables that
    should change, or drop `--days`.
-7. One table looks wrong and the rest is right: `--table-seed <table>=N` re-rolls only it.
+8. One table looks wrong and the rest is right: `--table-seed <table>=N` re-rolls only it.
 
 ## dbt build
 
@@ -73,7 +82,10 @@ Take the first rule that applies to each line:
    of an `after: <table>.<column>`: a row dated before its parent row; the model is wrong only
    if the parent column or the foreign key changed since the data was generated, so
    regenerate with `--force` first.
-6. Still failing after the model is fixed: report it with the model file and the output.
+6. A failing `model2data_rollup` test: a total does not match its child rows. Regenerate
+   with `--force` first (the seeds of both tables must come from one run); with defects it is
+   listed in `EXPECTED_FAILURES.md` when they break it. Never edit the seeds to make it pass.
+7. Still failing after the model is fixed: report it with the model file and the output.
 
 Done looks like: `validate` exits 0, the summary has no ⚠️ lines, `dbt build` ends `ERROR=0`
 (and `WARN=0` unless the model asks for defects).

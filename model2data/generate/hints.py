@@ -27,13 +27,15 @@ or a downstream dbt test failure.
 | `median`    | numeric columns, with `distribution: lognormal`| lognormal: the typical value, `exp(mu)`   |
 | `spread`    | numeric columns, with `distribution: lognormal`| lognormal: sigma of the underlying normal (0.3 mild, 1.0 heavy tail) |
 | `when`      | nullable columns that are no key, unique or FK | other column -> values: null on the rows that don't match (see generate.when) |
+| `rollup`    | numeric, date or timestamp columns that are no key or FK | an aggregate of the child rows (see generate.rollups) |
+| `at_least`  | foreign-key columns that are not unique        | every parent gets at least this many rows (see generate.rollups) |
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
 
-from model2data.generate import kinds
+from model2data.generate import kinds, rollups
 from model2data.generate.parents import parent_link
 from model2data.generate.relationships import build_fk_lookup, classify_refs
 from model2data.generate.timeline import parent_after
@@ -90,6 +92,10 @@ def validate_hints(tables: Mapping[str, TableDef], refs: list[dict]) -> None:
                     raise ValueError(
                         f'{table_name}.{column.name}: "after" names {".".join(entry)}, {reason}.'
                     )
+
+    for problem in rollups.problems(tables, refs):
+        if not problem.warning:
+            raise ValueError(f"{problem.table}.{problem.column}: {problem.message}")
 
 
 # ---------------------------------------------------------
