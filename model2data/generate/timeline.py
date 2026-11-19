@@ -586,7 +586,11 @@ def order_row_times(
     temporal_columns = [
         column
         for column in table_def.columns
-        if column.name in df.columns and _column_kind(column.data_type) is not None
+        if column.name in df.columns
+        and _column_kind(column.data_type) is not None
+        # A `rollup` is computed once every table exists (generate.rollups):
+        # nothing is ordered after the value it holds now, nor it after anything.
+        and "rollup" not in (column.note or {})
     ]
     if not temporal_columns:
         return df

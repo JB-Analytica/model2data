@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.21.0] - 2026-11-19
+
+A model that uses neither `rollup` nor `at_least` writes the same files as 1.20.0 for the same
+model, seed and `--as-of`.
+
+### Added
+- **Spec 0.6.0: `rollup`, a parent's column computed from its child rows.**
+  `generate: {rollup: {of: order_items, sum: [quantity, unit_price]}}` on `orders.total_amount`
+  makes every order's total the sum of quantity × unit_price over its lines. One aggregate per
+  rollup: `sum` of a column, or of a list of columns multiplied per child row; `count: true`;
+  `count_distinct`; `min` and `max` of a numeric, date or timestamp column. A sum is rounded once
+  per parent, to the most decimal places of the summed columns. A parent with no child rows
+  holds 0 for a sum or count and null for min and max. The child reaches the parent through its
+  one foreign key onto the parent's key, or `via` names the one to group by. Rollups are
+  computed after every table is generated, a rollup of a rollup after the one it reads, and draw
+  nothing from any random stream, so every other column is unchanged. Validation refuses a
+  rollup beside another hint that decides the value, on a key or foreign key, over an unknown
+  table or column, with an aggregate the column's type cannot hold (a count on a decimal column,
+  a sum of decimals on an integer column), and any `when`, `after` or reference reading a
+  rolled-up column; it warns when a `not_null` min or max can be null because the child's
+  foreign key has no `at_least`. `generate_days` refuses days after the first when a rollup reads
+  or sits on a table with `incremental`.
+- **Spec 0.6.0: `at_least`, every parent with children.** `generate: {at_least: 1}` on
+  `order_items.order_id` gives every order at least one line: N × parents rows are each given a
+  parent, in a seeded shuffled order at random positions, and the rest are drawn as before (skew
+  and null rate included). Such a row keeps its parent through the passes that follow: a
+  cross-table `after` moves its date instead of giving it another parent, and a composite key's
+  repair redraws its other columns. With too few rows, as many parents as the rows allow are
+  covered and the summary lists the shortfall (`model2data.generate.core.get_uncovered_parents`),
+  e.g. `order_items: 100 rows cover 100 of 250 orders; at_least 1 on order_id needs 250`. Not on
+  a unique foreign key.
+- **The dbt test `model2data_rollup`**, in `macros/model2data_rollup_tests.sql`, written for every
+  rolled-up column at severity error, whatever `--hint-tests` says: the column equals the
+  aggregate of its child rows (0 or null with none); a sum within half a unit of its last
+  decimal place. The defects report names it among the tests a defect breaks.
+- Spec 0.6.0 is the schema's new `$id`
+  (`https://www.jbanalytica.com/model2data/spec/0.6.0/model.schema.json`). A 0.2 to 0.5 document
+  reads as before; `rollup` or `at_least` in one is an error saying to write
+  `model2data: 0.6.0`. `convert` and the writer move to 0.6.0 only when a model uses either, and
+  a DBML note holding either converts to 0.6.0.
+
+### Fixed
+- **`validate` no longer warns about a reference that is copied from the row's own parent.** A
+  reference onto a parent's plain column (`unit_price: {references: products.price}`) beside a
+  foreign key to that parent's key (`product_id: {references: products.id}`) has always been
+  generated as the line's own product's price, but was reported as "neither products's primary
+  key nor unique: ... nothing makes them one row each". The warning now stays for a reference
+  with no such foreign key to copy through.
+
 ## [1.20.0] - 2026-11-10
 
 No change to what a run writes: the same model, seed and `--as-of` write the same files as 1.19.0.

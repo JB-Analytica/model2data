@@ -197,15 +197,18 @@ class _Converter:
             if self._named("the table", table.name, f"tables.{key}"):
                 self.tables[key] = self._table(key, table)
         document["tables"] = self.tables
-        # A note hint `when` is spec 0.4.0, and an `after` that is a list or names a
-        # parent's column 0.5.0: the document says so, and any other stays 0.2.0.
+        # A note hint `when` is spec 0.4.0, an `after` that is a list or names a
+        # parent's column 0.5.0, and `rollup` or `at_least` 0.6.0: the document
+        # says so, and any other stays 0.2.0.
         generates = [
             column.get("generate") or {}
             for table in self.tables.values()
             for column in (table.get("columns") or {}).values()
             if isinstance(column, dict)
         ]
-        if any(uses_0_5_after(generate.get("after")) for generate in generates):
+        if any("rollup" in generate or "at_least" in generate for generate in generates):
+            document["model2data"] = "0.6.0"
+        elif any(uses_0_5_after(generate.get("after")) for generate in generates):
             document["model2data"] = "0.5.0"
         elif any("when" in generate for generate in generates):
             document["model2data"] = "0.4.0"

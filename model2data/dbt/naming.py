@@ -10,7 +10,7 @@ import re
 from collections.abc import Iterable, Mapping
 from dataclasses import replace
 
-from model2data.parse.dbml import TableDef
+from model2data.parse.dbml import ColumnDef, TableDef
 
 
 def dbt_identifier(key: str) -> str:
@@ -49,7 +49,14 @@ def for_dbt(
     tables: Mapping[str, TableDef], refs: list[dict], names: Mapping[str, str]
 ) -> tuple[dict[str, TableDef], list[dict]]:
     """`(tables, refs)` renamed to their dbt names, as `generate_dbt_yml` takes them."""
-    dbt_tables = {names[key]: replace(table, name=names[key]) for key, table in tables.items()}
+    dbt_tables = {
+        names[key]: replace(
+            table,
+            name=names[key],
+            columns=[_rollup_renamed(column, names) for column in table.columns],
+        )
+        for key, table in tables.items()
+    }
     dbt_refs = [
         {
             **ref,
@@ -59,3 +66,13 @@ def for_dbt(
         for ref in refs
     ]
     return dbt_tables, dbt_refs
+
+
+def _rollup_renamed(column: ColumnDef, names: Mapping[str, str]) -> ColumnDef:
+    """`column` with its `rollup`'s child table (`of`) under its dbt name."""
+    note = column.note if isinstance(column.note, dict) else None
+    spec = note.get("rollup") if note else None
+    child = spec.get("of") if isinstance(spec, dict) else None
+    if not isinstance(child, str) or child not in names or names[child] == child:
+        return column
+    return replace(column, note={**note, "rollup": {**spec, "of": names[child]}})

@@ -11,6 +11,7 @@ import yaml
 from model2data.dbt.hint_tests import DEFAULT_TOLERANCE, HintTest, hint_tests_for, write_hint_macros
 from model2data.generate.faker import is_free_text_type
 from model2data.generate.relationships import classify_refs
+from model2data.generate.rollups import Rollup, has_rollups, rollups_of
 
 # dbt nests a generic test's parameters under `arguments:`. Passing them as
 # bare keys still works but is deprecated, and warns on every single run --
@@ -75,6 +76,9 @@ def generate_dbt_yml(
     if any(_history_entries(table) for table in tables.values()):
         write_history_macros(dest)
     fk_map = _fk_map(tables, refs)
+    rolled = _rollups(tables, refs)
+    if rolled:
+        write_rollup_macros(dest)
 
     # -------------------------
     # Generate individual staging model YAMLs
@@ -84,7 +88,7 @@ def generate_dbt_yml(
         model_columns = []
 
         for col in table.columns:
-            tests = _column_entries(table, col, fk_map, hinted, hint_tests)
+            tests = _column_entries(table, col, fk_map, hinted, hint_tests, rolled)
             col_doc: dict[str, Any] = {"name": _dbt_column_ref(col.name)}
             description = getattr(col, "description", None)
             if description:
@@ -157,6 +161,7 @@ def _column_entries(
     fk_map: dict[tuple[str, str], list[dict]],
     hinted: dict[tuple[str, Optional[str]], list[HintTest]],
     hint_tests: str,
+    rolled: Optional[dict[tuple[str, str], Rollup]] = None,
 ) -> list[Union[str, dict[str, dict[str, Any]]]]:
     """The `tests:` entries of one column of a staging model's schema YAML."""
     tests: list[Union[str, dict[str, dict[str, Any]]]] = []
@@ -181,7 +186,52 @@ def _column_entries(
         )
 
     tests.extend(t.to_dbt(hint_tests) for t in hinted.get((table.name, col.name), []))
+    rollup = (rolled or {}).get((table.name, col.name))
+    if rollup is not None:
+        tests.append(_generic_test("model2data_rollup", rollup_arguments(rollup)))
     return tests
+
+
+def _rollups(tables: dict, refs: list[dict]) -> dict[tuple[str, str], Rollup]:
+    """The model's rollups by (table, column); `for_dbt` names their child tables for dbt."""
+    if not has_rollups(tables):
+        return {}
+    return {(r.table, r.column): r for r in rollups_of(tables, refs)}
+
+
+def rollup_arguments(rollup: Rollup) -> dict[str, Any]:
+    """The `model2data_rollup` test's arguments for `rollup`.
+
+    A sum compares within half a unit of its last decimal place (`tolerance`),
+    since it is rounded once per parent; every other aggregate exactly.
+    """
+    arguments: dict[str, Any] = {
+        "child": f"ref('stg_{rollup.child}')",
+        "foreign_key": rollup.fk,
+        "field": rollup.parent_key,
+        "aggregate": rollup.aggregate,
+    }
+    if rollup.columns:
+        arguments["columns"] = list(rollup.columns)
+    if rollup.aggregate == "sum":
+        arguments["tolerance"] = 0.5 / 10**rollup.scale if rollup.scale else 0
+    return arguments
+
+
+ROLLUP_MACROS_FILE = "model2data_rollup_tests.sql"
+_ROLLUP_MACROS = Path(__file__).parent / "templates" / "rollup_macros" / ROLLUP_MACROS_FILE
+
+
+def write_rollup_macros(dest: Path) -> Path:
+    """Write the rollup test into `dest/macros/`, and return the file's path.
+
+    `generate_dbt_yml` writes it when a column has a `rollup`, and only then.
+    """
+    macros = dest / "macros"
+    macros.mkdir(parents=True, exist_ok=True)
+    target = macros / ROLLUP_MACROS_FILE
+    target.write_text(_ROLLUP_MACROS.read_text())
+    return target
 
 
 @dataclass(frozen=True)
@@ -195,8 +245,9 @@ class DbtTest:
     `relationships`, a `model2data_*` hint test) or `unique_combination` for the
     singular test of a composite key. `arguments` are the test's parameters,
     `severity` is `error`, or the hint tests' severity, and `parent` is the
-    `(table, column)` a `relationships` test looks values up in, or the parent
-    key a `model2data_not_before_parent` test joins on.
+    `(table, column)` a `relationships` test looks values up in, the parent
+    key a `model2data_not_before_parent` test joins on, or the child table and
+    foreign key a `model2data_rollup` test aggregates.
     """
 
     name: str
@@ -223,6 +274,7 @@ def dbt_tests(
     """
     hinted = _hinted(tables, hint_tests, test_tolerance, refs)
     fk_map = _fk_map(tables, refs)
+    rolled = _rollups(tables, refs)
     found: list[DbtTest] = []
     for table in tables.values():
         stg_name = f"stg_{table.name}"
@@ -232,7 +284,7 @@ def dbt_tests(
             hint_parents = iter(
                 t.parent for t in hinted.get((table.name, col.name), []) if t.parent is not None
             )
-            for entry in _column_entries(table, col, fk_map, hinted, hint_tests):
+            for entry in _column_entries(table, col, fk_map, hinted, hint_tests, rolled):
                 test_type, body = _entry_parts(entry)
                 arguments = dict(body.get("arguments") or {})
                 parent = None
@@ -241,6 +293,9 @@ def dbt_tests(
                     parent = (ref["target_table"], ref["target_column"])
                 elif test_type == "model2data_not_before_parent":
                     parent = next(hint_parents)
+                elif test_type == "model2data_rollup":
+                    rollup = rolled[(table.name, col.name)]
+                    parent = (rollup.child, rollup.fk)
                 found.append(
                     DbtTest(
                         name=generic_test_name(

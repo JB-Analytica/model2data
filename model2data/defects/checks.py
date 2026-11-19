@@ -23,6 +23,10 @@ SQL reads:
   in any case, a number as a number).
 - `model2data_unique_combination` and a composite key's `unique_combination`: a
   combination of values on two rows, nulls grouping together as in `group by`.
+- `model2data_rollup`: as its macro in
+  `dbt/templates/rollup_macros/model2data_rollup_tests.sql`: a row whose value is
+  not the aggregate of the child rows its key matches (0 for a sum or count with
+  none, null for min and max), a sum within its `tolerance`.
 - A history table's `model2data_one_current_row` (a key with other than one
   current version) and `model2data_no_overlapping_ranges` (a version still
   valid when the next of its key begins).
@@ -462,6 +466,62 @@ def _no_overlapping_ranges(
     return False
 
 
+def _rollup(test: DbtTest, frame: pd.DataFrame, seeded: Mapping, cache: Columns) -> bool:
+    assert test.parent is not None  # `dbt_tests` names the child of every such test
+    child = seeded.get(test.parent[0])
+    if child is None:
+        return False
+    arguments = test.arguments
+    aggregate = arguments["aggregate"]
+    columns = list(arguments.get("columns") or [])
+    keys = cache.numbers(child, arguments["foreign_key"])
+    groups: dict[Any, list[Any]] = {}
+    for row, key in enumerate(keys):
+        if key is None:
+            continue
+        groups.setdefault(key, []).append(row)
+    numbers = {name: cache.numbers(child, name) for name in columns}
+
+    def expected(rows: list[int]) -> Any:
+        if aggregate == "count":
+            return float(len(rows))
+        if aggregate == "sum":
+            total = 0.0
+            for row in rows:
+                factors = [numbers[name][row] for name in columns]
+                if all(isinstance(f, float) for f in factors):
+                    total += float(np.prod(factors))
+            return total
+        values = [numbers[columns[0]][row] for row in rows]
+        values = [value for value in values if value is not None]
+        if aggregate == "count_distinct":
+            return float(len(set(values)))
+        if not values:
+            return None
+        if not all(isinstance(value, float) for value in values):
+            values = list(pd.to_datetime(pd.Series(values, dtype=object), format="mixed"))
+        return min(values) if aggregate == "min" else max(values)
+
+    tolerance = float(arguments.get("tolerance") or 0) + 1e-9
+    own = cache.numbers(frame, str(test.column))
+    parent_keys = cache.numbers(frame, arguments["field"])
+    for value, key in zip(own, parent_keys, strict=True):
+        rows = groups.get(key, [])
+        want = expected(rows) if rows else (None if aggregate in ("min", "max") else 0.0)
+        if aggregate in ("min", "max"):
+            if value is None and want is None:
+                continue
+            if value is None or want is None:
+                return True
+            if not isinstance(value, float):
+                value = pd.to_datetime(value, format="mixed")
+            if value != want:
+                return True
+        elif not isinstance(value, float) or abs(value - want) > tolerance:
+            return True
+    return False
+
+
 _CHECKS: dict[str, Callable[[DbtTest, pd.DataFrame, Mapping, Columns], bool]] = {
     "not_null": _not_null,
     "unique": _unique,
@@ -478,4 +538,5 @@ _CHECKS: dict[str, Callable[[DbtTest, pd.DataFrame, Mapping, Columns], bool]] = 
     "unique_combination": _unique_combination,
     "model2data_one_current_row": _one_current_row,
     "model2data_no_overlapping_ranges": _no_overlapping_ranges,
+    "model2data_rollup": _rollup,
 }

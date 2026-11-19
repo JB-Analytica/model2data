@@ -1,18 +1,18 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://www.jbanalytica.com/model2data/spec/0.5.0/model.schema.json",
+  "$id": "https://www.jbanalytica.com/model2data/spec/0.6.0/model.schema.json",
   "title": "model2data model",
   "description": "A data model: its tables, their columns and keys, the relationships between them, the enums a column can be typed as, and how each column's values are generated. Written as YAML (the `.model2data.yml` file) or as JSON; both are the same document. This schema is normative together with model2data/spec/README.md, which defines the YAML profile a reader must apply and the checks that depend on more than one part of the document.",
   "type": "object",
   "required": ["model2data", "tables"],
   "properties": {
     "model2data": {
-      "description": "The spec version the document is written against, `MAJOR.MINOR` or `MAJOR.MINOR.PATCH`. Write it as `0.5.0`. A 0.2, 0.3 or 0.4 document is still read, and reads as it did: 0.3.0 only adds `defects` and `incremental.history`, which a 0.2 document cannot use, 0.4.0 only a column's `when`, which a 0.2 or 0.3 document cannot use, and 0.5.0 only an `after` that is a list or names a parent's column, which a 0.2, 0.3 or 0.4 document cannot use. A reader that met the YAML number 0.5 reads it as `0.5`.",
+      "description": "The spec version the document is written against, `MAJOR.MINOR` or `MAJOR.MINOR.PATCH`. Write it as `0.6.0`. A 0.2, 0.3, 0.4 or 0.5 document is still read, and reads as it did: 0.3.0 only adds `defects` and `incremental.history`, which a 0.2 document cannot use, 0.4.0 only a column's `when`, which a 0.2 or 0.3 document cannot use, 0.5.0 only an `after` that is a list or names a parent's column, which a 0.2, 0.3 or 0.4 document cannot use, and 0.6.0 only a column's `rollup` and `at_least`, which a 0.2 to 0.5 document cannot use. A reader that met the YAML number 0.6 reads it as `0.6`.",
       "oneOf": [
-        { "type": "string", "pattern": "^0\\.[2345](\\.(0|[1-9][0-9]*))?$" },
-        { "enum": [0.2, 0.3, 0.4, 0.5] }
+        { "type": "string", "pattern": "^0\\.[23456](\\.(0|[1-9][0-9]*))?$" },
+        { "enum": [0.2, 0.3, 0.4, 0.5, 0.6] }
       ],
-      "examples": ["0.5.0"]
+      "examples": ["0.6.0"]
     },
     "name": {
       "description": "The model's name. Names the generated dbt project, normalised to `[a-z0-9_]`. Defaults to the file's name without `.model2data.yml`.",
@@ -550,6 +550,52 @@
           },
           "x-model2data-applies-to": ["nullable"],
           "examples": [{ "status": ["done"] }, { "status": ["shipped", "delivered"] }]
+        },
+        "rollup": {
+          "description": "The column holds an aggregate of its child rows: the rows of the table `of` names whose foreign key points at the row. One aggregate: `sum` of a numeric column, or of a list of them multiplied on each child row (Σ quantity × unit_price; a child row with a null in any adds nothing), rounded once per row to the most decimal places of the summed columns (an integer has 0, `numeric(10,2)` 2, a decimal type without a scale 2); `count: true`, the child rows; `count_distinct`, the distinct non-null values of a column; `min` or `max`, the lowest or highest non-null value of a numeric, date or timestamp column. A row with no child rows holds 0 for a sum or a count and null for min and max. `of` reaches the table through exactly one foreign key onto its primary key or a unique column, or `via` names the child's foreign-key column to group by. The column is no key, unique or foreign key, carries no other hint that decides a value (`min`, `max`, `distribution`, `null_rate`, `distinct`, `weights`, `true_rate`, `skew`, `after`, `growth`, `seasonality`, `business_hours`, `when`), and nothing reads it while tables are generated (a `when` or an `after` naming it, a reference onto it). A count is an integer column; a sum an integer column only when every summed column is one; min and max a column of the summed column's kind. Computed after every table is generated, drawing nothing from any random stream. Spec 0.6.0.",
+          "type": "object",
+          "required": ["of"],
+          "properties": {
+            "of": { "description": "The child table.", "$ref": "#/$defs/qualifiedName" },
+            "via": {
+              "description": "The child's foreign-key column onto this table to group by; required when the child has more than one.",
+              "$ref": "#/$defs/name"
+            },
+            "sum": {
+              "description": "A numeric column of the child, or a list of them multiplied per child row.",
+              "oneOf": [
+                { "$ref": "#/$defs/name" },
+                { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/name" } }
+              ]
+            },
+            "count": { "description": "Count the child rows.", "const": true },
+            "count_distinct": {
+              "description": "A column of the child whose distinct non-null values are counted.",
+              "$ref": "#/$defs/name"
+            },
+            "min": {
+              "description": "A numeric, date or timestamp column of the child: its lowest value.",
+              "$ref": "#/$defs/name"
+            },
+            "max": {
+              "description": "A numeric, date or timestamp column of the child: its highest value.",
+              "$ref": "#/$defs/name"
+            }
+          },
+          "additionalProperties": false,
+          "x-model2data-applies-to": ["numeric", "temporal"],
+          "examples": [
+            { "of": "order_items", "sum": ["quantity", "unit_price"] },
+            { "of": "orders", "count": true },
+            { "of": "orders", "max": "ordered_at" }
+          ]
+        },
+        "at_least": {
+          "description": "Every parent row gets at least this many rows of this table: N × parents rows are each given a parent, each parent N times, in a seeded random order and at random positions, and the other rows are drawn as the column draws without the hint (its `skew`, its null rate). A row so given its parent keeps it: an `after` naming the parent's date moves the row's date instead. With fewer rows than N × parents, as many parents as the rows allow are covered and the generator reports the shortfall. Not on a unique foreign key (a one-to-one). Spec 0.6.0.",
+          "type": "integer",
+          "minimum": 1,
+          "x-model2data-applies-to": ["foreign-key"],
+          "examples": [1]
         }
       },
       "patternProperties": { "^x-": true },

@@ -2,7 +2,8 @@
 
 The [README](../README.md) shows what model2data does; these pages say how each part works.
 
-- [The model file](model-file.md) — `.model2data.yml`, DBML as input, `validate` and `convert`.
+- [The model file](model-file.md) — `.model2data.yml`, DBML as input, `validate` and `convert`,
+  totals that match their lines (`rollup`, `at_least`).
 - [Generating a project](generating.md) — row counts, `--as-of`, the determinism promise,
   `--table-seed`, `--locale`.
 - [The generated dbt project](dbt-project.md) — `dbt build`, Postgres, unit tests, the data

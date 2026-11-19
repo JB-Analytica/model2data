@@ -5,7 +5,7 @@ import random
 from collections import defaultdict, deque
 from collections.abc import Mapping
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
 import pandas as pd
 from faker import Faker
@@ -26,6 +26,14 @@ from model2data.generate.parents import ParentRule, follow_parents, parent_rules
 from model2data.generate.relationships import (
     build_fk_lookup,
     classify_refs,
+)
+from model2data.generate.rollups import (
+    Coverage,
+    apply_rollups,
+    at_least_of,
+    cover_parents,
+    has_rollups,
+    protected_rows,
 )
 from model2data.generate.timeline import _resolve_anchor, order_row_times
 from model2data.generate.when import SeedFor, apply_when
@@ -77,13 +85,25 @@ _capped_tables: list[str] = []
 
 
 def reset_capped_tables() -> None:
-    """Clear the record of tables cut to fit a unique reference."""
+    """Clear the record of tables cut to fit a unique reference, and of parents left uncovered."""
     _capped_tables.clear()
+    _uncovered_parents.clear()
 
 
 def get_capped_tables() -> list[str]:
     """Return "table: N rows, not M (reason)" labels for tables cut to fit."""
     return list(_capped_tables)
+
+
+# Foreign keys whose `at_least` the most recent run could not give every parent:
+# the table has fewer rows than at_least x parents. Not an error; reported beside
+# the capped tables.
+_uncovered_parents: list[str] = []
+
+
+def get_uncovered_parents() -> list[str]:
+    """Return "table: N rows cover C of P parent; at_least ... needs M" labels."""
+    return list(_uncovered_parents)
 
 
 def _unique_reference_cap(
@@ -275,6 +295,9 @@ def generate_data_from_dbml(
         # `postcode` beside it to keep coherent with. See
         # _lone_country_columns.
         lone_country_columns = _lone_country_columns(table_def)
+        # The rows an `at_least` gave a parent, by foreign-key column: nothing
+        # after the first pass moves them to another parent (see generate.rollups).
+        coverage: dict[str, Coverage] = {}
 
         # -----------------------
         # First pass: columns + FKs
@@ -295,9 +318,8 @@ def generate_data_from_dbml(
             # generated test could fail non-deterministically on a chance
             # collision (e.g. a "unique" promo_code or VIN column).
             ensure_unique = "pk" in column.settings or "unique" in column.settings
-            data[column.name] = generate_column_values(
+            draw = _drawer(
                 column=column,
-                row_count=row_count,
                 fk_series=fk_series,
                 ensure_unique=ensure_unique,
                 force_not_null=column.name in composite_pk_columns,
@@ -307,12 +329,16 @@ def generate_data_from_dbml(
                 skew=skew,
                 lone_country=column.name in lone_country_columns,
             )
+            data[column.name] = _covered(
+                draw, column, table_name, fk_target, fk_series, row_count, coverage
+            )
 
         df = pd.DataFrame(data)
         # A cross-table `after` keeps a row's date on or after the parent row
         # it points at: before the row's own later dates are ordered, so they
         # follow it wherever it ends up (see generate.parents).
         table_rules = rules.get(table_name, [])
+        keep = protected_rows(coverage, row_count) if coverage else None
         floors = {
             rule.column: follow_parents(
                 df,
@@ -321,6 +347,7 @@ def generate_data_from_dbml(
                 generated,
                 as_of=as_of,
                 time_profile=profile,
+                keep=keep,
             )[0]
             for rule in table_rules
         }
@@ -338,6 +365,7 @@ def generate_data_from_dbml(
             as_of=as_of,
             time_profile=profile,
             skew=skew,
+            coverage=coverage,
         )
         df = _deduplicate_composite_keys(
             df,
@@ -348,6 +376,7 @@ def generate_data_from_dbml(
             as_of=as_of,
             time_profile=profile,
             skew=skew,
+            keep=protected_rows(coverage, row_count) if coverage else None,
         )
 
         # -----------------------------------------------------
@@ -391,21 +420,71 @@ def generate_data_from_dbml(
             Faker.seed(stream_seed)
         reset_row_pools()
         df = generated[table_name]
-        df[column.name] = generate_column_values(
+        fk_series = generated[parent_table][parent_column]
+        draw = _drawer(
             column=column,
-            row_count=len(df),
-            fk_series=generated[parent_table][parent_column],
+            fk_series=fk_series,
             ensure_unique="unique" in column.settings,
             table_name=table_name,
             as_of=as_of,
             time_profile=profile,
             skew=skew,
         )
+        df[column.name] = _covered(
+            draw, column, table_name, (parent_table, parent_column), fk_series, len(df), {}
+        )
         df = _mirror_attributes(df, table_name, attribute_refs, fk_refs, generated)
         generated[table_name] = _coerce_integer_dtypes(df, table_def)
         release_row_pools(table_name)
 
+    # ---------------------------------------------------------
+    # Rollups, once every table holds its final rows: no draws, so nothing
+    # else changes (see generate.rollups).
+    # ---------------------------------------------------------
+    if has_rollups(tables):
+        for table_name in apply_rollups(generated, tables, refs):
+            generated[table_name] = _coerce_integer_dtypes(
+                generated[table_name], tables[table_name]
+            )
+
     return generated
+
+
+def _drawer(**arguments):
+    """`generate_column_values` with every argument but the row count bound."""
+
+    def draw(row_count: int) -> list:
+        return generate_column_values(row_count=row_count, **arguments)
+
+    return draw
+
+
+def _covered(
+    draw,
+    column: ColumnDef,
+    table_name: str,
+    fk_target: Optional[tuple[str, str]],
+    fk_series: Optional[pd.Series],
+    row_count: int,
+    coverage: dict[str, Coverage],
+) -> list:
+    """The column's values: `draw(row_count)`, or with its `at_least` parents covered.
+
+    A column without `at_least`, or with no parent values to cover, draws
+    exactly as it always has. A shortfall is reported (`get_uncovered_parents`).
+    """
+    at_least = at_least_of(column)
+    if not at_least or fk_series is None or not bool(fk_series.notna().any()):
+        return draw(row_count)
+    values, cover = cover_parents(draw, fk_series, row_count, at_least)
+    coverage[column.name] = cover
+    if cover.covered < cover.parents:
+        assert fk_target is not None
+        _uncovered_parents.append(
+            f"{table_name}: {row_count} rows cover {cover.covered} of {cover.parents} "
+            f"{fk_target[0]}; at_least {at_least} on {column.name} needs {cover.needed}"
+        )
+    return values
 
 
 def _mirror_attributes(
@@ -591,12 +670,16 @@ def _deduplicate_composite_keys(
     as_of: AsOf = None,
     time_profile: Optional[TimeProfile] = None,
     skew: float = 0.0,
+    keep: Optional[Mapping[str, Any]] = None,
 ) -> pd.DataFrame:
     """
     Regenerate colliding rows for any pk/unique composite key declared via an
     `indexes {}` block, so the generated seed data respects that constraint.
     Bounded retry mirrors generate.faker._deduplicate: give up gracefully on
     a tiny value space rather than looping forever.
+
+    `keep` masks, per foreign-key column, the rows an `at_least` gave a parent:
+    such a row keeps it, and only the key's other columns are drawn again.
     """
     columns_by_name = {column.name: column for column in table_def.columns}
 
@@ -638,11 +721,18 @@ def _deduplicate_composite_keys(
         for position, idx in enumerate(df.index):
             combo = combos[position]
             attempts = 0
+            row_columns = regen_columns
+            if keep:
+                row_columns = [
+                    (name, col) for name, col in regen_columns if not _kept(keep, name, position)
+                ]
+                if not row_columns:
+                    attempts = max_attempts
             while combo in seen and attempts < max_attempts:
                 # Regenerate every column of the key (not just the last one) so
                 # the retry can actually reach unused combinations, not just
                 # unused values of a single column.
-                for col_name, col_def in regen_columns:
+                for col_name, col_def in row_columns:
                     if col_name in fk_pools:
                         df.at[idx, col_name] = random.choice(fk_pools[col_name])
                     else:
@@ -671,6 +761,11 @@ def _deduplicate_composite_keys(
     return df
 
 
+def _kept(keep: Mapping[str, Any], column: str, position: int) -> bool:
+    mask = keep.get(column)
+    return mask is not None and bool(mask[position])
+
+
 def _resolve_self_referencing_fks(
     df: pd.DataFrame,
     table_def: TableDef,
@@ -680,6 +775,7 @@ def _resolve_self_referencing_fks(
     as_of: AsOf = None,
     time_profile: Optional[TimeProfile] = None,
     skew: float = 0.0,
+    coverage: Optional[dict[str, Coverage]] = None,
 ) -> pd.DataFrame:
     """
     Re-generate any FK column that references its own table (e.g. a
@@ -710,9 +806,8 @@ def _resolve_self_referencing_fks(
             continue
 
         ensure_unique = "pk" in column.settings or "unique" in column.settings
-        df[column.name] = generate_column_values(
+        draw = _drawer(
             column=column,
-            row_count=row_count,
             fk_series=df[parent_column],
             ensure_unique=ensure_unique,
             force_not_null=column.name in composite_pk_columns,
@@ -720,6 +815,15 @@ def _resolve_self_referencing_fks(
             as_of=as_of,
             time_profile=time_profile,
             skew=skew,
+        )
+        df[column.name] = _covered(
+            draw,
+            column,
+            table_name,
+            fk_target,
+            df[parent_column],
+            row_count,
+            coverage if coverage is not None else {},
         )
 
     return df

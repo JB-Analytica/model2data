@@ -5,7 +5,7 @@
 | Command | Does | Exit |
 |---|---|---|
 | `model2data --file M` | same as `model2data generate --file M` | see below |
-| `model2data validate M...` | check models against spec 0.5.0, `*.metrics.yml` files against the metrics spec and their model (`--model M`, else the model beside it with the same stem), and `*.dashboard.yml` files as `dashboard check` does | 0 conforms (warnings allowed), 1 any error |
+| `model2data validate M...` | check models against spec 0.6.0, `*.metrics.yml` files against the metrics spec and their model (`--model M`, else the model beside it with the same stem), and `*.dashboard.yml` files as `dashboard check` does | 0 conforms (warnings allowed), 1 any error |
 | `model2data convert M` | print M as `.model2data.yml`; `-o FILE` writes it, `--force` overwrites | 0 ok, 1 unreadable model or output exists |
 | `model2data metrics list -f M [--metrics F]` | every metric: the file's, then the inferred ones | 0, 1 on a model or metrics error |
 | `model2data metrics export -f M [--metrics F] --to ossie\|lightdash` | the model and its metrics as Apache Ossie 0.1.1, or as Lightdash meta in one dbt properties file for the staging models; `-o FILE` writes it, `--force` overwrites | 0, 1 on an error or an existing output, 2 on another `--to` |
@@ -63,7 +63,7 @@ columns. Add `not_null` to every column that must always have a value.
   `references`, `measure`, `generate`.
 - `generate`: `min`, `max`, `distribution`, `null_rate`, `weights`, `true_rate`,
   `distinct`, `skew`, `after`, `business_hours`, `growth`, `seasonality`, `transitions`,
-  `when`.
+  `when`, `rollup`, `at_least`.
 - Table: `columns`, `description`, `color`, `role`, `grain`, `keys`, `foreign_keys`,
   `incremental`, `defects`.
 - Top level: `model2data` (spec version), `name`, `description`, `enums`, `tables`,
@@ -72,7 +72,7 @@ columns. Add `not_null` to every column that must always have a value.
 Each key in use (this model validates):
 
 ```yaml
-model2data: 0.5.0
+model2data: 0.6.0
 name: saas
 enums:
   plan_tier: [free, pro, enterprise]
@@ -86,6 +86,15 @@ tables:
       is_verified: {type: boolean, generate: {true_rate: 0.8}}
       region: {type: city, generate: {distinct: 4}}
       created_at: {type: timestamp, not_null: true}
+      billed_total:
+        type: numeric(12,2)
+        not_null: true
+        generate: {rollup: {of: invoices, sum: amount}}
+  invoices:
+    columns:
+      id: {type: bigint, pk: true}
+      account_id: {type: bigint, not_null: true, references: accounts.id, generate: {at_least: 1}}
+      amount: {type: "numeric(10,2)", not_null: true, generate: {min: 10, max: 900}}
   subscriptions:
     incremental: {new_per_day: 5, update_rate: 0.1, changes: [status], updated_at: updated_at}
     keys: [{unique: [account_id, started_at]}]
@@ -127,8 +136,8 @@ value that day (its `updated_at` when the table has one), and one moving out los
 writes the dbt test `model2data_when`.
 
 `after` also names a parent's column as `<table>.<column>`: `started_at` above is on or after
-the `created_at` of the account its `account_id` points at (spec 0.5.0, so the model says
-`model2data: 0.5.0`). The table must reach that parent through exactly one one-column foreign
+the `created_at` of the account its `account_id` points at (added in spec version 0.5.0, so
+the model says at least `model2data: 0.5.0`). The table must reach that parent through exactly one one-column foreign
 key onto its key; a list (`after: [started_at, accounts.created_at]`) follows each entry. A
 row dated before its parent takes another parent created by then, so the column keeps its
 growth and seasonality; with none (or a one-to-one) its date moves. A null foreign key
@@ -138,6 +147,28 @@ between them is not built yet. `validate` warns where a child's first date can f
 `created_at`-like date and names the `after` to add. It writes the dbt test
 `model2data_not_before_parent`. Integer primary keys number the rows 1..N, and every output
 lists the rows in key order.
+
+`rollup` (added in spec version 0.6.0, which the model then names) makes a parent's column the
+aggregate of its child rows, so totals reconcile: `billed_total` above is the sum of the
+account's invoice `amount`s. One aggregate: `sum: column`, `sum: [quantity, unit_price]`
+(multiplied per child row, then added; rounded once per parent to the summed columns' most
+decimal places), `count: true`, `count_distinct: column`, `min: column`, `max: column` (numeric,
+date or timestamp). A parent with no children holds 0 (sum, count) or null (min, max). The child
+must reach the parent through one foreign key onto its key, or `via: <child fk column>` names it.
+The column takes no other value hint (`min`, `max`, `distribution`, `null_rate`, ...), is no key
+or foreign key, and nothing may read it while tables generate (a `when`, an `after`, a reference
+onto it). A count needs an integer column, a sum of a decimal column a decimal one. It writes
+the dbt test `model2data_rollup`, always at severity error. A rollup over a table with
+`incremental` cannot run with `--days`.
+
+`at_least: N` on a foreign key gives every parent at least N child rows (`account_id` above:
+no account without an invoice). Pair it with a rollup so no total is 0 by accident. With fewer
+rows than N × parents the summary lists the shortfall; raise the table's rows. Not on a unique
+foreign key.
+
+A reference onto a parent's plain column next to a foreign key to the same parent
+(`unit_price: {references: products.price}` beside `product_id: {references: products.id}`)
+copies the value from the row's own product.
 
 The full spec and JSON Schema ship in the package: `model2data/spec/README.md`,
 `model2data/spec/model.schema.json`.

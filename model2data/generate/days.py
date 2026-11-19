@@ -91,6 +91,7 @@ from model2data.generate.hints import validate_hints
 from model2data.generate.options import UNIFORM, TimeProfile, validate_skew
 from model2data.generate.parents import ParentRule, floor_on_day, parent_rules
 from model2data.generate.relationships import build_fk_lookup, classify_refs
+from model2data.generate.rollups import rollups_of
 from model2data.generate.timeline import HOUR_WEIGHTS, _build_dependencies, _topological_order
 from model2data.generate.when import SeedFor, apply_when, end_of_day, update_when
 from model2data.model.engine import EngineInputs, to_engine
@@ -219,6 +220,8 @@ def iter_days(
     incremental = {key: inc for key, inc in inputs.incremental.items() if key in tables}
     for key, inc in incremental.items():
         _check_incremental(tables[key], inc)
+    if days:
+        _check_rollups(tables, refs, incremental)
 
     frames = generate_data_from_dbml(
         tables,
@@ -274,6 +277,26 @@ def iter_days(
             state[key] = new_state
             result[key] = TableDay(inserted, updated, new_state, positions)
         yield DayResult(day, engine.day_date, {key: result[key] for key in tables}, engine.warnings)
+
+
+def _check_rollups(
+    tables: Mapping[str, TableDef], refs: list[dict], incremental: Mapping[str, Incremental]
+) -> None:
+    """Refuse days after the first where a rollup's table moves: nothing would keep it.
+
+    A rollup is computed once, on the first day (see generate.rollups). A day that
+    inserts child rows or updates the parent would leave it out of step with them.
+    """
+    validate_hints(tables, refs)
+    for rollup in rollups_of(tables, refs):
+        for key in (rollup.table, rollup.child):
+            inc = incremental.get(key)
+            if inc is not None and ((inc.new_per_day or 0) or (inc.update_rate or 0)):
+                raise ValueError(
+                    f'{rollup.table}.{rollup.column}: "rollup" reads {rollup.child}, and {key} '
+                    "has `incremental`: a rollup holds on the first day only, so generate "
+                    "without days after it, or drop the rollup."
+                )
 
 
 def _check_incremental(table: TableDef, inc: Incremental) -> None:
