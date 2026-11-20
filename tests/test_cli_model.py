@@ -394,12 +394,12 @@ def test_a_unique_enum_with_a_member_per_row_writes_each_member_once(in_tmp):
     assert "Unique columns left with duplicate values" not in result.output
 
 
-def test_a_unique_enum_with_too_few_members_warns_in_the_summary(in_tmp):
+def test_a_unique_enum_with_too_few_members_caps_the_table_in_the_summary(in_tmp):
     model = _write(in_tmp, "u.model2data.yml", UNIQUE_ENUM.replace("ROWS", "6"))
     result = runner.invoke(app, ["--file", str(model)])
     assert result.exit_code == 0, result.output
-    assert "Unique columns left with duplicate values" in result.output
-    assert "plans.plan_name: 2 duplicate value(s)" in result.output
+    assert "Unique columns left with duplicate values" not in result.output
+    assert "plans: 4 rows, not 6 (plan_name is a unique enum with 4 member(s))" in result.output
 
 
 def test_action_uses_setup_python_v6():

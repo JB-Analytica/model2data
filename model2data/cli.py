@@ -822,8 +822,8 @@ def main(
             typer.echo(f"    - {label}")
     if capped_tables:
         typer.echo(
-            "  ⚠️  Tables generated with fewer rows than asked, so a unique reference "
-            "keeps one row per parent value:"
+            "  ⚠️  Tables generated with fewer rows than asked, so a unique column "
+            "keeps one row per parent value or enum member:"
         )
         for label in capped_tables:
             typer.echo(f"    - {label}")

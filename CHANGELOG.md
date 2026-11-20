@@ -84,6 +84,11 @@ Models and metrics files that use none of what is added here read and generate e
   `incremental` is refused with `--days`.
 
 ### Changed
+- **A table with a unique enum column holds at most one row per member.** With more rows asked
+  than the enum has members, the table used to repeat members and report the column as left with
+  duplicates; it is now capped at the member count, like a table over a unique reference, and the
+  run says so. This changes the output of a model whose unique enum has fewer members than its
+  table's rows; any other model writes the same files as before.
 - `validate` reads model spec 0.7.0 (0.2 to 0.6 documents as before) and metrics spec 0.2.0
   (0.1 files as before), and prints the version a metrics file says.
 - A `when` may sit on a foreign key that is derived (it holds another column's value, so a

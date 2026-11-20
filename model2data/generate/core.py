@@ -120,18 +120,27 @@ def _unique_reference_cap(
     generated: dict[str, pd.DataFrame],
     row_count: int,
 ) -> tuple[int, Optional[str]]:
-    """The rows this table can hold with every unique referencing column unique.
+    """The rows this table can hold with every unique referencing or enum column unique.
 
     A `pk` or `unique` column that references a column of an already-generated
     table takes each parent value at most once, so the table holds at most as
     many rows as that parent column holds distinct values. Self-references are
     left alone (the parent column is this table's own, built in the same pass),
     and so is a parent with no values at all, which a cap of zero would not
-    help. Returns the row count to use and, when it is lower, why.
+    help. A unique enum column takes each member at most once, so the table
+    holds at most as many rows as the enum has members (the clubs of a league,
+    the stores of a chain). Returns the row count to use and, when it is lower,
+    why.
     """
     capped, reason = row_count, None
     for column in table_def.columns:
         if "pk" not in column.settings and "unique" not in column.settings:
+            continue
+        if column.enum_values and (table_name, column.name) not in fk_lookup:
+            members = len(set(column.enum_values))
+            if 0 < members < capped:
+                capped = members
+                reason = f"{column.name} is a unique enum with {members} member(s)"
             continue
         fk_target = fk_lookup.get((table_name, column.name))
         if not fk_target or fk_target[0] == table_name:
