@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.21.2] - 2026-11-20
+
+No change to what a run writes: the same model, seed and `--as-of` write the same files as 1.21.1.
+
+### Fixed
+- **A reference onto a parent's plain column is no longer a second join to that parent.** With
+  `order_items.unit_price` referencing `products.price` beside `order_items.product_id`
+  referencing `products.id`, the price is a copy of the line's own product's, so only
+  `product_id` relates the tables. The metrics join graph treated both as many-to-one joins, so a
+  metric on `order_items` filtered on `products.category` was refused as an ambiguous join, and
+  the Lightdash export warned that `stg_products` is reached along more than one path and left it
+  unjoined. Such a reference now adds no join, in the check, the known values, the semantic
+  relationships and both exports. A reference onto a plain column with no reference onto a key of
+  the same parent beside it is still a join, as before. `Model.copies(table, column)` answers
+  which is which.
+
 ## [1.21.1] - 2026-11-19
 
 No change to what a run writes: the same model, seed and `--as-of` write the same files as 1.21.0.

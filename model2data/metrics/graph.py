@@ -49,7 +49,8 @@ class Graph:
 
     A column's `references` comes before the table's `foreign_keys`, columns in
     document order, so the first path found is the one a reader of the model
-    would find first.
+    would find first. A reference onto a plain column beside one onto the same
+    parent's key is a copied value, not a join (`Model.copies`), and adds no step.
     """
 
     def __init__(self, model: Model):
@@ -57,7 +58,11 @@ class Graph:
         self.steps: dict[str, list[Join]] = {key: [] for key in model.tables}
         for key, table in model.tables.items():
             for name, column in table.columns.items():
-                if column.references is not None and column.references.table in model.tables:
+                if (
+                    column.references is not None
+                    and column.references.table in model.tables
+                    and not model.copies(key, name)
+                ):
                     self.steps[key].append(
                         Join(
                             key,
