@@ -181,7 +181,7 @@ def dependencies(table_def: TableDef) -> dict[str, list[str]]:
         reads: list[str] = []
         spec = spec_of(column)
         if spec is not None:
-            reads += parse(spec).reads()
+            reads += derivation_reads(spec)
         reads += list(conditions(column) or {})
         if spec is not None or conditions(column) is not None:
             graph[column.name] = list(dict.fromkeys(reads))

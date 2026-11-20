@@ -748,7 +748,7 @@ def test_a_window_that_is_not_two_dates_in_order_is_refused_by_the_engine(note, 
     _refused(_engine(ColumnDef("c", "date", note=note)), pattern)
 
 
-def test_a_derived_foreign_key_on_a_broken_cycle_edge_is_left_to_its_derivation():
+def test_a_derived_foreign_key_on_a_broken_cycle_edge_copies_the_final_key():
     document = {
         "model2data": "0.7.0",
         "name": "loop",
@@ -774,4 +774,7 @@ def test_a_derived_foreign_key_on_a_broken_cycle_edge_is_left_to_its_derivation(
     }
     inputs = to_engine(from_dict(document))
     frames = generate_data_from_dbml(inputs.tables, inputs.refs, base_rows=6, seed=1, as_of=AS_OF)
-    assert len(frames["a"]) == 6 and frames["a"]["b_id"].notna().any()
+    a = frames["a"]
+    assert len(a) == 6 and a["b_id"].notna().any()
+    # The copy is of the key as finally drawn, not of the empty one before its parent existed.
+    assert a["b2_id"].equals(a["b_id"])

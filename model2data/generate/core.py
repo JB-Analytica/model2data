@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import random
 from collections import defaultdict, deque
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import datetime
 from typing import Any, Optional
 
@@ -251,6 +251,7 @@ def generate_data_from_dbml(
     # Generate tables in dependency order
     # ---------------------------------------------------------
     ordered_tables, deferred_edges = _table_order(tables, fk_refs)
+    settlers: dict[str, Callable[[pd.DataFrame], None]] = {}
     # The columns whose `after` names a parent's column (see generate.parents).
     rules = parent_rules(tables, fk_refs, ordered_tables)
     generated: dict[str, pd.DataFrame] = {}
@@ -444,6 +445,7 @@ def generate_data_from_dbml(
             # Derived columns and the `when`s that read or are read by them, in dependency
             # order, then again once the rest of the table is final (generate.derive).
             settle_table(df)
+            settlers[table_name] = settle_table
         else:
             apply_when(
                 df,
@@ -492,6 +494,7 @@ def generate_data_from_dbml(
     # Nullable foreign keys that broke an FK cycle: their parent was generated
     # after them, so they are drawn now, from the rows it ended up holding.
     # ---------------------------------------------------------
+    redrawn: set[str] = set()
     for table_name, column in _deferred_fk_columns(tables, fk_refs, deferred_edges):
         if is_derived(column) or column.name in tables[table_name].combinations:
             continue  # holds what its derivation or its combinations said
@@ -523,6 +526,14 @@ def generate_data_from_dbml(
         df = _mirror_attributes(df, table_name, attribute_refs, fk_refs, generated)
         generated[table_name] = _coerce_integer_dtypes(df, table_def)
         release_row_pools(table_name)
+        redrawn.add(table_name)
+
+    # A derived column may read a key drawn just now (a copy of it, a case on it):
+    # its table settles again, so it holds what its derivation says of the final rows.
+    for table_name in sorted(redrawn & settlers.keys()):
+        df = generated[table_name]
+        settlers[table_name](df)
+        generated[table_name] = _coerce_integer_dtypes(df, tables[table_name])
 
     # ---------------------------------------------------------
     # Rollups, once every table holds its final rows: no draws, so nothing
