@@ -34,6 +34,7 @@ from typing import Optional, Union
 
 from pandas import NaT
 
+from model2data.generate.clock import HOUR_WEIGHTS, Calendar, Clock, clip, clock_of, draw_time
 from model2data.generate.kinds import temporal_kind
 from model2data.generate.options import TimeProfile
 from model2data.generate.windows import has_window, window
@@ -67,19 +68,7 @@ _TIMESTAMP_WINDOW_DAYS = 365
 # the shape retail, SaaS renewals and most other business calendars share.
 _SEASON_PEAK_DOY = 320
 
-# Business-hours weight per hour of the day (index = hour, 0-23). Night hours
-# are rare but not impossible, the working core of the day is busiest, and the
-# lunch hour dips without disappearing -- the shape a real office or storefront
-# produces.
-HOUR_WEIGHTS = (
-    [0.05] * 6  # 00:00-05:59: night
-    + [0.3] * 2  # 06:00-07:59: early
-    + [1.0] * 4  # 08:00-11:59: morning core
-    + [0.7]  # 12:00-12:59: lunch dip
-    + [1.0] * 5  # 13:00-17:59: afternoon core
-    + [0.35] * 3  # 18:00-20:59: evening
-    + [0.1] * 3  # 21:00-23:59: late
-)
+# Business-hours weight per hour of the day: `generate.clock.HOUR_WEIGHTS`, imported above.
 
 
 # `HOUR_WEIGHTS` added up as `random.choices` adds them up.
@@ -228,6 +217,27 @@ def windowed_timestamps(
     return values
 
 
+def clocked_values(
+    row_count: int,
+    kind: str,
+    clock: Clock,
+    profile: TimeProfile,
+    start: datetime,
+    end: datetime,
+) -> list[datetime]:
+    """Draw `row_count` moments in `[start, end]` on a column's `days` and `times` (spec 0.8.0).
+
+    A day weighs what `_day_weight` gives it for `growth` and `seasonality` (`growth`
+    running from the window's first day to its last), times its weekday's weight in
+    `clock`; a time of day is drawn from the clock's times. Raises `clock.NoDayError`
+    when no moment of the window fits.
+    """
+    first, last = start.date(), end.date()
+    shape = TimeProfile(growth=profile.growth, seasonality=profile.seasonality)
+    calendar = Calendar(clock, kind, start, end, lambda day: _day_weight(day, first, last, shape))
+    return calendar.draw(row_count)
+
+
 # ---------------------------------------------------------
 # Within-row ordering (Feature 2)
 # ---------------------------------------------------------
@@ -256,7 +266,13 @@ def gap(kind: str) -> timedelta:
     return timedelta(days=max(0, round(random.expovariate(1 / _DATE_GAP_SCALE_DAYS))))
 
 
-def place_after(lower: datetime, kind: str, upper: datetime, business_hours: bool) -> datetime:
+def place_after(
+    lower: datetime,
+    kind: str,
+    upper: datetime,
+    business_hours: bool,
+    clock: Optional[Clock] = None,
+) -> datetime:
     """A moment a random gap after `lower`, in the column's shape, before `upper`.
 
     The gap decides roughly when; `business_hours` then decides the weekday
@@ -268,7 +284,11 @@ def place_after(lower: datetime, kind: str, upper: datetime, business_hours: boo
     last moment; after `_PLACE_TRIES` the moment is drawn evenly between the
     bounds, and a window with no room at all returns `lower`: the column
     never lands before what it follows.
+
+    A column with `days` or `times` (`clock`) is placed by `_place_on_clock` instead.
     """
+    if clock is not None:
+        return _place_on_clock(lower, kind, upper, clock)
 
     def inside(moment: datetime) -> bool:
         return moment < upper if kind == "timestamp" else moment.date() <= upper.date()
@@ -292,6 +312,47 @@ def place_after(lower: datetime, kind: str, upper: datetime, business_hours: boo
         return lower + timedelta(seconds=random.randrange(span)) if span > 0 else lower
     span = (upper.date() - lower.date()).days
     return lower + timedelta(days=random.randint(0, span)) if span > 0 else lower
+
+
+def _place_on_clock(lower: datetime, kind: str, upper: datetime, clock: Clock) -> datetime:
+    """`place_after` for a column with `days` or `times`: a gap after `lower`, on the clock.
+
+    The gap decides roughly when. Its day is kept by its weekday's weight against the
+    heaviest weekday's (never when the column leaves that weekday out), and a
+    timestamp's time of day is drawn from the clock's times on that day, after `lower`.
+    After `_PLACE_TRIES` draws that miss, the moment is drawn among every allowed
+    moment between the bounds, by weight; a window with none returns `lower`, as
+    `place_after` does for a window with no room.
+    """
+    heaviest = max(clock.days)
+    for _ in range(_PLACE_TRIES):
+        moment = lower + gap(kind)
+        weight = clock.days[moment.weekday()]
+        if weight <= 0 or (weight < heaviest and random.random() >= weight / heaviest):
+            continue
+        if kind == "timestamp":
+            low = (
+                lower.hour * 3600 + lower.minute * 60 + lower.second
+                if moment.date() == lower.date()
+                else 0
+            )
+            slots = clip(clock.slots, low, 86400)
+            if not slots:
+                continue
+            moment = datetime(moment.year, moment.month, moment.day) + timedelta(
+                seconds=draw_time(slots)
+            )
+            if moment < upper:
+                return moment
+        elif moment.date() <= upper.date():
+            return moment
+    end = upper - timedelta(seconds=1) if kind == "timestamp" else upper
+    if end < lower:
+        return lower
+    calendar = Calendar(clock, kind, lower, end, lambda day: 1.0)
+    if calendar.empty:
+        return lower
+    return calendar.draw(1)[0]
 
 
 # Column-name stems that place a column at a stage in the created -> updated ->
@@ -512,6 +573,12 @@ def column_business_hours(column: ColumnDef, time_profile: Optional[TimeProfile]
     return bool(time_profile and time_profile.business_hours)
 
 
+def column_clock(column: ColumnDef, time_profile: Optional[TimeProfile]) -> Optional[Clock]:
+    """The `days` and `times` of `column` (see generate.clock), None when it has neither."""
+    note = column.note if isinstance(column.note, dict) else None
+    return clock_of(note, column_business_hours(column, time_profile))
+
+
 def _build_dependencies(
     table_def: TableDef, columns_by_name: dict, temporal_columns: list[ColumnDef]
 ) -> dict[str, set[str]]:
@@ -663,6 +730,7 @@ def order_row_times(
             assert other_kind is not None
             required_kinds[name] = other_kind
         business_hours = column_business_hours(columns_by_name[column_name], time_profile)
+        clock = column_clock(columns_by_name[column_name], time_profile)
         floor = (floors or {}).get(column_name)
         own_note = columns_by_name[column_name].note
         # A column with `min`/`max` is placed up to the end of its window, which may lie
@@ -692,7 +760,7 @@ def order_row_times(
             ceiling = upper
             if ceiling == cap and latest_required > cap:
                 ceiling = latest_required + timedelta(days=_FOLLOW_AHEAD_DAYS)
-            moment = place_after(latest_required, kind, ceiling, business_hours)
+            moment = place_after(latest_required, kind, ceiling, business_hours, clock)
             df.at[idx, column_name] = _format_value(moment, kind)
 
     return df

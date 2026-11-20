@@ -1,4 +1,4 @@
-"""Does a document conform to spec 0.7.0 (or 0.2.x-0.6.x): the schema, then the checks beyond it.
+"""Does a document conform to spec 0.8.0 (or 0.2.x-0.7.x): the schema, then the checks beyond it.
 
 `check(document)` returns every issue it finds, each with the document path of
 the value at fault and a severity; it never stops at the first. The schema is
@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import difflib
 import json
+import re
 from collections.abc import Mapping
 from datetime import date
 from functools import lru_cache
@@ -25,21 +26,22 @@ import jsonschema
 from jsonschema.exceptions import ValidationError
 
 from model2data.dbt.naming import dbt_identifier
+from model2data.generate import clock, kinds, windows
 from model2data.generate import comparison as cmp
-from model2data.generate import kinds, windows
 from model2data.generate.derive import CONFLICTS as DERIVE_CONFLICTS
 from model2data.generate.timeline import creation_column_name
 from model2data.model.errors import Issue, PathPart, Suggestion, format_path
 
-SPEC_VERSION = "0.7.0"
+SPEC_VERSION = "0.8.0"
 # The columns `incremental.history` adds to `<table>_history`.
 HISTORY_COLUMNS = ("valid_from", "valid_to", "is_current")
 # The minor versions this reader implements. 0.3.0 only adds `defects` and
 # `incremental.history`, 0.4.0 only `when`, 0.5.0 only a list or a parent's
 # `<table>.<column>` in `after`, 0.6.0 only `rollup` and `at_least`, 0.7.0 only a table's
-# `rules`, so an older
+# `rules` and `combinations`, a column's `derive` and a date window, 0.8.0 only a column's
+# `days` and `times`, so an older
 # document reads exactly as it did; it just cannot use them.
-READS = ("0.2", "0.3", "0.4", "0.5", "0.6", "0.7")
+READS = ("0.2", "0.3", "0.4", "0.5", "0.6", "0.7", "0.8")
 _URL = "https://www.jbanalytica.com/model2data/spec/{}/model.schema.json"
 SCHEMA_URL = _URL.format(SPEC_VERSION)
 
@@ -47,16 +49,29 @@ SCHEMA_URL = _URL.format(SPEC_VERSION)
 def schema_url(version: Any) -> str:
     """The schema URL a document of `version` points editors at: 0.2.0's for a 0.2 one,
     0.3.0's for a 0.3 one, 0.4.0's for a 0.4 one, 0.5.0's for a 0.5 one, 0.6.0's for a 0.6 one,
-    the current one otherwise."""
-    older = {"0.2": "0.2.0", "0.3": "0.3.0", "0.4": "0.4.0", "0.5": "0.5.0", "0.6": "0.6.0"}.get(
-        _minor(version) or ""
-    )
+    0.7.0's for a 0.7 one, the current one otherwise."""
+    older = {
+        "0.2": "0.2.0",
+        "0.3": "0.3.0",
+        "0.4": "0.4.0",
+        "0.5": "0.5.0",
+        "0.6": "0.6.0",
+        "0.7": "0.7.0",
+    }.get(_minor(version) or "")
     return _URL.format(older) if older else SCHEMA_URL
 
 
 def _minor(version: Any) -> Optional[str]:
     if isinstance(version, float):
-        return {0.2: "0.2", 0.3: "0.3", 0.4: "0.4", 0.5: "0.5", 0.6: "0.6", 0.7: "0.7"}.get(version)
+        return {
+            0.2: "0.2",
+            0.3: "0.3",
+            0.4: "0.4",
+            0.5: "0.5",
+            0.6: "0.6",
+            0.7: "0.7",
+            0.8: "0.8",
+        }.get(version)
     if isinstance(version, str):
         return ".".join(version.split(".")[:2])
     return None
@@ -64,7 +79,7 @@ def _minor(version: Any) -> Optional[str]:
 
 @lru_cache(maxsize=1)
 def schema() -> dict[str, Any]:
-    """The packaged, normative JSON Schema of spec 0.7.0, which also reads 0.2-0.6 documents."""
+    """The packaged, normative JSON Schema of spec 0.8.0, which also reads 0.2-0.7 documents."""
     text = resources.files("model2data").joinpath("spec/model.schema.json").read_text("utf-8")
     return json.loads(text)
 
@@ -108,7 +123,7 @@ def _version_issues(document: Mapping) -> list[Issue]:
     version = document.get("model2data")
     if version is None:
         return []  # reported by the schema as missing
-    if version in (0.2, 0.3, 0.4, 0.5, 0.6, 0.7) and not isinstance(version, bool):
+    if version in (0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8) and not isinstance(version, bool):
         return []
     if isinstance(version, str):
         parts = version.split(".")
@@ -119,7 +134,7 @@ def _version_issues(document: Mapping) -> list[Issue]:
                 Issue(
                     "model2data",
                     f"the document is written against spec {version}, and this reader "
-                    f"implements spec {SPEC_VERSION} (0.2.x to 0.7.x). "
+                    f"implements spec {SPEC_VERSION} (0.2.x to 0.8.x). "
                     + (
                         "Convert a 0.1 model, which is DBML, with `model2data convert`."
                         if parts[:2] == ["0", "1"]
@@ -1151,6 +1166,17 @@ class _Checks:
         )
         return True
 
+    def _needs_0_8(self, path: list[PathPart], what: str) -> bool:
+        """Report what 0.8.0 added (`what`) in a 0.2-0.7 document; True when it was reported."""
+        if self.minor not in ("0.2", "0.3", "0.4", "0.5", "0.6", "0.7"):
+            return False
+        self.add(
+            path,
+            f"`{what}` is spec 0.8.0, and the document is written against {self.minor}: "
+            "write `model2data: 0.8.0`",
+        )
+        return True
+
     def table_rows(self, key: str) -> Optional[int]:
         """The rows the document's `run` gives a table, or None when it leaves them to the reader."""
         if _mapping(self.tables.get(key)).get("combinations"):
@@ -1609,6 +1635,9 @@ class _Checks:
 
         if temporal:
             self._window(key, name, generate, gen_path)
+            self._clock(
+                name, generate, gen_path, type_text, keyed=is_fk or in_pk or in_key or unique
+            )
         elif numeric:
             for bound in ("min", "max"):
                 value = generate.get(bound)
@@ -2056,6 +2085,67 @@ class _Checks:
                     f"min {parsed['min']!r} is after max {parsed['max']!r}",
                 )
 
+    def _clock(
+        self, name: str, generate: Mapping, path: list[PathPart], type_text: str, *, keyed: bool
+    ) -> None:
+        """`days` and `times`: the weekdays and clock times a date or timestamp falls on
+        (spec 0.8.0). The schema checks their form; these, what it cannot."""
+        present = [hint for hint in ("days", "times") if hint in generate]
+        if not present:
+            return
+        kind = kinds.temporal_kind(type_text)
+        sound = True
+        for hint in present:
+            at = [*path, hint]
+            self._needs_0_8(at, hint)
+            if hint == "times" and kind != "timestamp":
+                self.add(
+                    at,
+                    f"applies to a timestamp column only: {name} is a date, which has no time of day",
+                )
+                sound = False
+            elif keyed:
+                self.add(at, f"cannot be set on {name}, a key, unique or foreign-key column")
+                sound = False
+            if generate.get("business_hours") is True:
+                self.add(
+                    at,
+                    f"and `business_hours` both decide when {name}'s values fall: drop "
+                    "`business_hours`",
+                )
+                sound = False
+        times = generate.get("times")
+        entries = times if isinstance(times, list) else list(_mapping(times))
+        for entry in entries:
+            if isinstance(entry, str) and re.fullmatch(clock.TIME_ENTRY, entry):
+                try:
+                    clock.parse_slot(entry)
+                except ValueError as error:
+                    self.add([*path, "times"], str(error))
+                    sound = False
+        if not sound or kind is None:
+            return
+        try:
+            found = clock.clock_of(generate, False)
+        except ValueError:
+            return  # the schema has said so
+        bounds = [generate.get(bound) for bound in ("min", "max")]
+        if not any(isinstance(bound, str) for bound in bounds) or any(
+            bound is not None and windows.parse_bound(bound) is None for bound in bounds
+        ):
+            return
+        if self.anchor is not None:
+            start, end = windows.window(generate, kind, self.anchor)
+        else:
+            start, end = windows.bounds(generate, kind)
+            if start is None or end is None:
+                return  # the window's other end depends on the run's day
+        if found is None or start > end:
+            return
+        calendar = clock.Calendar(found, kind, start, end, lambda day: 1.0)
+        if calendar.empty:
+            self.add([*path, present[0]], calendar.describe())
+
     def _span(self, key: str, name: str) -> tuple[Optional[date], Optional[date], bool]:
         """The first and last day a date or timestamp column can fall on, None where the
         document does not say (a default end depends on the run's `as_of`), and whether it has
@@ -2263,7 +2353,7 @@ class _Checks:
                         suggestion=Suggestion(
                             format_path(path),
                             value,
-                            None if self.minor in (None, "0.5", "0.6", "0.7") else "0.5.0",
+                            None if self.minor in (None, "0.5", "0.6", "0.7", "0.8") else "0.5.0",
                         ),
                     )
                 )

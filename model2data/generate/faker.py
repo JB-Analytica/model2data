@@ -21,6 +21,7 @@ from faker.providers.person import Provider as _PersonProvider
 
 from model2data.generate import windows
 from model2data.generate.catalogue import ALIASES
+from model2data.generate.clock import NoDayError
 from model2data.generate.kinds import (
     is_boolean_type,
     is_decimal_type,
@@ -28,7 +29,13 @@ from model2data.generate.kinds import (
     temporal_kind,
 )
 from model2data.generate.options import UNIFORM, TimeProfile
-from model2data.generate.timeline import weighted_dates, weighted_timestamps, windowed_timestamps
+from model2data.generate.timeline import (
+    clocked_values,
+    column_clock,
+    weighted_dates,
+    weighted_timestamps,
+    windowed_timestamps,
+)
 from model2data.parse.dbml import ColumnDef
 
 # ---------------------------------------------------------
@@ -1037,6 +1044,21 @@ def generate_column_values(
     # `datetime` is a timestamp, not a time: the spec's temporal kinds (see
     # generate.kinds) put anything naming a date and a time on the timestamp
     # branch, and only `time` alone on the time-of-day one.
+    elif temporal_kind(base_type) in ("date", "timestamp") and (
+        clock := column_clock(column, time_profile)
+    ):
+        kind = temporal_kind(base_type) or ""
+        profile = _column_time_profile(column, time_profile) or UNIFORM
+        start, end = windows.window(column.note, kind, _anchor_date(as_of))
+        try:
+            moments = clocked_values(row_count, kind, clock, profile, start, end)
+        except NoDayError as error:
+            raise ValueError(f"{unique_label}: {error}.") from None
+        if kind == "date":
+            values = [moment.date() for moment in moments]
+        else:
+            values = [moment.isoformat(sep=" ") for moment in moments]
+
     elif temporal_kind(base_type) == "date":
         values = _generate_dates(
             row_count, as_of, _column_time_profile(column, time_profile), column.note

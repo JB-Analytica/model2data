@@ -1,5 +1,5 @@
-# yaml-language-server: $schema=https://www.jbanalytica.com/model2data/spec/0.7.0/model.schema.json
-model2data: 0.7.0
+# yaml-language-server: $schema=https://www.jbanalytica.com/model2data/spec/0.8.0/model.schema.json
+model2data: 0.8.0
 name: sports_league
 description: >
   One season of a twelve-club league: the clubs, their players and every game, each club playing
@@ -49,8 +49,12 @@ tables:
       tip_off_at:
         type: timestamp
         not_null: true
-        # a season that runs past the run's day, so part of it is still to be played
-        generate: {min: "2026-08-15", max: "2027-05-15"}
+        generate:
+          # a season that runs past the run's day, so part of it is still to be played
+          min: "2026-08-15"
+          max: "2027-05-15"
+          days: {fri: 1, sat: 3, sun: 3}                # weekend fixtures, a few on Friday night
+          times: {"16:00": 1, "18:30": 1, "20:45": 2}   # three kick-off slots, the evening busiest
       game_date:
         type: date
         generate: {derive: {date_of: tip_off_at}}

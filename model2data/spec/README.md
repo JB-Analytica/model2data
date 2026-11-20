@@ -1,4 +1,4 @@
-# The model2data model — spec 0.7.0
+# The model2data model — spec 0.8.0
 
 A model2data model is one document: the tables of a data model, their columns and keys, the
 relationships between them, the enums a column can be typed as, and how every column's values
@@ -83,7 +83,7 @@ The spec is versioned on its own, apart from the engine and the studio, with
 [semantic versioning](https://semver.org). The version is in the schema's `$id`:
 
 ```
-https://www.jbanalytica.com/model2data/spec/0.7.0/model.schema.json
+https://www.jbanalytica.com/model2data/spec/0.8.0/model.schema.json
 ```
 
 A patch release changes wording only. A minor release adds something optional. A major release
@@ -118,11 +118,17 @@ an error. A writer writes the version the document was read with, and 0.6.0 once
 
 0.7.0 adds a table's [`rules`](#rules) and the [comparison grammar](#comparisons) they are
 written in, a table's [`combinations`](#combination-tables), a column's [`derive`](#derived-columns), and [`min` and `max` on a date or
-timestamp column](#date-windows), and nothing else so far: a 0.2 to 0.6 document is a 0.7.0
+timestamp column](#date-windows), and nothing else: a 0.2 to 0.6 document is a 0.7.0
 document that uses none of it, and reads as it always read. A document that uses any of them
 says `model2data: 0.7.0`, and any of them in a document that says an earlier version is an
 error. A writer writes the version the document was read with, and 0.7.0 once it uses one. The
 metrics spec's `{column: ...}` operand, which uses the same grammar, is metrics spec 0.2.0.
+
+0.8.0 adds a date or timestamp column's [`days` and `times`](#weekdays-and-clock-times), and
+nothing else so far: a 0.2 to 0.7 document is a 0.8.0 document that uses neither, and reads as
+it always read. A document that uses either says `model2data: 0.8.0`, and either in a document
+that says an earlier version is an error. A writer writes the version the document was read
+with, and 0.8.0 once it uses one.
 
 0.2.0 replaced 0.1.0, which carried hints as JSON inside DBML notes. See
 [From 0.1](#from-01).
@@ -365,7 +371,8 @@ games:
   the default's length ending at `max`.
 - **Shape:** `growth`, `seasonality` and `business_hours` (the run's, or the column's own) shape the
   draw inside the window: growth runs from the window's first day to its last, the season peaks
-  where the calendar puts it, and business hours thin out weekends and nights.
+  where the calendar puts it, and business hours thin out weekends and nights. `days` and
+  `times` (see [Weekdays and clock times](#weekdays-and-clock-times)) hold inside it too.
 - **`after` still holds.** A column that follows another is placed after it and no later than
   its own `max` (a `max` leaves it in the window), and a child follows a parent's date, even
   one after `as_of`. A column with no window of its own that follows a date after `as_of` lands
@@ -376,6 +383,59 @@ games:
   A table that does not move may have windows.
 - A window is checked: `min` and `max` are ISO 8601 strings, `min` is not after `max`, a number on
   a date column and a date on a numeric one are errors.
+
+#### Weekdays and clock times
+
+Every day of a column's window can be drawn, and a timestamp's time of day is even across the
+24 hours (or follows the office-hours profile of `business_hours`), so a fixture kicks off at
+03:00 on a Tuesday. `days` and `times` (spec 0.8.0) say when a column's values fall:
+
+```yaml
+fixtures:
+  columns:
+    kickoff_at:
+      type: timestamp
+      generate:
+        min: "2026-08-15"
+        max: "2027-05-15"
+        days: {fri: 1, sat: 3, sun: 3}                  # weighted weekdays
+        times: {"16:00": 1, "18:30": 1, "20:45": 2}     # weighted exact clock times
+orders:
+  columns:
+    placed_at:
+      type: timestamp
+      generate:
+        days: [mon, tue, wed, thu, fri, sat]            # the shop opens six days a week
+        times: ["09:00-18:00"]                          # a range: even within it
+```
+
+- **`days`** is a list of weekdays (`mon`, `tue`, `wed`, `thu`, `fri`, `sat`, `sun`), each as
+  likely as the next, or a mapping of weekday to a positive weight. Only those weekdays are
+  drawn: a day of the window that is another weekday weighs 0, and a listed one its weight
+  times what `growth` and `seasonality` give it. On a date or a timestamp column.
+- **`times`** is a list of entries, each as likely as the next, or a mapping of entry to a
+  positive weight. An entry is an exact clock time, `"HH:MM"` or `"HH:MM:SS"`, which a value
+  takes exactly (`"20:45"` is 20:45:00), or a range `"HH:MM-HH:MM"` (seconds allowed), from its
+  start included to its end excluded, in which a value falls evenly to the second. A range ends
+  after it starts, at `"24:00"` at the latest: it does not wrap past midnight (write
+  `["22:00-24:00", "00:00-02:00"]`). An entry is drawn by its weight, then the moment within
+  it. On a timestamp column only.
+- **Against `business_hours`.** `days` replaces its weekend thinning and `times` its working
+  hours, for the column: under a run's `business_hours`, a column with `days` alone keeps the
+  working hours, and one with `times` alone keeps the thinner weekends. Either beside the
+  column's own `business_hours: true` is an error.
+- **Everywhere the column is drawn.** In the window of the run or of the column's own `min` and
+  `max` (on its first and last day only the times inside the window count), and when it follows
+  another column with `after` (it lands on an allowed weekday and time after what it follows,
+  or, with no such moment before its `max`, on what it follows, as any column does in a window
+  with no room) and when it is filled under a `when`. A table's `rules` are met after the draw,
+  a value drawn again being drawn the same way.
+- **A window with no allowed moment** (a `min` and `max` around two Tuesdays with `days: [sat]`)
+  is an error: by the reader where the window does not lean on the run's `as_of`, or the run's
+  `as_of` is in the document, and by the generator otherwise.
+- **Not on** a key, `unique` or a foreign-key column, nor beside `derive` or `rollup`. A table
+  with `incremental` that inserts or updates rows after the first day is refused when days are
+  generated if a column has either, as for a date window.
 
 ### Derived columns
 
@@ -432,8 +492,9 @@ that column) or `{run: as_of}` (the run's anchor, into a date or timestamp colum
   names a row of the parent. A literal cannot be a foreign key's value.
 - **Not a key, and no other value hint.** A column that is `pk`, `unique` or in a key, or has
   `min`, `max`, `distribution`, `weights`, `null_rate`, `distinct`, `true_rate`, `skew`, `after`,
-  `growth`, `seasonality`, `business_hours`, `transitions`, `rollup` or `at_least`, cannot be
-  derived. Its type is its type: a generator type is ignored, as nothing is drawn.
+  `growth`, `seasonality`, `business_hours`, `days`, `times`, `transitions`, `rollup` or
+  `at_least`, cannot be derived. Its type is its type: a generator type is ignored, as nothing
+  is drawn.
 - **Kinds.** A value goes into a column of its own kind: a number into a number (an integer into a
   decimal), an enum into a column of the same enum (or of text), a date into a date, a timestamp
   into a timestamp (`date_of` takes a timestamp's date), text into text, a boolean into a
@@ -871,8 +932,8 @@ reports each failure with the path of the value (`tables.orders.columns.status.g
     That table reaches the column's table through exactly one foreign key onto a key, or `via`
     names one that does. The column is not a key, unique, a foreign key or an enum, carries no
     other hint that decides its value (`min`, `max`, `distribution`, `null_rate`, `distinct`,
-    `weights`, `true_rate`, `skew`, `after`, `growth`, `seasonality`, `business_hours`,
-    `when`), and is of the aggregate's kind: an integer for `count` and `count_distinct`;
+    `weights`, `true_rate`, `skew`, `after`, `growth`, `seasonality`, `business_hours`, `days`,
+    `times`, `when`), and is of the aggregate's kind: an integer for `count` and `count_distinct`;
     numeric for `sum`, and decimal when a summed column is; for `min` and `max`, numeric
     (decimal for a decimal column) for a numeric column and the same kind (date, timestamp) for
     a temporal one. No `when`, `after` or reference names a rolled-up column, and rollups do
@@ -905,6 +966,11 @@ reports each failure with the path of the value (`tables.orders.columns.status.g
     `pk` or `unique` on its own, with a `generate` hint, or in a table whose parents depend on
     it (the table itself included); `run.rows_per_table` does not name the table. Only in a
     document of spec 0.7.0 or later.
+23. `days` and `times` are on a column that is not a key, `unique` or a foreign key, `times` on a
+    timestamp one, and neither beside `business_hours: true`; a range of `times` ends after it
+    starts; and a column with a window that the document fixes (`min` and `max`, or one of them
+    with `run.as_of`) has at least one moment on its `days` and `times` in it. Only in a
+    document of spec 0.8.0 or later.
 
 ### Warnings
 

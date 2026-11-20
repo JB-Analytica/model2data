@@ -368,7 +368,7 @@ allocation: {type: numeric, generate: {min: 0.5, max: 8}}
 (A column with `generate` is usually written as a block mapping, as above; the one-line form is
 the same YAML.) Every other hint -- `null_rate`, `weights`, `true_rate`, `distinct`, `skew`,
 `after` (a column of the row, a parent's `<table>.<column>`, or a list), `business_hours`,
-`growth`, `seasonality`, `distribution` -- is documented in the
+`days`, `times`, `growth`, `seasonality`, `distribution` -- is documented in the
 [spec's schema](../model2data/spec/model.schema.json).
 
 ### When to Use Constraints

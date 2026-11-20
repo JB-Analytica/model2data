@@ -23,7 +23,7 @@ says it created the project. Fix the **model file**, never the generated project
   on `tables.orders.columns.order_date`: a child's date can precede its parent's creation (an
   order before its customer). Add exactly that `after` to the column's `generate` (a column with
   an `after` already takes a list: `after: [placed_at, customers.created_at]`), set
-  `model2data: 0.7.0`, and validate again. If the child may truly predate the parent, leave it.
+  `model2data: 0.8.0`, and validate again. If the child may truly predate the parent, leave it.
   An error `reaches users through more than one foreign key (sender_id, receiver_id)` on an
   `after`: choosing between two foreign keys to one parent is not built yet; drop that `after`.
 - An error on a `rollup`: it names the fix. `has 2 foreign keys onto ...`: add `via:` with the

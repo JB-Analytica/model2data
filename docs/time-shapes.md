@@ -110,3 +110,26 @@ Here `created_at` gets business hours and growth even on an otherwise-uniform ru
 `refunded_at` stays flat even under `--growth 0.5` — each hint only replaces the fields it names,
 so a partial hint like `{growth: 0}` leaves that column's `business_hours`/`seasonality` at
 whatever the run-level flags set.
+
+When a column happens only on some weekdays or at fixed times, `days` and `times` (spec 0.8.0)
+say so exactly, where `business_hours` only leans:
+
+```yaml
+fixtures:
+  columns:
+    kickoff_at:
+      type: timestamp
+      generate:
+        days: {fri: 1, sat: 3, sun: 3}                # Friday to Sunday, the weekend busiest
+        times: {"16:00": 1, "18:30": 1, "20:45": 2}   # three kick-off slots
+shop_visits:
+  columns:
+    visited_at:
+      type: timestamp
+      generate: {days: [mon, tue, wed, thu, fri, sat], times: ["09:00-18:00"]}
+```
+
+A day on another weekday is never drawn, and a time is one of the exact times listed or falls in
+one of the ranges (start included, end excluded). `growth` and `seasonality` still weigh the
+allowed days; `days` replaces the run's weekend thinning and `times` its working hours for that
+column. See [The model file](model-file.md#weekdays-and-clock-times).

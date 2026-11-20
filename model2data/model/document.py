@@ -323,6 +323,20 @@ def uses_0_7_hint(generate: Mapping[str, Any]) -> bool:
     )
 
 
+def uses_0_8(model: Model) -> bool:
+    """Whether the model uses what spec 0.8.0 added: a column's `days` or `times`."""
+    return any(
+        uses_0_8_hint(column.generate)
+        for table in model.tables.values()
+        for column in table.columns.values()
+    )
+
+
+def uses_0_8_hint(generate: Mapping[str, Any]) -> bool:
+    """Whether a column's `generate` has `days` or `times` (spec 0.8.0)."""
+    return "days" in generate or "times" in generate
+
+
 def uses_0_5_after(after: Any) -> bool:
     """Whether an `after` is in a form spec 0.5.0 added: a list, or `<table>.<column>`."""
     return isinstance(after, list) or (isinstance(after, str) and "." in after)
@@ -332,7 +346,8 @@ def document_version(model: Model) -> Any:
     """The version the model's document is written against.
 
     The version the model was read with, unless the model uses what that
-    version does not have: 0.7.0 when it uses `rules`, `combinations`, `derive` or a date `min`/`max` and was read as 0.2-0.6,
+    version does not have: 0.8.0 when it uses `days` or `times` and was read as 0.2-0.7,
+    0.7.0 when it uses `rules`, `combinations`, `derive` or a date `min`/`max` and was read as 0.2-0.6,
     0.6.0 when it uses `rollup` or `at_least` and was read as 0.2-0.5, 0.5.0 when it uses a list or a parent's column in
     `after` and was read as
     0.2-0.4, 0.4.0 when it uses `when` and was read as 0.2 or 0.3, 0.3.0 when it uses `defects` or `incremental.history` and was read as
@@ -340,6 +355,15 @@ def document_version(model: Model) -> Any:
     """
     version = model.version
     minor = str(version).split(".")[:2]
+    if uses_0_8(model) and minor in (
+        ["0", "2"],
+        ["0", "3"],
+        ["0", "4"],
+        ["0", "5"],
+        ["0", "6"],
+        ["0", "7"],
+    ):
+        return "0.8.0"
     if uses_0_7(model) and minor in (["0", "2"], ["0", "3"], ["0", "4"], ["0", "5"], ["0", "6"]):
         return "0.7.0"
     if uses_0_6(model) and minor in (["0", "2"], ["0", "3"], ["0", "4"], ["0", "5"]):

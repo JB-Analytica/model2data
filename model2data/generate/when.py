@@ -51,6 +51,7 @@ from model2data.generate.timeline import (
     _resolve_anchor,
     _topological_order,
     column_business_hours,
+    column_clock,
     place_after,
 )
 from model2data.parse.dbml import ColumnDef, TableDef
@@ -180,8 +181,11 @@ class _Order:
 
     def place(self, name: str, lower: datetime, kind: str, upper: datetime) -> datetime:
         """A moment for `name` a random gap after `lower`, in the column's shape."""
-        business_hours = column_business_hours(self.by_name[name], self.time_profile)
-        return place_after(lower, kind, upper, business_hours)
+        column = self.by_name[name]
+        business_hours = column_business_hours(column, self.time_profile)
+        return place_after(
+            lower, kind, upper, business_hours, column_clock(column, self.time_profile)
+        )
 
     def settle(self, name: str, row: int, cap: datetime) -> None:
         """Move what follows `name` in this row to no earlier than what it follows, in order.
