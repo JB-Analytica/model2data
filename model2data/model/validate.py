@@ -429,11 +429,33 @@ class _Checks:
         if self.minor not in ("0.2", "0.3", "0.4"):
             self._parent_after_cycles()
         self._suggest_parent_after()
+        self._column_types()
         return self.issues
 
     def add(self, path: list[PathPart], message: str, *, warning: bool = False) -> None:
         severity: Any = "warning" if warning else "error"
         self.issues.append(Issue(format_path(path), message, severity=severity))
+
+    # -- types ---------------------------------------------------------
+    def _column_types(self) -> None:
+        """Warn on a type that is no SQL type, enum or generator: it generates generic text."""
+        from model2data.generate.catalogue import is_sql_type, unknown_type_message
+        from model2data.generate.faker import is_generator_type
+
+        for key, columns in self.columns.items():
+            for name, column in columns.items():
+                type_text = column.get("type")
+                if not isinstance(type_text, str) or not type_text.strip():
+                    continue
+                if self.enum_named(type_text) or is_sql_type(type_text):
+                    continue
+                if is_generator_type(type_text):
+                    continue
+                self.add(
+                    ["tables", key, "columns", name, "type"],
+                    unknown_type_message(type_text.strip()),
+                    warning=True,
+                )
 
     # -- enums ---------------------------------------------------------
     def _creation_column(self, key: str) -> Optional[str]:

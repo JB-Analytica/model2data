@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.22.0] - 2026-11-20
+
+Two things change what a run writes, both on purpose and both listed first. A model that has no
+text key column with a declared length under 36 and no lone `country` column writes the same
+files as 1.21.2 for the same model, seed and `--as-of`.
+
+### Changed
+- **A text key fits its declared length.** A key column typed `VARCHAR(32)`, `char(n)`,
+  `string(n)` and the like used to get 36-character UUIDs, which no such column can hold. Now
+  length 32 gets a UUID without dashes, a shorter length gets that many hex digits (unique and
+  deterministic under the seed), and 36 or more, or no length, is unchanged. Foreign keys still
+  match their parents.
+- **A lone `country` column has no home country unless a locale is set.** The 60% share of the
+  locale's own country applied even when no locale was given, so the default `en_US` wrote
+  "United States" on most rows. It now applies only when the model sets `run.locale` (or the CLI
+  passes `--locale`); with none, countries come from the whole world. A `country` beside a city,
+  street, state or postcode is unchanged: it is that place's country.
+  A lone `country` with no locale draws a different number of random values, so the rest of
+  that run's tables shift too: the bundled ecommerce examples write different files than in 1.21.2.
+
+### Added
+- **The generators a type can name, as data and in the docs.** `model2data.generate.catalogue`
+  holds the grouped catalogue (person, address, company and work, internet, commerce and codes,
+  text, and any Faker provider with no arguments) and the column-name patterns that pick a
+  generator without a type. The spec README has a "Generators" section with the same tables, the
+  name inference rules, what `run.locale` does, and when to use an enum rather than a generator
+  (an enum is a closed list, and the dbt export tests it with `accepted_values`). A test keeps the
+  README and the catalogue in step.
+- **Aliases:** `full_name` and `person_name` are `name`, `company_name` is `company`, and give the
+  same values, including the person coherence within a row.
+- **`validate` warns about a type that is not an SQL type, an enum of the model or a generator**
+  (aliases and any Faker provider with no arguments included): `'compny' is not a generator or an
+  SQL type; it will generate generic text. Did you mean 'company' or 'company_name'?` It is a
+  warning; the document still conforms. The suggestion is the nearest catalogue names, and is left
+  out when none is close.
+
 ## [1.21.2] - 2026-11-20
 
 No change to what a run writes: the same model, seed and `--as-of` write the same files as 1.21.1.

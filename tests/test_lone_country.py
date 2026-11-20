@@ -5,7 +5,7 @@ Since 1.3.0 every row draws one address from a per-table pool, and that
 pool's country is always the locale's own -- right when a sibling
 city/street/state/postcode column needs it to agree, wrong when `country` is
 the only address-shaped column in the table. These tests pin: the mix (a
-majority-but-not-all home-country share, several distinct countries), that a
+majority-but-not-all home-country share when a locale is set, the whole world when none is), that a
 sibling place column switches it back off, that a declared `country` type
 behaves like the name, and that `distinct`/`null_rate`/determinism/locale
 keep working the same way they do everywhere else.
@@ -118,7 +118,7 @@ class TestLoneCountryColumn:
         first_run, second_run = run(), run()
         assert list(first_run["country"]) == list(second_run["country"])
 
-    def test_default_locale_also_produces_a_mix(self):
+    def test_no_locale_draws_from_the_whole_world(self):
         df = generate_data_from_dbml(
             tables={"customers": _customers_table()},
             refs=[],
@@ -127,6 +127,5 @@ class TestLoneCountryColumn:
         )["customers"]
 
         counts = df["country"].value_counts(normalize=True)
-        assert len(counts) >= 5
-        assert 0.5 <= counts.get("United States", 0.0) <= 0.7
-        assert counts.idxmax() == "United States"
+        assert len(counts) >= 50
+        assert counts.max() < 0.2
