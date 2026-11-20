@@ -9,12 +9,12 @@ reachable along one path and be of a kind the compared column can be compared wi
 import jsonschema
 import pandas as pd
 import pytest
+from test_metrics_values import SHOP, _frames
 
 from model2data.metrics import MetricsError, known_values, load, resolve, to_lightdash, to_ossie
 from model2data.metrics import validate as validate_metrics
 from model2data.metrics.sql import ansi, query, quote
 from model2data.model import load as load_model
-from tests.test_metrics_values import SHOP, _frames
 
 HEADER = "model2data-metrics: 0.2.0\nmodel: shop\ninfer: false\nmetrics:\n"
 METRICS = """
