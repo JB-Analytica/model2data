@@ -11,6 +11,7 @@ import pytest
 from faker import Faker
 
 from model2data.generate import catalogue
+from model2data.generate import faker as faker_module
 from model2data.generate.core import generate_data_from_dbml
 from model2data.generate.faker import (
     _NAME_PATTERNS,
@@ -168,6 +169,28 @@ def test_a_close_name_is_suggested_for_a_typo():
 )
 def test_a_legitimate_type_does_not_warn(type_):
     assert validate(_model(c=f'"{type_}"')) == []
+
+
+@pytest.mark.parametrize("type_", ["text", "json", "year"])
+def test_an_sql_type_that_shadows_a_faker_provider_is_not_a_generator(type_):
+    assert not is_generator_type(type_)
+
+
+@pytest.mark.parametrize("type_", ["not-a-name", "_private", "no_such_provider_here"])
+def test_a_type_that_cannot_name_a_provider_is_not_a_generator(type_):
+    assert not is_generator_type(type_)
+
+
+def test_a_provider_without_a_readable_signature_is_not_a_generator(monkeypatch):
+    def unreadable(_callable):
+        raise ValueError("no signature")
+
+    monkeypatch.setattr(faker_module.inspect, "signature", unreadable)
+    assert not is_generator_type("color_name")
+
+
+def test_an_empty_type_reads_as_sql():
+    assert catalogue.is_sql_type("  ")
 
 
 def test_an_enum_of_the_model_is_not_an_unknown_type():

@@ -52,11 +52,6 @@ def current_locale() -> str:
     return _locale
 
 
-def locale_is_set() -> bool:
-    """Whether the current locale was named by the caller rather than defaulted."""
-    return _locale_is_set
-
-
 def set_locale(locale: Optional[str]) -> None:
     """Point generation at a locale, or back at the default when given None.
 
