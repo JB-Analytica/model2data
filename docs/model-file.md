@@ -159,6 +159,75 @@ tables:
 - **Days:** with `--days`, a table with rules and `incremental` is refused: the rules hold for
   the first day's rows only. A rule across a foreign key (`via`) is not supported yet.
 
+## Dates that lie ahead, and values that follow from others
+
+By default every date a model draws falls before the run's `as_of`, so a schedule has nothing to
+stand on. `min` and `max` on a date or timestamp column (spec 0.7.0) set its window, and `derive`
+makes a column the consequence of others:
+
+```yaml
+model2data: 0.7.0
+enums:
+  game_status: [final, scheduled]
+tables:
+  games:
+    rules:
+      - {home_team_id: {ne: {column: away_team_id}}}
+      - {home_score: {ne: {column: away_score}}}
+    columns:
+      id: {type: bigint, pk: true}
+      home_team_id: {type: bigint, not_null: true, references: teams.id}
+      away_team_id: {type: bigint, not_null: true, references: teams.id}
+      tip_off_at:
+        type: timestamp
+        not_null: true
+        generate: {min: "2026-10-02", max: "2027-04-30"}
+      game_date:
+        type: date
+        generate: {derive: {date_of: tip_off_at}}
+      status:
+        type: game_status
+        generate:
+          derive:
+            cases:
+              - {if: {tip_off_at: {lte: {run: as_of}}}, then: final}
+            else: scheduled
+      home_score: {type: int, generate: {min: 55, max: 125, when: {status: [final]}}}
+      away_score: {type: int, generate: {min: 55, max: 125, when: {status: [final]}}}
+      winner_team_id:
+        type: bigint
+        references: teams.id
+        generate:
+          when: {status: [final]}
+          derive:
+            cases:
+              - {if: {home_score: {gt: {column: away_score}}}, then: {column: home_team_id}}
+            else: {column: away_team_id}
+```
+
+Games before the run's day are `final` with scores and a winner; later ones are `scheduled` and
+have none.
+
+- **Windows:** `min` and `max` are ISO 8601 strings and may lie after `as_of`. A date alone as a
+  timestamp's `max` is the end of that day. With one bound alone the other keeps its default
+  (a year for a timestamp, two for a date, up to `as_of`). `growth`, `seasonality` and
+  `business_hours` shape the draw inside the window, and `after` still holds; `validate` reports
+  a `max` before the first day of the column it follows.
+- **`derive`:** `cases` (the first `if` that holds gives the `then`, else the `else`, null when
+  there is none), `copy: column` or `date_of: column`. An `if` is the comparison of a rule, so
+  `{column: ...}` and `{run: as_of}` work; a value is a literal, `{column: x}` or `{run: as_of}`.
+  A derived column draws nothing, is no key and takes no other value hint; a derived foreign
+  key must come from a foreign key onto the same parent.
+- **The order:** every column that is not derived is drawn, then the derived columns and the
+  `when`s that read or are read by them are computed in dependency order, then the rules are met
+  (a rule draws again the columns it reads that are not derived, and the derived columns follow
+  after each round), and the derived columns are computed once more. What a table holds is
+  therefore final: every derived value is its derivation over the final values of its columns,
+  every `when` follows the final values it names, and every rule holds where it can.
+- **Days:** a table with `incremental` that has a derived column or a window cannot be
+  generated with `--days`: the first day's rows only are covered. Nothing may follow a derived
+  column with `after`, and `validate` reports a derivation loop.
+
 ## DBML is supported input
 
 `--file` also takes a `.dbml` file, which model2data converts to the same model before generating

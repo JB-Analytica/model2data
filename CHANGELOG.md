@@ -39,9 +39,39 @@ Models and metrics files that use none of what is added here read and generate e
   says `model2data-metrics: 0.2.0`; one that says 0.1.0 and uses it is an error, and a 0.1.0
   file reads as before. `metric_values.json` says `0.2.0` only when a metric uses it.
 
+- **`derive`: a column computed from other columns of its row (model spec 0.7.0).** `cases`
+  (`if` is the comparison of a rule, `then` and `else` a literal, `{column: x}` or `{run: as_of}`;
+  the first case that holds gives the value, null when none does and there is no `else`), `copy:
+  column` and `date_of: column`. A derived column draws nothing, so no stream moves. It composes
+  with `when` (which says where it is null), and a foreign key can be derived from another
+  foreign key onto the same parent (the winner of a game is its home or away team). A table is now
+  settled in an order that makes the final rows agree: columns that are not derived are drawn,
+  derived columns and the `when`s they read or that read them are computed in dependency order,
+  the cross-table `after` is held and the rules are met (a rule redraws only columns that are not
+  derived, and the derived columns and `when`s are computed again after each round), and last
+  everything derived is computed once more. A rollup over a derived column adds up its final
+  values. `validate` reports a derived key, a value hint beside `derive`, a loop (a `when` that
+  names a derived column included), a `then` or `else` that is not a value of the column, a
+  column of a kind that cannot go into it, `date_of` on something that is not a timestamp or into
+  something that is not a date, a column that does not exist, a derivation reading a rollup, an
+  `after` naming a derived column and a rule reading only derived columns. A table with a
+  derived column and `incremental` is refused with `--days`.
+- **Windows on dates (model spec 0.7.0): `min` and `max` on a date or timestamp column.** ISO 8601
+  strings that may lie after `as_of`, so a season can run past the run's day:
+  `generate: {min: "2026-10-02", max: "2027-04-30"}`. With one bound the other keeps its
+  default; a date alone as a timestamp's `max` is the end of that day. `growth`, `seasonality`
+  and `business_hours` shape the draw inside the window, and `after` holds: a column follows
+  another up to its own `max`, a child follows a parent's date after `as_of`, and one with no
+  window of its own lands within 30 days after a date after `as_of`. `validate` reports an
+  unparseable date, a `min` after the `max`, a number on a date column, a date on a numeric one
+  and a `max` before the first day of the column it follows. A table with a window and
+  `incremental` is refused with `--days`.
+
 ### Changed
 - `validate` reads model spec 0.7.0 (0.2 to 0.6 documents as before) and metrics spec 0.2.0
   (0.1 files as before), and prints the version a metrics file says.
+- A `when` may sit on a foreign key that is derived (it holds another column's value, so a
+  row's parent still does not depend on it); on any other foreign key it is still an error.
 
 ## [1.22.0] - 2026-11-20
 

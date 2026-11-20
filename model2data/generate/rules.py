@@ -37,7 +37,7 @@ table with them changes only in the rows they redraw.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import datetime
 from typing import Optional
 
@@ -100,13 +100,16 @@ def apply_rules(
     run_anchor: datetime,
     time_profile: Optional[TimeProfile],
     skew: float,
+    refresh: Optional[Callable[[pd.DataFrame], None]] = None,
 ) -> pd.DataFrame:
     """`df` with the rows that break one of the table's rules drawn again until none does.
 
     `fk_pools` maps each foreign-key column to the parent values it draws from (None
     for one with no parent rows: it is not drawn again), `locked` names the columns that must not be
     drawn again, `seed` seeds the rules' own stream (None leaves it to chance) and
-    `run_anchor` is the value of `{run: as_of}`.
+    `run_anchor` is the value of `{run: as_of}`. `refresh(df)`, given when the table has
+    derived columns, brings them (and the `when`s that read them) up to date in place after a
+    round that drew values again, so the next round reads what the columns hold.
     """
     found = comparisons(table_def)
     if not found:
@@ -152,6 +155,8 @@ def apply_rules(
                 drawn = True
             if not drawn:
                 break
+            if refresh is not None:
+                refresh(df)
     for rule, comparison in found:
         left = len(offending(comparison))
         if left:

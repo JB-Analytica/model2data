@@ -94,6 +94,7 @@ from model2data.generate.relationships import build_fk_lookup, classify_refs
 from model2data.generate.rollups import rollups_of
 from model2data.generate.timeline import HOUR_WEIGHTS, _build_dependencies, _topological_order
 from model2data.generate.when import SeedFor, apply_when, end_of_day, update_when
+from model2data.generate.windows import has_window
 from model2data.model.engine import EngineInputs, to_engine
 from model2data.model.types import Incremental, Model, Shape
 from model2data.parse.dbml import ColumnDef, TableDef
@@ -223,6 +224,7 @@ def iter_days(
     if days:
         _check_rollups(tables, refs, incremental)
         _check_rules(tables, incremental)
+        _check_derived_and_windows(tables, incremental)
 
     frames = generate_data_from_dbml(
         tables,
@@ -314,6 +316,35 @@ def _check_rules(tables: Mapping[str, TableDef], incremental: Mapping[str, Incre
                 "which draws rows on the days after it without them: generate without days, "
                 "or drop the rules."
             )
+
+
+def _check_derived_and_windows(
+    tables: Mapping[str, TableDef], incremental: Mapping[str, Incremental]
+) -> None:
+    """Refuse days after the first where a table with `derive` or a date window moves.
+
+    A derived column is computed for the first day's rows (see generate.derive), and a
+    window (`min`/`max` on a date or timestamp) places the first day's values: a day that
+    inserts rows of such a table draws them on the day, without either.
+    """
+    for key, table in tables.items():
+        inc = incremental.get(key)
+        if inc is None or not ((inc.new_per_day or 0) or (inc.update_rate or 0)):
+            continue
+        for column in table.columns:
+            note = column.note or {}
+            if "derive" in note:
+                raise ValueError(
+                    f'{key}.{column.name}: "derive" holds for the first day\'s rows, and {key} '
+                    "has `incremental`, which draws rows on the days after it without it: "
+                    "generate without days, or drop the derivation."
+                )
+            if has_window(note):
+                raise ValueError(
+                    f'{key}.{column.name}: "min"/"max" place the first day\'s dates, and {key} '
+                    "has `incremental`, whose rows fall on the days after it: generate without "
+                    "days, or drop the window."
+                )
 
 
 def _check_incremental(table: TableDef, inc: Incremental) -> None:

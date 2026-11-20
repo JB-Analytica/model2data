@@ -279,6 +279,17 @@ rounds; a foreign key still names a parent; keys, rollups and a column a `when` 
 alone); a row where a column the rule reads is null is not held to it; a rule the values cannot
 meet is listed in the summary. A table with rules and `incremental` cannot run with `--days`.
 
+**Values that follow from other columns (YAML, spec 0.7.0).** A column's `generate: {derive: ...}`
+computes it from the row's other columns and draws nothing: `{date_of: tip_off_at}` (a timestamp's
+date), `{copy: other}`, or `cases: [{if: {home_score: {gt: {column: away_score}}}, then: {column:
+home_team_id}}]` with an `else` (null when left out); a value is a literal, `{column: x}` or
+`{run: as_of}`. With `when` it is null where `when` says. A foreign key is derived only from another
+foreign key onto the same parent. The result holds every derivation over the final values of its
+columns, even after a rule redrew one of them. Not a key, no `min`/`max`/`weights`/`after`/... beside it.
+`min` and `max` on a date or timestamp column (ISO strings, spec 0.7.0) fix its window and may lie
+after `as_of`: `generate: {min: "2026-10-02", max: "2027-04-30"}`; `growth`, `seasonality`,
+`business_hours` and `after` act inside it. Neither works on a table with `incremental` and `--days`.
+
 **Use composite keys for join/bridge tables and multi-column uniqueness**, via an `indexes { }`
 block:
 ```dbml

@@ -48,14 +48,14 @@ import random
 from bisect import bisect_right
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 from itertools import accumulate
 from typing import Optional
 
 import numpy as np
 import pandas as pd
 
-from model2data.generate import kinds
+from model2data.generate import kinds, windows
 from model2data.generate.faker import _DATE_WINDOW_YEARS, _column_time_profile, _years_before
 from model2data.generate.options import UNIFORM, TimeProfile
 from model2data.generate.relationships import _key_kind
@@ -359,7 +359,18 @@ class _Window:
         self.kind = kind
         self.business_hours = column_business_hours(column, time_profile)
         profile = _column_time_profile(column, time_profile) or UNIFORM
-        if kind == "date":
+        cap = datetime(anchor.year, anchor.month, anchor.day)
+        if windows.has_window(column.note):
+            # A column with `min`/`max` is placed inside its own window (generate.windows).
+            first, last = windows.window(column.note, kind, anchor)
+            start = first.date()
+            end = (
+                (last - timedelta(seconds=1)).date()
+                if kind == "timestamp" and last.time() == time.min and last > first
+                else last.date()
+            )
+            cap = last
+        elif kind == "date":
             start = _years_before(anchor, _DATE_WINDOW_YEARS)
             end = anchor
         else:
@@ -371,7 +382,7 @@ class _Window:
         self.added_up = list(accumulate(weights))
         self.weights = weights
         # A timestamp's window ends at midnight of the anchor, a date's on the anchor.
-        self.cap = datetime(anchor.year, anchor.month, anchor.day)
+        self.cap = cap
 
     def draw(self, lower: datetime) -> datetime:
         """A moment on or after `lower` in the window, in the column's shape."""
@@ -380,7 +391,9 @@ class _Window:
         return self._timestamp(lower)
 
     def _date(self, lower: datetime) -> datetime:
-        # A parent is never dated after the anchor, so `first` is inside the window.
+        if lower.date() > self.days[-1]:
+            return datetime(lower.year, lower.month, lower.day)  # after a window that ends sooner
+        # A parent is never dated after the anchor (or its window), so `first` is inside it.
         first = min(max(0, (lower.date() - self.start).days), len(self.days) - 1)
         before = self.added_up[first - 1] if first else 0.0
         point = before + random.random() * (self.added_up[-1] - before)
@@ -396,7 +409,7 @@ class _Window:
             return lower
         # Only a row dated before its parent moves, and it is dated inside the
         # window, so the parent is too: `first` is never before the window.
-        first = (lower.date() - self.start).days
+        first = max(0, (lower.date() - self.start).days)
         offset = lower.hour * 3600 + lower.minute * 60 + lower.second
         first_share = self.weights[first] * self._share_after(offset)
         rest = self.added_up[-1] - self.added_up[first]

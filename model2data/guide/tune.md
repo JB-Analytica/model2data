@@ -63,7 +63,7 @@ columns. Add `not_null` to every column that must always have a value.
   `references`, `measure`, `generate`.
 - `generate`: `min`, `max`, `distribution`, `null_rate`, `weights`, `true_rate`,
   `distinct`, `skew`, `after`, `business_hours`, `growth`, `seasonality`, `transitions`,
-  `when`, `rollup`, `at_least`.
+  `when`, `rollup`, `at_least`, `derive`.
 - Table: `columns`, `description`, `color`, `role`, `grain`, `keys`, `foreign_keys`,
   `incremental`, `rules`, `defects`.
 - Top level: `model2data` (spec version), `name`, `description`, `enums`, `tables`,
@@ -176,6 +176,26 @@ key still names a parent), up to 20 rounds; a rule a column's value space cannot
 in the summary. A row where a column the rule reads is null is not held to it. Keys, rollups and
 a column a `when` names are not drawn again. A rule across a foreign key (`via`) is not supported
 yet, and a table with rules and `incremental` cannot run with `--days`.
+
+`min` and `max` on a date or timestamp column (spec 0.7.0) are ISO strings that fix the window its
+values fall in, and may lie after the run's `as_of`: `tip_off_at: {type: timestamp, generate: {min:
+"2026-10-02", max: "2027-04-30"}}` schedules a season past today. A date alone as a timestamp's
+`max` is the end of that day; with one bound alone the other keeps its default (up to `as_of`).
+`growth`, `seasonality` and `business_hours` shape the draw inside the window, and `after` still
+holds. A table with a window and `incremental` cannot run with `--days`.
+
+`derive` (spec 0.7.0) makes a column a consequence of others of its row, drawing nothing:
+`game_date: {type: date, generate: {derive: {date_of: tip_off_at}}}`, `copy: other_column`, or
+`cases`, the first `{if: <comparison>, then: <value>}` that holds on the row giving the value and
+`else` the value when none does (null when left out); a value is a literal, `{column: x}` or
+`{run: as_of}`, as in `status: {type: game_status, generate: {derive: {cases: [{if: {tip_off_at:
+{lte: {run: as_of}}}, then: final}], else: scheduled}}}`. With `when`, `when` says where it is
+null. A derived foreign key must come from another foreign key onto the same parent
+(`winner_team_id` from `home_team_id` or `away_team_id`). It is no key and takes no other value
+hint, nothing reads it with `after`, and derivations do not read each other in a loop. The table
+holds every derived value over the final values of the columns it reads, every `when` over the
+final values of what it names, and every rule that can be met; a table with `derive` and
+`incremental` cannot run with `--days`.
 
 A reference onto a parent's plain column next to a foreign key to the same parent
 (`unit_price: {references: products.price}` beside `product_id: {references: products.id}`)

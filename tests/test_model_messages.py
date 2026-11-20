@@ -214,7 +214,7 @@ TWO = {"a": "integer", "b": "integer"}
         ),
         pytest.param(
             _column({"type": "integer", "generate": {"min": {"a": 1}}}),
-            "tables.t.columns.x.generate.min: must be a number, not a mapping",
+            "tables.t.columns.x.generate.min: must be a number or a string, not a mapping",
             id="mapping",
         ),
         pytest.param(

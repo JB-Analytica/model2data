@@ -113,11 +113,12 @@ uses either says `model2data: 0.6.0`, and either in a document that says an earl
 an error. A writer writes the version the document was read with, and 0.6.0 once it uses either.
 
 0.7.0 adds a table's [`rules`](#rules) and the [comparison grammar](#comparisons) they are
-written in, and nothing else so far: a 0.2 to 0.6 document is a 0.7.0 document that uses none
-of it, and reads as it always read. A document that uses `rules` says `model2data: 0.7.0`, and
-`rules` in a document that says an earlier version is an error. A writer writes the version the
-document was read with, and 0.7.0 once it uses `rules`. The metrics spec's `{column: ...}`
-operand, which uses the same grammar, is metrics spec 0.2.0.
+written in, a column's [`derive`](#derived-columns), and [`min` and `max` on a date or
+timestamp column](#date-windows), and nothing else so far: a 0.2 to 0.6 document is a 0.7.0
+document that uses none of it, and reads as it always read. A document that uses any of them
+says `model2data: 0.7.0`, and any of them in a document that says an earlier version is an
+error. A writer writes the version the document was read with, and 0.7.0 once it uses one. The
+metrics spec's `{column: ...}` operand, which uses the same grammar, is metrics spec 0.2.0.
 
 0.2.0 replaced 0.1.0, which carried hints as JSON inside DBML notes. See
 [From 0.1](#from-01).
@@ -335,6 +336,134 @@ matching rows the column is generated as it would be without `when`, and none of
 unless the column has a `null_rate`, which then counts only those rows. How the values a model
 without `when` generates are kept is the engine's (see `model2data.generate.when`).
 
+#### Date windows
+
+Every date a column draws falls in the two years up to the run's `as_of`, and every timestamp in
+the year up to it, so by default nothing is dated after the run's day. `min` and `max` on a
+date or timestamp column (spec 0.7.0) take ISO 8601 strings, a date (`2026-10-02`) or a
+timestamp (`2026-10-02 18:30:00`) with no time zone, and may lie after `as_of`:
+
+```yaml
+games:
+  columns:
+    tip_off_at:
+      type: timestamp
+      generate: {min: "2026-10-02", max: "2027-04-30"}   # a season that runs past the run's day
+```
+
+- **Both given:** values fall between them, ends included. A date alone as the `max` of a timestamp
+  column is the end of that day (`23:59:59`), so the 30th above is a day games are played on; a
+  date column holds the days from `min` to `max`.
+- **One alone:** the other end keeps its default. With only `min`, the window runs to `as_of`,
+  and a `min` on or after `as_of` (nothing left of the default window) gives a window of the
+  default's length, a year for a timestamp and two for a date, starting at `min`. With only
+  `max`, the window starts where the default one does, and a `max` on or before that start gives
+  the default's length ending at `max`.
+- **Shape:** `growth`, `seasonality` and `business_hours` (the run's, or the column's own) shape the
+  draw inside the window: growth runs from the window's first day to its last, the season peaks
+  where the calendar puts it, and business hours thin out weekends and nights.
+- **`after` still holds.** A column that follows another is placed after it and no later than
+  its own `max` (a `max` leaves it in the window), and a child follows a parent's date, even
+  one after `as_of`. A column with no window of its own that follows a date after `as_of` lands
+  within 30 days after it. The reader refuses a `max` that lies before the first day of what the
+  column follows (by their windows, with the run's `as_of` where a window leans on it).
+- **Days:** a table with `incremental` that inserts or updates rows after the first day is
+  refused when days are generated if it has a window: the window places the first day's rows.
+  A table that does not move may have windows.
+- A window is checked: `min` and `max` are ISO 8601 strings, `min` is not after `max`, a number on
+  a date column and a date on a numeric one are errors.
+
+### Derived columns
+
+`derive` (spec 0.7.0) makes a column the value of an expression over other columns of its row,
+so a value that is a consequence of others cannot disagree with them. A derived column draws
+nothing: no random draw is made for it, so it never moves another column's stream.
+
+```yaml
+games:
+  columns:
+    tip_off_at: {type: timestamp, not_null: true, generate: {min: "2026-10-02", max: "2027-04-30"}}
+    game_date:                                   # the date part of a timestamp
+      type: date
+      generate: {derive: {date_of: tip_off_at}}
+    status:                                      # an enum, from the date and the run's day
+      type: game_status
+      generate:
+        derive:
+          cases:
+            - if: {tip_off_at: {lte: {run: as_of}}}
+              then: final
+          else: scheduled
+    home_score: {type: int, generate: {min: 55, max: 125, when: {status: [final]}}}
+    away_score: {type: int, generate: {min: 55, max: 125, when: {status: [final]}}}
+    winner_team_id:
+      type: bigint
+      references: teams.id
+      generate:
+        when: {status: [final]}
+        derive:
+          cases:
+            - if: {home_score: {gt: {column: away_score}}}
+              then: {column: home_team_id}
+          else: {column: away_team_id}
+```
+
+A derivation is one of:
+
+| Form | The column holds |
+|------|-------------------|
+| `cases: [{if, then}, ...]` and `else` | the `then` of the first case whose `if` holds on the row; the `else` when none does, null when it is left out |
+| `copy: column` | the row's value of that column |
+| `date_of: column` | the date part of that timestamp column |
+
+An `if` is a [comparison](#comparisons) with one or more columns, every one of which must hold; a
+null makes a comparison false, as there. A `then` and an `else` are a literal valid for the
+column (a member of its enum, a number, a date string), `{column: other}` (the row's value of
+that column) or `{run: as_of}` (the run's anchor, into a date or timestamp column).
+
+- **`when` composes.** `when` decides where the column is null, and `derive` what it holds
+  where it is not: above, a scheduled game has no winner.
+- **A foreign key** may be derived, from another column of the row that is itself a foreign key
+  onto the same parent (the winner is the home or the away team, each a team): the value always
+  names a row of the parent. A literal cannot be a foreign key's value.
+- **Not a key, and no other value hint.** A column that is `pk`, `unique` or in a key, or has
+  `min`, `max`, `distribution`, `weights`, `null_rate`, `distinct`, `true_rate`, `skew`, `after`,
+  `growth`, `seasonality`, `business_hours`, `transitions`, `rollup` or `at_least`, cannot be
+  derived. Its type is its type: a generator type is ignored, as nothing is drawn.
+- **Kinds.** A value goes into a column of its own kind: a number into a number (an integer into a
+  decimal), an enum into a column of the same enum (or of text), a date into a date, a timestamp
+  into a timestamp (`date_of` takes a timestamp's date), text into text, a boolean into a
+  boolean.
+- **No loops.** A derived column that reads itself, directly or through other derived columns
+  or a `when` that names one, is an error; so is one that reads a rollup (a rollup is computed
+  after every table), and a column that follows a derived one with `after` (a derived column is
+  computed after the row's dates are placed): follow what it is derived from instead.
+- **A table with `incremental`** that inserts or updates rows after the first day is refused when
+  days are generated if it has a derived column, as it is with `rules`.
+
+**The order within a table.** A table is generated in this order, and the order is the
+guarantee: when it is done the rows satisfy all of the following.
+
+1. Every column that is not derived is drawn, then the dates of a row are put in order
+   (`after` and the stages of a name), keys are repaired and a parent's attributes copied.
+2. The derived columns are computed in dependency order (a derived column may read another), and
+   each `when` is applied where the columns it names hold what the derivation gave. A `when`
+   column that a derived column reads is applied before it, so a derivation reads the nulls
+   that `when` left.
+3. A date that follows a parent's date (`after: parent.column`) is held, and the table's
+   [rules](#rules) are met. A rule redraws only columns that are not derived (and none of those
+   it leaves alone, see [Rules](#rules)), so it redraws the inputs of a derivation; after every round the derived columns
+   and the `when`s are computed again, so the rule reads what its columns hold.
+4. The derived columns and the `when`s are computed once more, so that what the table holds is final.
+
+Therefore **(1)** every derived value is its derivation over the final values of the columns
+it reads, **(2)** every `when` is applied to the final values of the columns it names, derived
+ones included, and **(3)** every rule holds wherever its columns can be redrawn. A rule that
+reads only derived columns is an error, as nothing could be drawn again to meet it; one that
+reads a derived column and another is met by redrawing the other, and the derived column
+follows. A rollup is computed after every table from the final rows, so a rollup over a
+derived column adds up its final values.
+
 ### Rollups
 
 `rollup` (spec 0.6.0) makes a parent's column the aggregate of its child rows, so a total
@@ -477,6 +606,10 @@ drawn again, until the rule holds:
   when days are generated: the rules hold for the first day's rows only.
 
 A rule across a foreign key (`{column: x, via: y}`) is not supported yet, and is an error.
+
+A rule may read a [derived column](#derived-columns), which it never draws again: it draws again
+the other column of the rule, or an input of a derivation, and the derived columns are computed
+again after each round. A rule that reads only derived columns is an error.
 
 ### Modelling
 
@@ -668,7 +801,7 @@ reports each failure with the path of the value (`tables.orders.columns.status.g
 13. `defects`, `run.defects` and `incremental.history` only in a document of spec 0.3.0 or
     later, `when` only in a document of spec 0.4.0 or later, a list or a parent's column in
     `after` only in one of 0.5.0 or later, `rollup` and `at_least` only in one of 0.6.0 or
-    later, and `rules` only in one of 0.7.0 or later.
+    later, and `rules`, `derive` and a date `min` or `max` only in one of 0.7.0 or later.
 14. Every defect has exactly one of `count` and `share`, names a column of its table, and gives a
     `type` and `column` no other entry of the table gives. `duplicate_keys` names a primary key
     or a unique column, or its table has a primary key; when `run` gives the table's rows, its
@@ -706,6 +839,21 @@ reports each failure with the path of the value (`tables.orders.columns.status.g
     generation hints make impossible is an error: `ne`, `gt` or `lt` between a column and
     itself, and a comparison between numeric columns (or a column and a literal) whose `min` and
     `max` leave no room for it (`gt` where the left column's `max` is below the right's `min`).
+20. A [`derive`](#derived-columns) has exactly one of `cases`, `copy` and `date_of`, is not on a
+    primary key, a unique column or a column of a key, and sits beside none of the hints that
+    decide a value. Every column it names is a column of its table other than a rollup and the
+    column itself. Each `if` is a comparison that passes check 19's rules for a rule; each `then`,
+    `else` and `copy` value fits the column (a member of its enum, a number, an ISO 8601 date, a
+    column of a kind that goes into it, `{run: as_of}` into a date or timestamp column, a foreign
+    key only a foreign key onto the same parent); `date_of` takes a timestamp column into a date
+    column; derived columns do not read each other in a loop, a `when` that names one included;
+    no `after` names a derived column; and no rule reads only derived columns.
+21. `min` and `max` on a date or timestamp column are ISO 8601 date or timestamp strings with no
+    time zone, `min` is not after `max`, and a column that follows another with `after` does
+    not have a `max` before the first day of the other (by their windows, the run's `as_of`
+    standing in for a default one where the document gives it). On a numeric column they are
+    numbers. `derive`, and a `min` or `max` on a date or timestamp column, only in a document of
+    spec 0.7.0 or later.
 
 ### Warnings
 

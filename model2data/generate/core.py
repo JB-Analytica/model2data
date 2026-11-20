@@ -10,6 +10,7 @@ from typing import Any, Optional
 import pandas as pd
 from faker import Faker
 
+from model2data.generate.derive import has_derived, is_derived, settle
 from model2data.generate.faker import (
     AsOf,
     generate_column_values,
@@ -309,6 +310,10 @@ def generate_data_from_dbml(
         # First pass: columns + FKs
         # -----------------------
         for column in table_def.columns:
+            if is_derived(column):
+                # Computed from the other columns once they are final: draws nothing.
+                data[column.name] = [None] * row_count
+                continue
             fk_series = None
             fk_target = fk_lookup.get((table_name, column.name))
 
@@ -392,14 +397,33 @@ def generate_data_from_dbml(
 
         # `when` last, once every column it reads holds its final value, and
         # from streams of its own: see generate.when.
-        apply_when(
-            df,
-            table_def,
-            cap=_midnight(as_of),
-            seed_for=_when_seed(seed, table_name, table_seeds),
-            as_of=as_of,
-            time_profile=profile,
-        )
+        when_seed = _when_seed(seed, table_name, table_seeds)
+        derived = has_derived(table_def)
+
+        def settle_table(frame: pd.DataFrame, *, table_def=table_def, when_seed=when_seed) -> None:
+            settle(
+                frame,
+                table_def,
+                run_anchor=_midnight(as_of),
+                cap=_midnight(as_of),
+                seed_for=when_seed,
+                as_of=as_of,
+                time_profile=profile,
+            )
+
+        if derived:
+            # Derived columns and the `when`s that read or are read by them, in dependency
+            # order, then again once the rest of the table is final (generate.derive).
+            settle_table(df)
+        else:
+            apply_when(
+                df,
+                table_def,
+                cap=_midnight(as_of),
+                seed_for=when_seed,
+                as_of=as_of,
+                time_profile=profile,
+            )
         if table_rules:
             df = _hold_parent_rules(df, table_def, table_rules, generated, as_of, profile)
         if table_def.rules:
@@ -422,7 +446,12 @@ def generate_data_from_dbml(
                 run_anchor=_midnight(as_of),
                 time_profile=profile,
                 skew=skew,
+                refresh=settle_table if derived else None,
             )
+        if derived:
+            # The last word: a date a parent's `after` moved or a column a rule redrew
+            # may be what a derived column or a `when` reads.
+            settle_table(df)
 
         df = _coerce_integer_dtypes(df, table_def)
         generated[table_name] = df
@@ -435,6 +464,8 @@ def generate_data_from_dbml(
     # after them, so they are drawn now, from the rows it ended up holding.
     # ---------------------------------------------------------
     for table_name, column in _deferred_fk_columns(tables, fk_refs, deferred_edges):
+        if is_derived(column):
+            continue  # holds what its derivation said (generate.derive)
         table_def = tables[table_name]
         parent_table, parent_column = fk_lookup[(table_name, column.name)]
         if seed is not None:
@@ -647,6 +678,7 @@ def _rule_locked_columns(
         if "pk" in column.settings
         or "unique" in column.settings
         or "rollup" in (column.note or {})
+        or is_derived(column)
         or at_least_of(column)
     }
     for key in table_def.composite_keys:

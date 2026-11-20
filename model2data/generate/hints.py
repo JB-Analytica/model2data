@@ -35,7 +35,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from model2data.generate import kinds, rollups
+from model2data.generate import derive, kinds, rollups, windows
 from model2data.generate.parents import parent_link
 from model2data.generate.relationships import build_fk_lookup, classify_refs
 from model2data.generate.timeline import parent_after
@@ -92,6 +92,12 @@ def validate_hints(tables: Mapping[str, TableDef], refs: list[dict]) -> None:
                     raise ValueError(
                         f'{table_name}.{column.name}: "after" names {".".join(entry)}, {reason}.'
                     )
+
+    for table_name, table_def in tables.items():
+        for column, message in derive.problems(table_def):
+            raise ValueError(f"{table_name}.{column.name}: {message}")
+        for column in table_def.columns:
+            _check_window(f"{table_name}.{column.name}", column)
 
     for problem in rollups.problems(tables, refs):
         if not problem.warning:
@@ -217,7 +223,7 @@ def _validate_column_hints(
         _check_fraction(label, "seasonality", note["seasonality"])
 
     if "when" in note:
-        if not is_nullable or is_fk or is_unique:
+        if not is_nullable or (is_fk and "derive" not in note) or is_unique:
             raise ValueError(
                 f'{label}: "when" needs a nullable column that is not a key, unique or a '
                 "foreign key."
@@ -248,6 +254,33 @@ def _validate_column_hints(
             _check_number(label, param_key, note[param_key])
         else:
             _check_positive_number(label, param_key, note[param_key])
+
+
+def _check_window(label: str, column: ColumnDef) -> None:
+    """`min` and `max` on a date or timestamp column are ISO 8601 strings in order; on a
+    numeric one they are numbers."""
+    note = column.note if isinstance(column.note, dict) else {}
+    kind = None if column.enum_values else kinds.temporal_kind(column.data_type)
+    if kind is None:
+        if not column.enum_values and kinds.is_numeric_type(column.data_type):
+            for bound in ("min", "max"):
+                if isinstance(note.get(bound), str):
+                    raise ValueError(
+                        f'{label}: "{bound}" must be a number on a numeric column '
+                        f"(got {note[bound]!r})."
+                    )
+        return
+    for bound in ("min", "max"):
+        if bound not in note:
+            continue
+        if windows.parse_bound(note[bound]) is None:
+            raise ValueError(
+                f'{label}: "{bound}" must be an ISO 8601 date or timestamp string on a '
+                f"{kind} column (got {note[bound]!r})."
+            )
+    low, high = windows.bounds(note, kind)
+    if low is not None and high is not None and low > high:
+        raise ValueError(f'{label}: "min" {note["min"]!r} is after "max" {note["max"]!r}.')
 
 
 def _check_fraction(label: str, key: str, value: object) -> None:

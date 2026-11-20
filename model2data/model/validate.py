@@ -16,6 +16,7 @@ from __future__ import annotations
 import difflib
 import json
 from collections.abc import Mapping
+from datetime import date
 from functools import lru_cache
 from importlib import resources
 from typing import Any, Optional, Union
@@ -25,7 +26,8 @@ from jsonschema.exceptions import ValidationError
 
 from model2data.dbt.naming import dbt_identifier
 from model2data.generate import comparison as cmp
-from model2data.generate import kinds
+from model2data.generate import kinds, windows
+from model2data.generate.derive import CONFLICTS as DERIVE_CONFLICTS
 from model2data.generate.timeline import creation_column_name
 from model2data.model.errors import Issue, PathPart, Suggestion, format_path
 
@@ -405,6 +407,67 @@ def _member_text(member: Any) -> str:
     return str(member) if isinstance(member, int) and not isinstance(member, bool) else member
 
 
+def _derive_reads(derive: Mapping) -> list[str]:
+    """The columns a `derive` hint reads, as the document wrote it."""
+    found: list[str] = []
+    for form in ("copy", "date_of"):
+        if isinstance(derive.get(form), str):
+            found.append(derive[form])
+    values = [derive.get("else")]
+    cases = derive.get("cases")
+    for case in cases if isinstance(cases, list) else []:
+        if not isinstance(case, Mapping):
+            continue
+        values.append(case.get("then"))
+        if isinstance(case.get("if"), Mapping):
+            for name, condition in case["if"].items():
+                if isinstance(name, str) and not name.startswith("x-"):
+                    found.append(name)
+                if isinstance(condition, Mapping):
+                    for operator, operand in condition.items():
+                        if operator in cmp.VALUE_OPERATORS:
+                            other = cmp.column_operand(operand)
+                            if other is not None:
+                                found.append(other)
+    for value in values:
+        other = cmp.column_operand(value)
+        if other is not None:
+            found.append(other)
+    return found
+
+
+def _can_go(src: cmp.Typed, dst: cmp.Typed) -> Optional[str]:
+    """Why a column of kind `src` cannot be the value of one of kind `dst`, else None."""
+    if src.kind == dst.kind:
+        if src.kind == "enum" and src.enum != dst.enum:
+            return (
+                f"{src.name} is typed {src.enum}, and the column is typed {dst.enum}: an enum "
+                "goes only into a column of its own type"
+            )
+        return None
+    if src.kind == "integer" and dst.kind == "decimal":
+        return None
+    if src.kind == "enum" and dst.kind == "text":
+        return None
+    hint = ""
+    if src.kind == "timestamp" and dst.kind == "date":
+        hint = ": `date_of` takes its date"
+    return f"{src.name} is {src.words}, and the column is {dst.words}: it cannot be its value{hint}"
+
+
+def _as_of(document: Mapping) -> Optional[date]:
+    """The day the document's `run` anchors on, None when it leaves it to the reader."""
+    value = _mapping(document.get("run")).get("as_of")
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        try:
+            return date.fromisoformat(value)
+        except ValueError:
+            return None
+    return None
+
+
 class _Checks:
     def __init__(self, document: Mapping):
         self.document = document
@@ -418,6 +481,7 @@ class _Checks:
                 self.enums[name] = [_member_text(member) for member in members]
         self.issues: list[Issue] = []
         self.minor = _minor(document.get("model2data"))
+        self.anchor = _as_of(document)
         self.fk_columns: dict[str, set] = {}
 
     def run(self) -> list[Issue]:
@@ -591,6 +655,7 @@ class _Checks:
                 in_key=name in in_any_key,
             )
         self._after_cycles(key, columns)
+        self._derive_cycles(key)
         self._grain_and_incremental(key, table, columns)
         if "rules" in table:
             self._rules(key, table)
@@ -634,37 +699,74 @@ class _Checks:
             return  # the schema has said so
         if rules:
             self._needs_0_7(base, "rules")
-        columns = self.columns[key]
         for index, rule in enumerate(rules):
-            if not isinstance(rule, Mapping):
+            if isinstance(rule, Mapping):
+                self._comparison_mapping(key, rule, [*base, index], "a rule")
+                self._rule_redrawable(key, rule, [*base, index])
+
+    def _comparison_mapping(self, key: str, mapping: Mapping, base: list[PathPart], what: str):
+        """Check one comparison mapping, `{column: condition}`, of a rule or a derivation's `if`."""
+        columns = self.columns[key]
+        for name, condition in mapping.items():
+            if isinstance(name, str) and name.startswith("x-"):
                 continue
-            for name, condition in rule.items():
-                if isinstance(name, str) and name.startswith("x-"):
-                    continue
-                at: list[PathPart] = [*base, index, name]
-                if name not in columns:
-                    close = difflib.get_close_matches(str(name), list(columns), n=1)
-                    self.add(
-                        at,
-                        f"names {_show(name)}, which is not a column of {key}"
-                        + (f" (did you mean {close[0]}?)" if close else ""),
-                    )
-                    continue
-                if isinstance(condition, Mapping):
-                    items = [
-                        (op, operand, [*at, op])
-                        for op, operand in condition.items()
-                        if not str(op).startswith("x-")
-                    ]
-                elif isinstance(condition, list):
-                    items = [("in", condition, at)]
-                else:
-                    items = [("eq", condition, at)]
-                for operator, operand, where in items:
-                    self._rule_comparison(key, name, operator, operand, where)
+            at: list[PathPart] = [*base, name]
+            if name not in columns:
+                close = difflib.get_close_matches(str(name), list(columns), n=1)
+                self.add(
+                    at,
+                    f"names {_show(name)}, which is not a column of {key}"
+                    + (f" (did you mean {close[0]}?)" if close else ""),
+                )
+                continue
+            if isinstance(condition, Mapping):
+                items = [
+                    (op, operand, [*at, op])
+                    for op, operand in condition.items()
+                    if not str(op).startswith("x-")
+                ]
+            elif isinstance(condition, list):
+                items = [("in", condition, at)]
+            else:
+                items = [("eq", condition, at)]
+            for operator, operand, where in items:
+                self._rule_comparison(key, name, operator, operand, where, what)
+
+    def _rule_redrawable(self, key: str, rule: Mapping, at: list[PathPart]) -> None:
+        """A rule is met by drawing a column it reads again, and a derived column is not drawn."""
+        columns = self.columns[key]
+        derived = {
+            name for name, column in columns.items() if "derive" in _mapping(column.get("generate"))
+        }
+        if not derived:
+            return
+        for name, condition in rule.items():
+            if name not in columns or (isinstance(name, str) and name.startswith("x-")):
+                continue
+            read = [name]
+            if isinstance(condition, Mapping):
+                for operator, operand in condition.items():
+                    if operator in cmp.VALUE_OPERATORS:
+                        other = cmp.column_operand(operand)
+                        if other is not None and other in columns:
+                            read.append(other)
+            if all(item in derived for item in read):
+                names = ", ".join(dict.fromkeys(read))
+                self.add(
+                    [*at, name],
+                    f"reads only derived columns ({names}), which a rule cannot draw again: "
+                    "make the rule read a column the derivation reads, or state it in the "
+                    "derivation",
+                )
 
     def _rule_comparison(
-        self, key: str, name: str, operator: str, operand: Any, at: list[PathPart]
+        self,
+        key: str,
+        name: str,
+        operator: str,
+        operand: Any,
+        at: list[PathPart],
+        what: str = "a rule",
     ) -> None:
         columns = self.columns[key]
         if isinstance(operand, Mapping) and "via" in operand:
@@ -688,14 +790,14 @@ class _Checks:
             self.add(
                 at,
                 f"{name} is a rollup, computed from the child rows after every row is drawn, "
-                "so a rule cannot hold it",
+                f"so {what} cannot read it",
             )
             return
         if operator == "is_null":
             return
         other = cmp.column_operand(operand) if operator in cmp.VALUE_OPERATORS else None
         if other is not None:
-            self._rule_column(key, name, left, operator, other, at)
+            self._rule_column(key, name, left, operator, other, at, what)
         elif cmp.run_operand(operand) is not None:
             message = cmp.kind_problem(operator, left, cmp.AS_OF)
             if message is not None:
@@ -718,7 +820,14 @@ class _Checks:
                 self._rule_bounds(key, name, operator, operand, at)
 
     def _rule_column(
-        self, key: str, name: str, left: cmp.Typed, operator: str, other: str, at: list[PathPart]
+        self,
+        key: str,
+        name: str,
+        left: cmp.Typed,
+        operator: str,
+        other: str,
+        at: list[PathPart],
+        what: str = "a rule",
     ) -> None:
         columns = self.columns[key]
         where = [*at, "column"] if at[-1] == operator else at
@@ -734,7 +843,7 @@ class _Checks:
             self.add(
                 where,
                 f"{other} is a rollup, computed from the child rows after every row is drawn, "
-                "so a rule cannot hold it",
+                f"so {what} cannot read it",
             )
             return
         message = cmp.kind_problem(operator, left, self._typed(key, other))
@@ -763,10 +872,10 @@ class _Checks:
             return
         elif isinstance(operand, list):
             other_low, other_high = operand[0], operand[1]
-            subject = f"the rule's range is {operand[0]} to {operand[1]}"
+            subject = f"the comparison's range is {operand[0]} to {operand[1]}"
         else:
             other_low = other_high = operand
-            subject = f"the rule's value is {operand}"
+            subject = f"the comparison's value is {operand}"
         if low is None and high is None:
             return
         never = False
@@ -930,13 +1039,14 @@ class _Checks:
         )
         return True
 
-    def _needs_0_7(self, path: list[PathPart], what: str) -> bool:
+    def _needs_0_7(self, path: list[PathPart], what: str, *, plain: bool = False) -> bool:
         """Report what 0.7.0 added (`what`) in a 0.2-0.6 document; True when it was reported."""
         if self.minor not in ("0.2", "0.3", "0.4", "0.5", "0.6"):
             return False
+        shown = what if plain else f"`{what}`"
         self.add(
             path,
-            f"`{what}` is spec 0.7.0, and the document is written against {self.minor}: "
+            f"{shown} is spec 0.7.0, and the document is written against {self.minor}: "
             "write `model2data: 0.7.0`",
         )
         return True
@@ -1379,9 +1489,34 @@ class _Checks:
         ):
             self._when(key, name, column, when, [*gen_path, "when"], is_fk, in_pk or in_key)
 
+        derive = generate.get("derive")
+        if derive is not None:
+            self._derive(
+                key,
+                name,
+                column,
+                derive,
+                [*gen_path, "derive"],
+                is_fk=is_fk,
+                keyed=in_pk or in_key or unique,
+            )
+
         after = generate.get("after")
         if temporal and after is not None:
             self._after(key, name, after, [*gen_path, "after"])
+
+        if temporal:
+            self._window(key, name, generate, gen_path)
+        elif numeric:
+            for bound in ("min", "max"):
+                value = generate.get(bound)
+                if isinstance(value, str):
+                    hint = (
+                        ": a date string is a bound of a date or timestamp column"
+                        if windows.parse_bound(value) is not None
+                        else ""
+                    )
+                    self.add([*gen_path, bound], f"must be a number, not {_describe(value)}{hint}")
 
         if integer:
             bounds = {}
@@ -1424,7 +1559,8 @@ class _Checks:
         """The column carrying `when` can be null on the rows it does not match; its columns hold
         the values it lists."""
         columns = self.columns[key]
-        if is_fk:
+        derived = "derive" in _mapping(column.get("generate"))
+        if is_fk and not derived:
             self.add(
                 path,
                 "cannot sit on a foreign key: its values are drawn from the parent's rows, and "
@@ -1531,6 +1667,14 @@ class _Checks:
         in_key: bool,
     ) -> str:
         shown = _show(type_text)
+        if hint == "derive":
+            reasons = [
+                ("in the primary key", in_pk),
+                ("unique", unique),
+                ("in a key", in_key),
+            ]
+            why = next((reason for reason, hit in reasons if hit), "a key")
+            return f"cannot sit on a column that is {why}: a key holds the values it is drawn"
         if allowed == ("nullable",):
             why = "in the primary key" if in_pk else "not_null"
             if hint == "when":
@@ -1561,6 +1705,288 @@ class _Checks:
         }
         return "only sits on " + " or ".join(words.get(kind, kind) for kind in allowed)
 
+    # -- derive and date windows ---------------------------------------
+    def _ref_target(self, key: str, name: str) -> Optional[str]:
+        """`table.column` a column references (through `references`), None when it has none."""
+        reference = self.columns[key][name].get("references")
+        to = reference.get("to") if isinstance(reference, Mapping) else reference
+        return to if isinstance(to, str) else None
+
+    def _derive(
+        self,
+        key: str,
+        name: str,
+        column: Mapping,
+        derive: Any,
+        path: list[PathPart],
+        *,
+        is_fk: bool,
+        keyed: bool,
+    ) -> None:
+        """A derived column: its form, the hints it cannot have, and every value it can hold."""
+        self._needs_0_7(path, "derive")
+        if not isinstance(derive, Mapping):
+            return  # the schema has said so
+        generate = _mapping(column.get("generate"))
+        for hint in DERIVE_CONFLICTS:
+            if hint in generate:
+                self.add(
+                    [*path[:-1], hint],
+                    f"is also set on {name}, and `derive` decides its value: drop `{hint}`",
+                )
+        if keyed:
+            return  # reported with the hint kinds
+        forms = [form for form in ("cases", "copy", "date_of") if form in derive]
+        if len(forms) != 1:
+            self.add(
+                path,
+                "needs exactly one of `cases`, `copy` and `date_of`"
+                + (f" (it has {', '.join(forms)})" if forms else ""),
+            )
+            return
+        form = forms[0]
+        if "else" in derive and form != "cases":
+            self.add([*path, "else"], "belongs to `cases`: `copy` and `date_of` have no else")
+        dst = self._typed(key, name)
+        if form == "cases":
+            cases = derive["cases"]
+            for index, case in enumerate(cases if isinstance(cases, list) else []):
+                if not isinstance(case, Mapping):
+                    continue
+                if isinstance(case.get("if"), Mapping):
+                    self._comparison_mapping(
+                        key, case["if"], [*path, "cases", index, "if"], "a derivation"
+                    )
+                if "then" in case:
+                    self._derive_value(
+                        key, name, dst, column, case["then"], [*path, "cases", index, "then"], is_fk
+                    )
+            if "else" in derive:
+                self._derive_value(key, name, dst, column, derive["else"], [*path, "else"], is_fk)
+        elif form == "copy":
+            self._derive_value(
+                key, name, dst, column, {"column": derive["copy"]}, [*path, "copy"], is_fk
+            )
+        else:
+            self._derive_date_of(key, name, dst, derive["date_of"], [*path, "date_of"], is_fk)
+
+    def _derive_source(self, key: str, name: str, other: Any, at: list[PathPart]) -> bool:
+        """Whether `other` is a column a derivation of `name` may read; reports why not."""
+        columns = self.columns[key]
+        if not isinstance(other, str):
+            return False
+        if other not in columns:
+            close = difflib.get_close_matches(other, list(columns), n=1)
+            self.add(
+                at,
+                f"names {_show(other)}, which is not a column of {key}"
+                + (f" (did you mean {close[0]}?)" if close else ""),
+            )
+            return False
+        if other == name:
+            self.add(at, "names the column itself: a column cannot be derived from itself")
+            return False
+        if "rollup" in _mapping(columns[other].get("generate")):
+            self.add(
+                at,
+                f"{other} is a rollup, computed from the child rows after every row is drawn, "
+                "so a derived column cannot read it",
+            )
+            return False
+        return True
+
+    def _derive_value(
+        self,
+        key: str,
+        name: str,
+        dst: cmp.Typed,
+        column: Mapping,
+        value: Any,
+        at: list[PathPart],
+        is_fk: bool,
+    ) -> None:
+        """A `then`, `else` or `copy` value: valid for the column it is the value of."""
+        where = (
+            [*at, "column"] if cmp.column_operand(value) is not None and at[-1] == "copy" else at
+        )
+        if (other := cmp.column_operand(value)) is not None:
+            if at[-1] != "copy":
+                where = [*at, "column"]
+            if not self._derive_source(key, name, other, where):
+                return
+            src = self._typed(key, other)
+            if is_fk:
+                target = self._ref_target(key, name)
+                if self._ref_target(key, other) != target:
+                    self.add(
+                        where,
+                        f"{name} is a foreign key onto {target}, so its value must come from "
+                        f"a column that is a foreign key onto {target} too, and {other} is not",
+                    )
+                return
+            message = _can_go(src, dst)
+            if message is not None:
+                self.add(where, message)
+            return
+        if (run := cmp.run_operand(value)) is not None:
+            if run != "as_of":
+                self.add(at, f"`{{run: {run}}}` is not a value of the run: use `{{run: as_of}}`")
+            elif is_fk or dst.kind not in ("timestamp", "date"):
+                self.add(
+                    at,
+                    f"{{run: as_of}} is a timestamp, and {name} is {dst.words}: it goes into a "
+                    "date or timestamp column",
+                )
+            return
+        if isinstance(value, Mapping):
+            return  # the schema has said so
+        if value is None:
+            if column.get("not_null") is True or column.get("pk") is True:
+                self.add(at, f"is null, and {name} is not_null")
+            return
+        if is_fk:
+            self.add(
+                at,
+                f"is a literal, and {name} is a foreign key: it must name a row of the parent, "
+                "so take it from another column of the row that does",
+            )
+            return
+        enum = self.enum_named(column.get("type"))
+        message = cmp.value_problem(
+            dst.kind,
+            value,
+            type_name=str(column.get("type")),
+            members=enum[1] if enum else None,
+        )
+        if message is not None:
+            self.add(at, message)
+
+    def _derive_date_of(
+        self, key: str, name: str, dst: cmp.Typed, other: Any, at: list[PathPart], is_fk: bool
+    ) -> None:
+        if not self._derive_source(key, name, other, at):
+            return
+        src = self._typed(key, other)
+        if src.kind != "timestamp":
+            self.add(at, f"`date_of` takes a timestamp column, and {other} is {src.words}")
+        elif is_fk or dst.kind != "date":
+            self.add(
+                at, f"`date_of` is a date, and {name} is {dst.words}: it goes into a date column"
+            )
+
+    def _derive_cycles(self, key: str) -> None:
+        """Derived columns that read each other (or a `when` that reads one) in a loop."""
+        columns = self.columns[key]
+        reads: dict[str, list[str]] = {}
+        for name, column in columns.items():
+            generate = _mapping(column.get("generate"))
+            found: list[str] = []
+            derive = generate.get("derive")
+            if isinstance(derive, Mapping):
+                found += _derive_reads(derive)
+            when = generate.get("when")
+            if isinstance(when, Mapping):
+                found += [other for other in when if isinstance(other, str)]
+            if isinstance(derive, Mapping) or isinstance(when, Mapping):
+                reads[name] = [
+                    other for other in dict.fromkeys(found) if other in columns and other != name
+                ]
+        derived = {
+            name
+            for name, column in columns.items()
+            if isinstance(_mapping(column.get("generate")).get("derive"), Mapping)
+        }
+        reported: set[str] = set()
+
+        def walk(chain: list[str]) -> None:
+            for node in reads.get(chain[-1], []):
+                if node in chain:
+                    cycle = chain[chain.index(node) :]
+                    if derived.intersection(cycle) and not reported.intersection(cycle):
+                        reported.update(cycle)
+                        first = min((c for c in cycle if c in derived), key=list(columns).index)
+                        loop = cycle[cycle.index(first) :] + cycle[: cycle.index(first)]
+                        self.add(
+                            ["tables", key, "columns", first, "generate", "derive"],
+                            f"the derived columns of {key} read each other in a loop: "
+                            f"{' -> '.join([*loop, first])}",
+                        )
+                elif not reported.intersection(chain):
+                    walk([*chain, node])
+
+        for start in reads:
+            if start in derived:
+                walk([start])
+
+    def _window(self, key: str, name: str, generate: Mapping, path: list[PathPart]) -> None:
+        """`min` and `max` on a date or timestamp column: ISO 8601 strings, in order."""
+        column = self.columns[key][name]
+        kind = kinds.temporal_kind(str(column.get("type")))
+        assert kind is not None
+        parsed = {}
+        for bound in ("min", "max"):
+            if bound not in generate:
+                continue
+            value = generate[bound]
+            at = [*path, bound]
+            if isinstance(value, bool) or not isinstance(value, str):
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    self.add(
+                        at,
+                        f"must be an ISO 8601 date or timestamp string on a {kind} column, not "
+                        f'the number {value!r}: write `{bound}: "2026-10-02"`',
+                    )
+                continue
+            if windows.parse_bound(value) is None:
+                self.add(
+                    at,
+                    f"is not an ISO 8601 date or timestamp (got {_show(value)}): write "
+                    "YYYY-MM-DD or YYYY-MM-DD HH:MM:SS, with no time zone",
+                )
+                continue
+            self._needs_0_7(at, f"a `{bound}` on a date or timestamp column", plain=True)
+            parsed[bound] = value
+        if len(parsed) == 2:
+            low, high = windows.bounds(dict(parsed), kind)
+            if low is not None and high is not None and low > high:
+                self.add(
+                    [*path, "min"],
+                    f"min {parsed['min']!r} is after max {parsed['max']!r}",
+                )
+
+    def _span(self, key: str, name: str) -> tuple[Optional[date], Optional[date], bool]:
+        """The first and last day a date or timestamp column can fall on, None where the
+        document does not say (a default end depends on the run's `as_of`), and whether it has
+        a `max` of its own."""
+        column = self.columns[key][name]
+        kind = kinds.temporal_kind(str(column.get("type")))
+        if kind is None:
+            return None, None, False
+        generate = _mapping(column.get("generate"))
+        low, high = windows.bounds(generate, kind)
+        if self.anchor is not None:
+            start, end = windows.window(generate, kind, self.anchor)
+            return start.date(), end.date(), high is not None
+        return (
+            low.date() if low is not None else None,
+            high.date() if high is not None else None,
+            high is not None,
+        )
+
+    def _window_follows(
+        self, key: str, name: str, parent: str, other: str, at: list[PathPart]
+    ) -> None:
+        """A column with a `max` before the first day of the column it follows cannot follow it."""
+        _, last, bounded = self._span(key, name)
+        first, _, _ = self._span(parent, other)
+        if bounded and last is not None and first is not None and last < first:
+            target = other if parent == key else f"{parent}.{other}"
+            self.add(
+                at,
+                f"{name} is generated no later than {last}, and {target} no earlier than "
+                f"{first}: it cannot be after it",
+            )
+
     # -- after ---------------------------------------------------------
     def _after(self, key: str, name: str, after: Any, path: list[PathPart]) -> None:
         """Each entry of an `after`: a column of the row, or a parent's `<table>.<column>`."""
@@ -1577,6 +2003,9 @@ class _Checks:
                 problem = self._parent_after_issue(key, entry)
                 if problem:
                     self.add(at, f"names {entry}, {problem}")
+                else:
+                    parent, parent_column = split_column_path(entry)
+                    self._window_follows(key, name, parent, parent_column, at)
                 continue
             other = self.columns[key].get(entry)
             if entry == name:
@@ -1585,6 +2014,15 @@ class _Checks:
                 self.add(at, f"names {_show(entry)}, which is not a column of {key}")
             elif not self._is_temporal(other):
                 self.add(at, f"names {entry}, which is not a date or timestamp column")
+            elif "derive" in _mapping(other.get("generate")):
+                self.add(
+                    at,
+                    f"names {entry}, which is derived: a derived column is computed once the "
+                    "row's dates are placed, so nothing follows it; name the column it is "
+                    "derived from",
+                )
+            else:
+                self._window_follows(key, name, key, entry, at)
 
     def _is_temporal(self, column: Mapping) -> bool:
         type_text = column.get("type")

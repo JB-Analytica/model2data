@@ -306,8 +306,20 @@ def uses_0_6(model: Model) -> bool:
 
 
 def uses_0_7(model: Model) -> bool:
-    """Whether the model uses what spec 0.7.0 added: a table's `rules`."""
-    return any(table.rules for table in model.tables.values())
+    """Whether the model uses what spec 0.7.0 added: a table's `rules`, a column's `derive`, or a
+    date window (a `min` or `max` that is a string)."""
+    return any(table.rules for table in model.tables.values()) or any(
+        uses_0_7_hint(column.generate)
+        for table in model.tables.values()
+        for column in table.columns.values()
+    )
+
+
+def uses_0_7_hint(generate: Mapping[str, Any]) -> bool:
+    """Whether a column's `generate` has `derive` or a date `min` or `max` (spec 0.7.0)."""
+    return "derive" in generate or any(
+        isinstance(generate.get(bound), str) for bound in ("min", "max")
+    )
 
 
 def uses_0_5_after(after: Any) -> bool:
@@ -319,7 +331,7 @@ def document_version(model: Model) -> Any:
     """The version the model's document is written against.
 
     The version the model was read with, unless the model uses what that
-    version does not have: 0.7.0 when it uses `rules` and was read as 0.2-0.6,
+    version does not have: 0.7.0 when it uses `rules`, `derive` or a date `min`/`max` and was read as 0.2-0.6,
     0.6.0 when it uses `rollup` or `at_least` and was read as 0.2-0.5, 0.5.0 when it uses a list or a parent's column in
     `after` and was read as
     0.2-0.4, 0.4.0 when it uses `when` and was read as 0.2 or 0.3, 0.3.0 when it uses `defects` or `incremental.history` and was read as
