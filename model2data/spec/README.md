@@ -159,9 +159,77 @@ A column is a mapping with at least a `type`, or just its type as a string: `cou
 means `country: {type: country}`.
 
 A column's **type** is an SQL type, the name of an enum in the model, or the name of a generator.
-The generators, and how a name or a type picks one, are the engine's (see its README); this spec
-fixes only that an enum's name as a type means that enum, and that a type is matched
-case-insensitively.
+The generators, and how a name or a type picks one, are the engine's, listed under
+[Generators](#generators-the-model2data-engine); this spec fixes only that an enum's name as a type
+means that enum, and that a type is matched case-insensitively.
+
+### Generators (the model2data engine)
+
+*This section describes the model2data engine, not the spec: it is informative, and a change to
+it is not a change to the spec's version.*
+
+A column's type can name a generator, so `contact: email` or `owner: name` says what the column
+holds. These are the ones worth knowing:
+
+| Group | Types | Notes |
+| --- | --- | --- |
+| Person, coherent per row | `first_name`, `last_name`, `name` (also `full_name`, `person_name`), `user_name` (also `username`), `email` | One person per row: the name, user name and email of a row match. `name` is the full name. |
+| Address, coherent per row | `street_address`, `address`, `city`, `state`, `province`, `postcode`, `country` | One address per row: the city, postcode and country of a row belong together. A lone `country` column mixes the `run.locale` country, when one is set, with the rest of the world; with no locale it draws from the whole world. |
+| Company and work | `company` (also `company_name`), `job` | A company name; a job title. |
+| Internet | `url`, `domain_name`, `ipv4`, `slug` | A web address, a domain, an IPv4 address, a URL slug. |
+| Commerce and codes | `currency_code`, `ean13`, `color_name`, `phone_number` | An ISO currency code, an EAN-13 barcode, a colour name, a phone number. |
+| Text | `word`, `sentence`, `paragraph` | Only for real free text: a name or a label should use one of the generators above. |
+| Anything else | any Faker provider with no arguments | Any Faker provider that takes no arguments, by its name (`ssn`, `iban`, `license_plate`, `file_name`, ...). |
+
+**Name inference.** A text column with no generator type (`varchar`, `text`, or no type at all)
+takes the generator its *name* implies. The name is split into words at anything that is not a
+letter or digit, a row below matches when the name contains its words in a row, and the first
+matching row wins. A declared generator type always outranks the name.
+
+| A column name containing | Generates |
+| --- | --- |
+| `first_name` | `first_name` |
+| `last_name` | `last_name` |
+| `full_name` | `name` |
+| `user_name`, `username` | `user_name` |
+| `password` | `password` |
+| `email` | `email` |
+| `phone`, `mobile`, `fax` | `phone_number` |
+| `street` | `street_address` |
+| `address` | `address` |
+| `city` | `city` |
+| `province`, `state` | `state` |
+| `country` | `country` |
+| `zip`, `postal` | `postcode` |
+| `homepage`, `website`, `url` | `url` |
+| `domain` | `domain_name` |
+| `employer`, `company` | `company` |
+| `job_title` | `job` |
+| `ip_address` | `ipv4` |
+| `colour`, `color` | `color_name` |
+| `currency` | `currency_code` |
+| `latitude` | `latitude` |
+| `longitude` | `longitude` |
+| `slug` | `slug` |
+| `avatar`, `image` | `image_url` |
+| `bio`, `description`, `comment`, `summary` | free text |
+
+Names that are not in this table match nothing: `team_name`, `player_name` and `round_name` fall
+back to generic text (a few lorem-ipsum words), and so does a type the engine does not know. The
+validator warns about such a type (`'club_name' is not a generator or an SQL type; it will
+generate generic text`) and suggests the nearest generator. Give a column of that kind a
+generator type, or an enum if its values are a closed set.
+
+**Locale.** `run.locale` (`nl_BE`, `en_GB`, `fr_FR`, ...) decides where people and addresses come
+from: names, cities, streets, postcodes and phone formats of that country. Set it to the country
+the data is about. Without it people and addresses are American, and a lone `country` column draws
+from the whole world.
+
+**Enums for closed sets.** An enum is the list of allowed values: every generated value is one of
+them, and the dbt export writes an `accepted_values` test for the column. That is right for a
+closed set (the clubs of a league, the statuses of an order) and wrong for an open one such as
+people's names, where the test would fail on every value the model did not list. For an open set
+use a generator and `locale`.
 
 ### Keys
 

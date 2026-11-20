@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import math
 import random
 import re
@@ -18,6 +19,7 @@ from faker.providers import BaseProvider as _BaseProvider
 from faker.providers.lorem import Provider as _LoremProvider
 from faker.providers.person import Provider as _PersonProvider
 
+from model2data.generate.catalogue import ALIASES
 from model2data.generate.kinds import (
     is_boolean_type,
     is_decimal_type,
@@ -38,12 +40,21 @@ from model2data.parse.dbml import ColumnDef
 DEFAULT_LOCALE = "en_US"
 
 _locale = DEFAULT_LOCALE
+# Whether a caller named a locale (`run.locale`, `--locale`) rather than leaving the
+# default in place. Only a named locale makes a lone `country` column favour that
+# locale's country; the default is a stand-in, not a claim about where the data is.
+_locale_is_set = False
 fake = Faker(DEFAULT_LOCALE)
 
 
 def current_locale() -> str:
     """The locale generation is currently drawing from."""
     return _locale
+
+
+def locale_is_set() -> bool:
+    """Whether the current locale was named by the caller rather than defaulted."""
+    return _locale_is_set
 
 
 def set_locale(locale: Optional[str]) -> None:
@@ -55,8 +66,9 @@ def set_locale(locale: Optional[str]) -> None:
     American one in the same table is precisely the incoherence they exist to
     prevent.
     """
-    global fake, _locale
+    global fake, _locale, _locale_is_set
     target = locale or DEFAULT_LOCALE
+    _locale_is_set = bool(locale)
     if target == _locale:
         return
     try:
@@ -564,6 +576,8 @@ _ROW_TYPE_FIELDS = {
     "first_name": ("person", "first_name"),
     "last_name": ("person", "last_name"),
     "name": ("person", "full_name"),
+    "full_name": ("person", "full_name"),
+    "person_name": ("person", "full_name"),
     "user_name": ("person", "user_name"),
     "username": ("person", "user_name"),
     "email": ("person", "email"),
@@ -592,12 +606,41 @@ def _infer_by_type(base_type: str) -> Optional[_Provider]:
     row_field = _ROW_TYPE_FIELDS.get(base_type)
     if row_field is not None:
         return _FromRow(*row_field)
+    # An alias of a provider (`company_name` for `company`) draws what its target does.
+    base_type = ALIASES.get(base_type, base_type)
     try:
         fake.format(base_type)
     except (AttributeError, TypeError):
         # Not a provider, or one that needs arguments: nothing was declared.
         return None
     return lambda: fake.format(base_type)
+
+
+def is_generator_type(type_text: str) -> bool:
+    """Whether a column type names a generator: a row type, an alias, or a Faker
+    provider that takes no arguments.
+
+    Answers without drawing a value, so asking never moves the random stream.
+    """
+    base_type = type_text.lower().split("(")[0].strip()
+    if base_type in _SQL_TYPES_SHADOWING_A_PROVIDER:
+        return False
+    base_type = ALIASES.get(base_type, base_type)
+    if base_type in _ROW_TYPE_FIELDS:
+        return True
+    if not base_type.isidentifier() or base_type.startswith("_"):
+        return False
+    provider = getattr(fake, base_type, None)
+    if not callable(provider):
+        return False
+    try:
+        parameters = inspect.signature(provider).parameters.values()
+    except (TypeError, ValueError):
+        return False
+    return not any(
+        p.default is p.empty and p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)
+        for p in parameters
+    )
 
 
 def resolve_address_pool_field(column: ColumnDef) -> Optional[str]:
@@ -632,7 +675,8 @@ def resolve_address_pool_field(column: ColumnDef) -> Optional[str]:
 # locale's own country in with the rest of the world rather than repeating it
 # on every row. 0.6 is a default, not a claim about any real market -- a
 # business selling internationally still has a home market, and most of its
-# rows are plausibly it, but "most" is not "all".
+# rows are plausibly it, but "most" is not "all". Applies only when the run
+# names a locale: with none, countries come from the whole world.
 _HOME_COUNTRY_SHARE = 0.6
 
 
@@ -1001,10 +1045,15 @@ def generate_column_values(
                 # one coherent with, so it isn't "this row's place" at all --
                 # draw a home-heavy mix instead of repeating the locale's own
                 # country on every row.
-                values = [
-                    _country_name if random.random() < _HOME_COUNTRY_SHARE else fake.country()
-                    for _ in range(row_count)
-                ]
+                if _locale_is_set:
+                    values = [
+                        _country_name if random.random() < _HOME_COUNTRY_SHARE else fake.country()
+                        for _ in range(row_count)
+                    ]
+                else:
+                    # No locale named: the default is no claim about where the
+                    # data is, so no country is the home one.
+                    values = [fake.country() for _ in range(row_count)]
             else:
                 rows = _row_pool(generator.pool, table_name, row_count)
                 values = [getattr(rows[index], generator.field) for index in range(row_count)]
@@ -1025,7 +1074,10 @@ def generate_column_values(
                     values = [fake.format(base_type) for _ in range(row_count)]
             except (AttributeError, TypeError):
                 if column.name.lower().endswith("_id") or ensure_unique:
-                    values = [_seeded_uuid() for _ in range(row_count)]
+                    key = _text_key_generator(column.data_type)
+                    values = [key() for _ in range(row_count)]
+                    if ensure_unique and key is not _seeded_uuid:
+                        values = _deduplicate(values, key, column_name=unique_label)
                 else:
                     _stats_state["unmapped"].append((column.name, column.data_type))
                     values = [_sentence(3) for _ in range(row_count)]
@@ -1414,6 +1466,21 @@ def _seeded_uuid() -> str:
     of the same seed. Same format, same 122 random bits, but reproducible.
     """
     return str(uuid.UUID(int=random.getrandbits(128), version=4))
+
+
+def _text_key_generator(data_type: str) -> Callable[[], str]:
+    """What draws a text key that fits the column's declared length.
+
+    `varchar(32)` holds a UUID without its dashes; a shorter length holds that many
+    hex digits; 36 or more, or no length, holds the dashed UUID as ever.
+    """
+    match = re.search(r"\(\s*(\d+)\s*\)", data_type)
+    length = int(match.group(1)) if match else 36
+    if length >= 36 or length < 1:
+        return _seeded_uuid
+    if length == 32:
+        return lambda: _seeded_uuid().replace("-", "")
+    return lambda: f"{random.getrandbits(4 * length):0{length}x}"
 
 
 def _deduplicate(
