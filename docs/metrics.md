@@ -33,7 +33,9 @@ metrics:
 ```
 
 (the whole file, which conforms against the example model, is
-[`model2data/spec/examples/coffee_webshop.metrics.yml`](../model2data/spec/examples/coffee_webshop.metrics.yml)).
+[`model2data/spec/examples/coffee_webshop.metrics.yml`](../model2data/spec/examples/coffee_webshop.metrics.yml)). A second example, a sports league
+([`sports_league.metrics.yml`](../model2data/spec/examples/sports_league.metrics.yml)), compares two columns
+in a filter.
 A metric is a column aggregated (`measure`, with `agg` or the column's own `measure`), a row count
 (`count`), a `ratio` of two metrics' totals, or arithmetic over metrics (`expression`). A filter
 can reach any table the metric's table reaches through its foreign keys, many-to-one, along exactly

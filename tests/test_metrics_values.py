@@ -431,6 +431,11 @@ def test_every_example_has_the_values_of_reading_every_column(path):
 _METRICS_CASES = {
     "ecommerce": (EXAMPLES / "ecommerce.model2data.yml", EXAMPLES / "ecommerce.metrics.yml", []),
     "coffee": (SPEC / "coffee_webshop.model2data.yml", SPEC / "coffee_webshop.metrics.yml", []),
+    "league": (
+        SPEC / "sports_league.model2data.yml",
+        SPEC / "sports_league.metrics.yml",
+        [],
+    ),
     "training-messy": (
         EXAMPLES / "ecommerce_training.model2data.yml",
         FIXTURES / "ecommerce_training.metrics.yml",

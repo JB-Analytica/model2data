@@ -46,6 +46,8 @@ infer: true
 
 A complete example, which conforms against the example model beside it, is
 [`../examples/coffee_webshop.metrics.yml`](../examples/coffee_webshop.metrics.yml).
+[`../examples/sports_league.metrics.yml`](../examples/sports_league.metrics.yml) adds a filter that
+compares two columns (spec 0.2.0).
 
 The model and its generated data do not depend on the metrics file: a generator never reads it,
 and a model generates the same rows with or without one. What a metrics file adds is meaning

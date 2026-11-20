@@ -51,8 +51,9 @@ run:
 A column's `type` is an SQL type, an enum of the model, or a generator (`email`, `first_name`,
 `ean13`, ...). `generate` holds its hints, each a typed value the schema documents. `run` saves
 the generation settings with the model; every CLI option overrides the one it names. The
-[reference example](../model2data/spec/examples/coffee_webshop.model2data.yml) is a complete model,
-and every schema in [`examples/`](../examples/) comes as one.
+[reference example](../model2data/spec/examples/coffee_webshop.model2data.yml) is a complete model, and the
+[sports league](../model2data/spec/examples/sports_league.model2data.yml) shows what 0.7.0 adds
+(derived columns, rules, date windows, combinations). Every schema in [`examples/`](../examples/) comes as one.
 
 Check a model without generating anything — every issue is printed with its path in the document:
 

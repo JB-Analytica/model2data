@@ -25,7 +25,8 @@ its generation, point them there; the DBML guidance below applies to both.
 > **Two input formats.** Since 1.8, model2data reads a model as one YAML document,
 > `<name>.model2data.yml` ([spec 0.7.0](model2data/spec/README.md), with a JSON Schema at
 > `model2data/spec/model.schema.json` and a complete example at
-> `model2data/spec/examples/coffee_webshop.model2data.yml`), and DBML as supported input that it
+> `model2data/spec/examples/coffee_webshop.model2data.yml`, and `sports_league.model2data.yml` for
+> derived columns, rules, date windows and combinations), and DBML as supported input that it
 > converts to the same model. The DBML guidance below still holds; if you write the YAML form
 > instead, check it with `model2data validate <name>.model2data.yml`, which prints every issue
 > with its path, and `model2data convert <name>.dbml` shows the YAML any DBML file becomes.

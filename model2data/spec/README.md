@@ -60,6 +60,10 @@ spec](metrics/README.md) and versioned on its own. The generator never reads it.
 those metrics and the model's columns are files of their own, `<name>.dashboard.yml`, defined by
 the [dashboard spec](dashboards/README.md); they name metrics and columns and hold no values.
 
+Two worked examples sit in [`examples/`](examples/): the coffee webshop, and a sports league
+([`sports_league.model2data.yml`](examples/sports_league.model2data.yml)) that uses what 0.7.0
+adds: derived columns, rules, date windows and a table of combinations.
+
 ## What is normative
 
 This README and `model.schema.json`, including every `description` in the schema. A document

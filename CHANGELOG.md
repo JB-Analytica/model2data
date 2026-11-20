@@ -7,10 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-Models and metrics files that use none of what is added here read and generate exactly as in
-1.22.0: the same model, seed and `--as-of` write the same files.
+## [1.23.0] - 2026-11-20
+
+One change alters what an existing model writes: a table with a unique enum column is now capped
+at the enum's member count (listed first under Changed). A model whose unique enums have at
+least as many members as the rows asked for, and that uses nothing else added here, writes the
+same files as 1.22.0 for the same model, seed and `--as-of`. Everything else is opt-in
+vocabulary, model spec 0.7.0 and metrics spec 0.2.0, that a model or metrics file has to ask for.
 
 ### Added
+- **A second worked example, a sports league season.** `model2data/spec/examples/sports_league.model2data.yml`,
+  `.metrics.yml` and `sports_league_standings.dashboard.yml`: twelve fictional clubs as a unique
+  enum, `combinations` for every home and away fixture, `rules`, a date window past `as_of`,
+  `derive` (status from the run's day, the winner from the scores), `when`, `after`, `at_least`
+  and a column-to-column metric filter for home wins.
 - **`combinations` on a table (model spec 0.7.0): a row for every combination of its parents'
   rows.** `combinations: [home_team_id, away_team_id]` with the rule `home_team_id ne
   away_team_id` makes 16 teams 16 x 16 - 16 = 240 games, each pair once: what "every team plays

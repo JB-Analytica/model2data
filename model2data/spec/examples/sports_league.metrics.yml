@@ -1,0 +1,42 @@
+# yaml-language-server: $schema=https://www.jbanalytica.com/model2data/spec/metrics/0.2.0/metrics.schema.json
+model2data-metrics: 0.2.0
+model: sports_league
+
+metrics:
+  games_played:
+    label: Games played
+    description: Games that have been played; a scheduled game has no score yet.
+    count: games
+    where:
+      games.status: final
+    time: games.tip_off_at
+
+  home_wins:
+    label: Home wins
+    count: games
+    where:
+      games.status: final
+      games.winner_team_id: {eq: {column: games.home_team_id}}   # the winner is the home club
+    time: games.tip_off_at
+
+  home_win_rate:
+    label: Home win rate
+    ratio: {numerator: home_wins, denominator: games_played}
+    format: percent
+
+  home_points:
+    label: Home points
+    measure: games.home_score
+    agg: sum
+    time: games.tip_off_at
+
+  away_points:
+    label: Away points
+    measure: games.away_score
+    agg: sum
+    time: games.tip_off_at
+
+  points_per_game:
+    label: Points per game
+    description: Both sides' points together, averaged over the games played.
+    expression: (home_points + away_points) / games_played
