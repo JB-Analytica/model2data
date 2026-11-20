@@ -1,7 +1,7 @@
 # The model file
 
 A model is one YAML document, `<name>.model2data.yml` — or the same document as JSON. Its
-format is [spec 0.6.0](../model2data/spec/README.md), with a JSON Schema
+format is [spec 0.7.0](../model2data/spec/README.md), with a JSON Schema
 ([`model.schema.json`](../model2data/spec/model.schema.json)) your editor can autocomplete and check
 against:
 
@@ -117,6 +117,47 @@ tables:
 
 The generated dbt project tests every rollup with `model2data_rollup` (see
 [The generated dbt project](dbt-project.md)).
+
+## Rows that must obey a rule
+
+Columns are drawn one by one, so a game can have the same team at home and away, or end level
+in a sport with no draws. `rules` (spec 0.7.0) on a table lists comparisons every row
+satisfies:
+
+```yaml
+model2data: 0.7.0
+tables:
+  games:
+    rules:
+      - {home_team_id: {ne: {column: away_team_id}}}   # a team never plays itself
+      - {home_score: {ne: {column: away_score}}}       # no draws
+      - {played_at: {lte: {run: as_of}}}               # nothing is dated in the future
+    columns:
+      id: {type: bigint, pk: true}
+      home_team_id: {type: bigint, not_null: true, references: teams.id}
+      away_team_id: {type: bigint, not_null: true, references: teams.id}
+      home_score: {type: int, generate: {min: 0, max: 5}}
+      away_score: {type: int, generate: {min: 0, max: 5}}
+      played_at: timestamp
+```
+
+- **The comparison:** `eq`, `ne`, `in`, `not_in`, `gt`, `gte`, `lt`, `lte`, `between` and
+  `is_null`, with a literal, `{column: other_column}` (that column in the same row) or
+  `{run: as_of}` (the run's anchor) on the right. Order operators compare numbers, dates and
+  timestamps; a number is not compared with a date or an enum with text. A metric's filter
+  (`where`, in the metrics file) takes `{column: ...}` the same way (metrics spec 0.2.0).
+- **How a row is fixed:** a row that breaks a rule has the column that comes later in the table
+  drawn again (`away_team_id`, `away_score`), up to 20 rounds. A foreign key still names a parent
+  that exists, a column with `when` keeps its nulls, and only the rows that broke a rule change:
+  a table without rules generates the same bytes as before, and so does every other table.
+- **Nulls:** a row where a column the rule reads is null is not held to it, as with an SQL
+  check constraint.
+- **Not forced:** a key, a rollup, a foreign key with `at_least` and a column a `when` names are
+  never drawn again; a rule the values cannot satisfy (two columns that can each hold one value
+  and must differ) is listed in the summary with its number of rows, not an error. `validate`
+  names a rule that can never hold (`gt` between columns whose `min` and `max` leave no room).
+- **Days:** with `--days`, a table with rules and `incremental` is refused: the rules hold for
+  the first day's rows only. A rule across a foreign key (`via`) is not supported yet.
 
 ## DBML is supported input
 

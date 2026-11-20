@@ -1,18 +1,18 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://www.jbanalytica.com/model2data/spec/0.6.0/model.schema.json",
+  "$id": "https://www.jbanalytica.com/model2data/spec/0.7.0/model.schema.json",
   "title": "model2data model",
   "description": "A data model: its tables, their columns and keys, the relationships between them, the enums a column can be typed as, and how each column's values are generated. Written as YAML (the `.model2data.yml` file) or as JSON; both are the same document. This schema is normative together with model2data/spec/README.md, which defines the YAML profile a reader must apply and the checks that depend on more than one part of the document.",
   "type": "object",
   "required": ["model2data", "tables"],
   "properties": {
     "model2data": {
-      "description": "The spec version the document is written against, `MAJOR.MINOR` or `MAJOR.MINOR.PATCH`. Write it as `0.6.0`. A 0.2, 0.3, 0.4 or 0.5 document is still read, and reads as it did: 0.3.0 only adds `defects` and `incremental.history`, which a 0.2 document cannot use, 0.4.0 only a column's `when`, which a 0.2 or 0.3 document cannot use, 0.5.0 only an `after` that is a list or names a parent's column, which a 0.2, 0.3 or 0.4 document cannot use, and 0.6.0 only a column's `rollup` and `at_least`, which a 0.2 to 0.5 document cannot use. A reader that met the YAML number 0.6 reads it as `0.6`.",
+      "description": "The spec version the document is written against, `MAJOR.MINOR` or `MAJOR.MINOR.PATCH`. Write it as `0.7.0`. A 0.2, 0.3, 0.4, 0.5 or 0.6 document is still read, and reads as it did: 0.3.0 only adds `defects` and `incremental.history`, which a 0.2 document cannot use, 0.4.0 only a column's `when`, which a 0.2 or 0.3 document cannot use, 0.5.0 only an `after` that is a list or names a parent's column, which a 0.2, 0.3 or 0.4 document cannot use, 0.6.0 only a column's `rollup` and `at_least`, which a 0.2 to 0.5 document cannot use, and 0.7.0 only a table's `rules`, which a 0.2 to 0.6 document cannot use. A reader that met the YAML number 0.7 reads it as `0.7`.",
       "oneOf": [
-        { "type": "string", "pattern": "^0\\.[23456](\\.(0|[1-9][0-9]*))?$" },
-        { "enum": [0.2, 0.3, 0.4, 0.5, 0.6] }
+        { "type": "string", "pattern": "^0\\.[234567](\\.(0|[1-9][0-9]*))?$" },
+        { "enum": [0.2, 0.3, 0.4, 0.5, 0.6, 0.7] }
       ],
-      "examples": ["0.6.0"]
+      "examples": ["0.7.0"]
     },
     "name": {
       "description": "The model's name. Names the generated dbt project, normalised to `[a-z0-9_]`. Defaults to the file's name without `.model2data.yml`.",
@@ -164,6 +164,17 @@
           "type": "array",
           "items": { "$ref": "#/$defs/foreignKey" }
         },
+        "rules": {
+          "description": "What every generated row of the table satisfies: a list of comparisons between columns of the same row, each `{<column>: {<operator>: <operand>}}` (see \"Comparisons\" in README.md). The operators are `eq`, `ne`, `in`, `not_in`, `gt`, `gte`, `lt`, `lte`, `between` and `is_null`; the order operators compare numbers, dates and timestamps only. An operand of `eq`, `ne`, `gt`, `gte`, `lt` and `lte` is a literal, `{column: <name>}` (the value of that column in the same row) or `{run: as_of}` (the run's anchor timestamp). After a table's columns are drawn, a row that breaks a rule gets the column that comes later in the table's column order drawn again, until the rule holds, within a retry budget; a rule left unmet is reported. A row where a column the rule reads is null is not held to it, as with an SQL check constraint. A rule across a foreign key (`via`) is not supported yet. Spec 0.7.0.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/rule" },
+          "examples": [
+            [
+              { "home_team_id": { "ne": { "column": "away_team_id" } } },
+              { "home_score": { "gte": 0 } }
+            ]
+          ]
+        },
         "defects": {
           "description": "Deliberate defects in the table's generated rows, applied after the clean data is generated: each breaks the dbt test it names (or, for the late and messy kinds, an incremental model or a staging clean-up), and every run reports which rows it broke. Spec 0.3.0. An empty list keeps the table clean under a run's `defects` preset; an entry of the same `type` and `column` as a preset's replaces it, and `count: 0` switches it off.",
           "type": "array",
@@ -179,6 +190,67 @@
       },
       "patternProperties": { "^x-": true },
       "additionalProperties": false
+    },
+    "rule": {
+      "description": "One rule: a mapping of a column of the table to the condition every row holds on it. Several columns in one mapping are several rules. The operators, the operands and the kinds a comparison may compare are in README.md (\"Comparisons\" and \"Rules\"); the checks beyond this schema report an unknown operator, a column the table does not have and a rule that can never hold.",
+      "type": "object",
+      "minProperties": 1,
+      "patternProperties": { "^x-": true },
+      "additionalProperties": { "$ref": "#/$defs/ruleCondition" }
+    },
+    "ruleCondition": {
+      "description": "What a column holds. A value: equal to it. A list: one of them. A mapping of operators: every one must hold.",
+      "anyOf": [
+        { "type": ["string", "number", "boolean"] },
+        { "type": "array", "minItems": 1, "items": { "type": ["string", "number", "boolean"] } },
+        {
+          "type": "object",
+          "minProperties": 1,
+          "properties": {
+            "eq": { "$ref": "#/$defs/ruleOperand" },
+            "ne": { "$ref": "#/$defs/ruleOperand" },
+            "gt": { "$ref": "#/$defs/ruleOperand" },
+            "gte": { "$ref": "#/$defs/ruleOperand" },
+            "lt": { "$ref": "#/$defs/ruleOperand" },
+            "lte": { "$ref": "#/$defs/ruleOperand" },
+            "in": {
+              "description": "A list of values: the column is one of them.",
+              "type": "array",
+              "minItems": 1,
+              "items": { "type": ["string", "number", "boolean"] }
+            },
+            "not_in": {
+              "description": "A list of values: the column is none of them.",
+              "type": "array",
+              "minItems": 1,
+              "items": { "type": ["string", "number", "boolean"] }
+            },
+            "between": {
+              "description": "[low, high], both inclusive.",
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "items": { "type": ["string", "number", "boolean"] }
+            },
+            "is_null": { "type": "boolean" }
+          },
+          "patternProperties": { "^x-": true }
+        }
+      ]
+    },
+    "ruleOperand": {
+      "description": "A value; `{column: <name>}`, the value of that column in the same row; or `{run: as_of}`, the run's anchor timestamp.",
+      "anyOf": [
+        { "type": ["string", "number", "boolean"] },
+        {
+          "type": "object",
+          "properties": {
+            "column": { "$ref": "#/$defs/name" },
+            "run": { "enum": ["as_of"] }
+          },
+          "minProperties": 1
+        }
+      ]
     },
     "defect": {
       "description": "One deliberate defect: its `type`, the `column` it breaks, and how many rows, as a `count` or a `share` of the table's rows (exactly one of the two).",

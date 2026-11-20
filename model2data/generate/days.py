@@ -222,6 +222,7 @@ def iter_days(
         _check_incremental(tables[key], inc)
     if days:
         _check_rollups(tables, refs, incremental)
+        _check_rules(tables, incremental)
 
     frames = generate_data_from_dbml(
         tables,
@@ -297,6 +298,22 @@ def _check_rollups(
                     "has `incremental`: a rollup holds on the first day only, so generate "
                     "without days after it, or drop the rollup."
                 )
+
+
+def _check_rules(tables: Mapping[str, TableDef], incremental: Mapping[str, Incremental]) -> None:
+    """Refuse days after the first where a table with `rules` moves: nothing would keep them.
+
+    Rules are applied to the first day's rows (see generate.rules). A day that inserts
+    or updates rows of such a table would draw them without the rules.
+    """
+    for key, table in tables.items():
+        inc = incremental.get(key)
+        if table.rules and inc is not None and ((inc.new_per_day or 0) or (inc.update_rate or 0)):
+            raise ValueError(
+                f'{key}: "rules" hold for the first day\'s rows, and {key} has `incremental`, '
+                "which draws rows on the days after it without them: generate without days, "
+                "or drop the rules."
+            )
 
 
 def _check_incremental(table: TableDef, inc: Incremental) -> None:

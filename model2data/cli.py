@@ -36,6 +36,7 @@ from model2data.generate.core import (
     get_cyclic_tables,
     get_uncovered_parents,
     get_unresolved_composite_keys,
+    get_unsatisfied_rules,
 )
 from model2data.generate.days import (
     DayResult,
@@ -189,7 +190,7 @@ app = typer.Typer(
     cls=_GenerateByDefault,
     help=(
         "model2data: Generate analytics-ready datasets from a data model.\n\n"
-        "Given a model -- a .model2data.yml document (spec 0.6.0), the same as JSON,\n"
+        "Given a model -- a .model2data.yml document (spec 0.7.0), the same as JSON,\n"
         "or a DBML file -- this tool produces:\n"
         "• Synthetic but realistic data\n"
         "• A runnable dbt project scaffold\n"
@@ -780,6 +781,7 @@ def main(
     duplicate_unique = get_duplicate_unique_columns()
     capped_tables = get_capped_tables()
     uncovered = get_uncovered_parents()
+    unsatisfied_rules = get_unsatisfied_rules()
 
     typer.echo("\n📊 Summary")
     typer.echo(f"  Tables generated:        {len(generated_tables)}")
@@ -832,6 +834,13 @@ def main(
         )
         for label in uncovered:
             typer.echo(f"    - {label}")
+    if unsatisfied_rules:
+        typer.echo(
+            "  ⚠️  Rules some rows still break after the retries (the value space may be too "
+            "small for the rule, or the columns it could redraw are keys):"
+        )
+        for label in unsatisfied_rules:
+            typer.echo(f"    - {label}")
 
     if metrics_count is not None:
         typer.echo(
@@ -859,10 +868,10 @@ def main(
 
 
 def _spec_of(file: Path) -> str:
-    """The spec a conforming model is written against: 0.6.0, 0.5.0, 0.4.0, 0.3.0, or 0.2.0
-    (DBML without `when`, a 0.5.0 `after`, `rollup` or `at_least` included)."""
+    """The spec a conforming model is written against: 0.7.0, 0.6.0, 0.5.0, 0.4.0, 0.3.0, or
+    0.2.0 (DBML without `when`, a 0.5.0 `after`, `rollup` or `at_least` included)."""
     version = str(load(file).version)
-    for minor in ("0.6", "0.5", "0.4", "0.3"):
+    for minor in ("0.7", "0.6", "0.5", "0.4", "0.3"):
         if version.startswith(minor):
             return f"{minor}.0"
     return "0.2.0"
@@ -958,7 +967,7 @@ def validate_command(
         ),
     ),
 ):
-    """Check that models conform to spec 0.6.0 (or 0.2.x-0.5.x), printing every issue with its path.
+    """Check that models conform to spec 0.7.0 (or 0.2.x-0.6.x), printing every issue with its path.
 
     Takes one or more files and/or --glob patterns. A metrics file (*.metrics.yml) is checked
     against metrics spec 0.2.0 and against its model; a dashboard (*.dashboard.yml) against
@@ -1078,7 +1087,7 @@ def convert_command(
 ):
     """Convert a model -- DBML, typically -- to a .model2data.yml document (spec 0.2.0, or
     0.3.0 when it has defects, 0.4.0 when it has `when`, 0.5.0 when an `after` is a list or
-    names a parent's column, 0.6.0 when it has `rollup` or `at_least`)."""
+    names a parent's column, 0.6.0 when it has `rollup` or `at_least`, 0.7.0 when a table has `rules`)."""
     try:
         model = load(file)
     except ModelError as error:

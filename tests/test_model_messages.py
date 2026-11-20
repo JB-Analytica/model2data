@@ -98,10 +98,10 @@ def test_a_key_with_both_pk_and_unique_says_to_write_two_keys():
 
 
 def test_a_newer_spec_says_to_upgrade():
-    issues = _issues({"model2data": "0.7.0", "tables": {"t": {"columns": COLUMNS}}})
+    issues = _issues({"model2data": "0.8.0", "tables": {"t": {"columns": COLUMNS}}})
     assert issues == [
-        "model2data: the document is written against spec 0.7.0, and this reader implements "
-        "spec 0.6.0 (0.2.x to 0.6.x). Upgrade model2data to read it."
+        "model2data: the document is written against spec 0.8.0, and this reader implements "
+        "spec 0.7.0 (0.2.x to 0.7.x). Upgrade model2data to read it."
     ]
 
 
@@ -229,7 +229,7 @@ TWO = {"a": "integer", "b": "integer"}
         ),
         pytest.param(
             {"model2data": "abc", "tables": {"t": {"columns": COLUMNS}}},
-            'model2data: must match the pattern ^0\\.[23456](\\.(0|[1-9][0-9]*))?$ (got "abc")',
+            'model2data: must match the pattern ^0\\.[234567](\\.(0|[1-9][0-9]*))?$ (got "abc")',
             id="version-pattern",
         ),
         pytest.param(

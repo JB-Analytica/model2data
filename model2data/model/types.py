@@ -1,4 +1,4 @@
-"""The model as typed values: what a spec 0.6.0 (or 0.2.x-0.5.x) document says, read.
+"""The model as typed values: what a spec 0.7.0 (or 0.2.x-0.6.x) document says, read.
 
 Every class is a plain, comparable dataclass, so `load(dump(m)) == m` means
 what it says. A value left out of the document is the class default (`None`,
@@ -126,6 +126,9 @@ class Table:
     # None when the document has no `defects`; an empty list keeps the table
     # clean under a run's defects preset.
     defects: Optional[list[Defect]] = None
+    # What every generated row must satisfy (spec 0.7.0, "Rules"): each entry a
+    # comparison mapping `{column: {operator: operand}}`, kept as the document wrote it.
+    rules: list[dict[str, Any]] = field(default_factory=list)
     extensions: dict[str, Any] = field(default_factory=dict)
 
     def primary_key(self) -> list[str]:

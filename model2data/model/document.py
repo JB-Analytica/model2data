@@ -145,6 +145,7 @@ def _table(table: Mapping) -> Table:
             for fk in table.get("foreign_keys") or []
         ],
         defects=[_defect(entry) for entry in table["defects"]] if "defects" in table else None,
+        rules=[copy.deepcopy(dict(rule)) for rule in table.get("rules") or []],
         extensions=_extensions(table),
     )
 
@@ -304,6 +305,11 @@ def uses_0_6(model: Model) -> bool:
     )
 
 
+def uses_0_7(model: Model) -> bool:
+    """Whether the model uses what spec 0.7.0 added: a table's `rules`."""
+    return any(table.rules for table in model.tables.values())
+
+
 def uses_0_5_after(after: Any) -> bool:
     """Whether an `after` is in a form spec 0.5.0 added: a list, or `<table>.<column>`."""
     return isinstance(after, list) or (isinstance(after, str) and "." in after)
@@ -313,14 +319,16 @@ def document_version(model: Model) -> Any:
     """The version the model's document is written against.
 
     The version the model was read with, unless the model uses what that
-    version does not have: 0.6.0 when it uses `rollup` or `at_least` and was
-    read as 0.2-0.5, 0.5.0 when it uses a list or a parent's column in
+    version does not have: 0.7.0 when it uses `rules` and was read as 0.2-0.6,
+    0.6.0 when it uses `rollup` or `at_least` and was read as 0.2-0.5, 0.5.0 when it uses a list or a parent's column in
     `after` and was read as
     0.2-0.4, 0.4.0 when it uses `when` and was read as 0.2 or 0.3, 0.3.0 when it uses `defects` or `incremental.history` and was read as
     0.2. A document without them is written as the version it was, as always.
     """
     version = model.version
     minor = str(version).split(".")[:2]
+    if uses_0_7(model) and minor in (["0", "2"], ["0", "3"], ["0", "4"], ["0", "5"], ["0", "6"]):
+        return "0.7.0"
     if uses_0_6(model) and minor in (["0", "2"], ["0", "3"], ["0", "4"], ["0", "5"]):
         return "0.6.0"
     if uses_0_5(model) and minor in (["0", "2"], ["0", "3"], ["0", "4"]):
@@ -358,6 +366,7 @@ def table_to_dict(table: Table) -> dict[str, Any]:
         _put(entry, "one_to_one", fk.one_to_one)
         foreign_keys.append(entry)
     _put(out, "foreign_keys", foreign_keys)
+    _put(out, "rules", copy.deepcopy(table.rules))
     if table.defects is not None:
         out["defects"] = [defect_to_dict(defect) for defect in table.defects]
     out.update(copy.deepcopy(table.extensions))

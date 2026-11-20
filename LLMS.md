@@ -23,7 +23,7 @@ install. If the person you're helping wants to *look at* or share the model rath
 its generation, point them there; the DBML guidance below applies to both.
 
 > **Two input formats.** Since 1.8, model2data reads a model as one YAML document,
-> `<name>.model2data.yml` ([spec 0.6.0](model2data/spec/README.md), with a JSON Schema at
+> `<name>.model2data.yml` ([spec 0.7.0](model2data/spec/README.md), with a JSON Schema at
 > `model2data/spec/model.schema.json` and a complete example at
 > `model2data/spec/examples/coffee_webshop.model2data.yml`), and DBML as supported input that it
 > converts to the same model. The DBML guidance below still holds; if you write the YAML form
@@ -270,6 +270,15 @@ on). `at_least: N` needs N × parents rows in the child table; with fewer, the s
 shortfall. In YAML both are spec 0.6.0 (`model2data: 0.6.0`). A rollup over a table with
 `incremental` cannot be generated with `--days`.
 
+**Rows that must obey a rule (YAML, spec 0.7.0).** A table's `rules` lists comparisons every
+row satisfies, between columns of the same row: `rules: [{home_team_id: {ne: {column:
+away_team_id}}}, {home_score: {ne: {column: away_score}}}]`. Operators `eq`, `ne`, `in`, `not_in`,
+`gt`, `gte`, `lt`, `lte`, `between`, `is_null`; the right side is a literal, `{column: name}` or
+`{run: as_of}`. A row that breaks a rule has the later column of it drawn again (up to 20
+rounds; a foreign key still names a parent; keys, rollups and a column a `when` names are left
+alone); a row where a column the rule reads is null is not held to it; a rule the values cannot
+meet is listed in the summary. A table with rules and `incremental` cannot run with `--days`.
+
 **Use composite keys for join/bridge tables and multi-column uniqueness**, via an `indexes { }`
 block:
 ```dbml
@@ -317,7 +326,7 @@ generated project), a `TableGroup` its `groups`.
   set `history: true` in the table's `incremental` and generate with `--days N`:
   `<table>_history` gets every version with `valid_from`, `valid_to` and `is_current`.
 - When the user names the numbers that matter (revenue, orders, conversion), write them in a
-  metrics file beside the model, `<stem>.metrics.yml` (metrics spec 0.1.0,
+  metrics file beside the model, `<stem>.metrics.yml` (metrics spec 0.2.0,
   `model2data/spec/metrics/README.md`): `measure: table.column` with `agg`, `count: table`,
   `ratio: {numerator, denominator}` or `expression: a - b` over metric names, and `where` filters
   (`table.column: value`, a list, or `{ne|in|not_in|gt|gte|lt|lte|between|is_null: ...}`, combined

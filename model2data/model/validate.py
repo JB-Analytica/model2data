@@ -1,4 +1,4 @@
-"""Does a document conform to spec 0.6.0 (or 0.2.x-0.5.x): the schema, then the checks beyond it.
+"""Does a document conform to spec 0.7.0 (or 0.2.x-0.6.x): the schema, then the checks beyond it.
 
 `check(document)` returns every issue it finds, each with the document path of
 the value at fault and a severity; it never stops at the first. The schema is
@@ -24,27 +24,29 @@ import jsonschema
 from jsonschema.exceptions import ValidationError
 
 from model2data.dbt.naming import dbt_identifier
+from model2data.generate import comparison as cmp
 from model2data.generate import kinds
 from model2data.generate.timeline import creation_column_name
 from model2data.model.errors import Issue, PathPart, Suggestion, format_path
 
-SPEC_VERSION = "0.6.0"
+SPEC_VERSION = "0.7.0"
 # The columns `incremental.history` adds to `<table>_history`.
 HISTORY_COLUMNS = ("valid_from", "valid_to", "is_current")
 # The minor versions this reader implements. 0.3.0 only adds `defects` and
 # `incremental.history`, 0.4.0 only `when`, 0.5.0 only a list or a parent's
-# `<table>.<column>` in `after`, 0.6.0 only `rollup` and `at_least`, so an older
+# `<table>.<column>` in `after`, 0.6.0 only `rollup` and `at_least`, 0.7.0 only a table's
+# `rules`, so an older
 # document reads exactly as it did; it just cannot use them.
-READS = ("0.2", "0.3", "0.4", "0.5", "0.6")
+READS = ("0.2", "0.3", "0.4", "0.5", "0.6", "0.7")
 _URL = "https://www.jbanalytica.com/model2data/spec/{}/model.schema.json"
 SCHEMA_URL = _URL.format(SPEC_VERSION)
 
 
 def schema_url(version: Any) -> str:
     """The schema URL a document of `version` points editors at: 0.2.0's for a 0.2 one,
-    0.3.0's for a 0.3 one, 0.4.0's for a 0.4 one, 0.5.0's for a 0.5 one, the current one
-    otherwise."""
-    older = {"0.2": "0.2.0", "0.3": "0.3.0", "0.4": "0.4.0", "0.5": "0.5.0"}.get(
+    0.3.0's for a 0.3 one, 0.4.0's for a 0.4 one, 0.5.0's for a 0.5 one, 0.6.0's for a 0.6 one,
+    the current one otherwise."""
+    older = {"0.2": "0.2.0", "0.3": "0.3.0", "0.4": "0.4.0", "0.5": "0.5.0", "0.6": "0.6.0"}.get(
         _minor(version) or ""
     )
     return _URL.format(older) if older else SCHEMA_URL
@@ -52,7 +54,7 @@ def schema_url(version: Any) -> str:
 
 def _minor(version: Any) -> Optional[str]:
     if isinstance(version, float):
-        return {0.2: "0.2", 0.3: "0.3", 0.4: "0.4", 0.5: "0.5", 0.6: "0.6"}.get(version)
+        return {0.2: "0.2", 0.3: "0.3", 0.4: "0.4", 0.5: "0.5", 0.6: "0.6", 0.7: "0.7"}.get(version)
     if isinstance(version, str):
         return ".".join(version.split(".")[:2])
     return None
@@ -60,7 +62,7 @@ def _minor(version: Any) -> Optional[str]:
 
 @lru_cache(maxsize=1)
 def schema() -> dict[str, Any]:
-    """The packaged, normative JSON Schema of spec 0.6.0, which also reads 0.2-0.5 documents."""
+    """The packaged, normative JSON Schema of spec 0.7.0, which also reads 0.2-0.6 documents."""
     text = resources.files("model2data").joinpath("spec/model.schema.json").read_text("utf-8")
     return json.loads(text)
 
@@ -104,7 +106,7 @@ def _version_issues(document: Mapping) -> list[Issue]:
     version = document.get("model2data")
     if version is None:
         return []  # reported by the schema as missing
-    if version in (0.2, 0.3, 0.4, 0.5, 0.6) and not isinstance(version, bool):
+    if version in (0.2, 0.3, 0.4, 0.5, 0.6, 0.7) and not isinstance(version, bool):
         return []
     if isinstance(version, str):
         parts = version.split(".")
@@ -115,7 +117,7 @@ def _version_issues(document: Mapping) -> list[Issue]:
                 Issue(
                     "model2data",
                     f"the document is written against spec {version}, and this reader "
-                    f"implements spec {SPEC_VERSION} (0.2.x to 0.6.x). "
+                    f"implements spec {SPEC_VERSION} (0.2.x to 0.7.x). "
                     + (
                         "Convert a 0.1 model, which is DBML, with `model2data convert`."
                         if parts[:2] == ["0", "1"]
@@ -590,8 +592,212 @@ class _Checks:
             )
         self._after_cycles(key, columns)
         self._grain_and_incremental(key, table, columns)
+        if "rules" in table:
+            self._rules(key, table)
         if "defects" in table:
             self._defects(key, table, columns, fk_children)
+
+    # -- rules ---------------------------------------------------------
+    def _typed(self, key: str, name: str) -> cmp.Typed:
+        """A column of the table as a side of a comparison."""
+        column = self.columns[key][name]
+        type_text = column.get("type")
+        type_text = type_text if isinstance(type_text, str) else ""
+        enum = self.enum_named(type_text)
+        kind: cmp.ColumnKind = "text"
+        if enum is not None:
+            kind = "enum"
+        elif kinds.is_boolean_type(type_text):
+            kind = "boolean"
+        elif kinds.is_integer_type(type_text):
+            kind = "integer"
+        elif kinds.is_decimal_type(type_text):
+            kind = "decimal"
+        elif (temporal := kinds.temporal_kind(type_text)) is not None:
+            kind = temporal
+        return cmp.Typed(name, kind, enum[0] if enum else None)
+
+    def _range(self, key: str, name: str) -> tuple[Optional[float], Optional[float]]:
+        """The `min` and `max` hints of a numeric column, as numbers (None when there is none)."""
+        generate = _mapping(self.columns[key][name].get("generate"))
+        low, high = generate.get("min"), generate.get("max")
+        return (
+            low if isinstance(low, (int, float)) and not isinstance(low, bool) else None,
+            high if isinstance(high, (int, float)) and not isinstance(high, bool) else None,
+        )
+
+    def _rules(self, key: str, table: Mapping) -> None:
+        """Each rule is a comparison between columns of the table's own row (spec 0.7.0)."""
+        base = ["tables", key, "rules"]
+        rules = table.get("rules")
+        if not isinstance(rules, list):
+            return  # the schema has said so
+        if rules:
+            self._needs_0_7(base, "rules")
+        columns = self.columns[key]
+        for index, rule in enumerate(rules):
+            if not isinstance(rule, Mapping):
+                continue
+            for name, condition in rule.items():
+                if isinstance(name, str) and name.startswith("x-"):
+                    continue
+                at: list[PathPart] = [*base, index, name]
+                if name not in columns:
+                    close = difflib.get_close_matches(str(name), list(columns), n=1)
+                    self.add(
+                        at,
+                        f"names {_show(name)}, which is not a column of {key}"
+                        + (f" (did you mean {close[0]}?)" if close else ""),
+                    )
+                    continue
+                if isinstance(condition, Mapping):
+                    items = [
+                        (op, operand, [*at, op])
+                        for op, operand in condition.items()
+                        if not str(op).startswith("x-")
+                    ]
+                elif isinstance(condition, list):
+                    items = [("in", condition, at)]
+                else:
+                    items = [("eq", condition, at)]
+                for operator, operand, where in items:
+                    self._rule_comparison(key, name, operator, operand, where)
+
+    def _rule_comparison(
+        self, key: str, name: str, operator: str, operand: Any, at: list[PathPart]
+    ) -> None:
+        columns = self.columns[key]
+        if isinstance(operand, Mapping) and "via" in operand:
+            self.add(
+                at,
+                "`via`, a rule across a foreign key, is not supported yet: a rule compares "
+                "columns of one row of this table",
+            )
+            return
+        problems = cmp.operand_problems(operator, operand, allow_run=True)
+        for problem in problems:
+            self.add([*at, *problem.path], problem.message)
+        if problems:
+            return
+        left = self._typed(key, name)
+        message = cmp.order_problem(operator, left)
+        if message is not None:
+            self.add(at, message)
+            return
+        if "rollup" in _mapping(columns[name].get("generate")):
+            self.add(
+                at,
+                f"{name} is a rollup, computed from the child rows after every row is drawn, "
+                "so a rule cannot hold it",
+            )
+            return
+        if operator == "is_null":
+            return
+        other = cmp.column_operand(operand) if operator in cmp.VALUE_OPERATORS else None
+        if other is not None:
+            self._rule_column(key, name, left, operator, other, at)
+        elif cmp.run_operand(operand) is not None:
+            message = cmp.kind_problem(operator, left, cmp.AS_OF)
+            if message is not None:
+                self.add(at, message)
+        else:
+            values = operand if isinstance(operand, list) else [operand]
+            enum = self.enum_named(columns[name].get("type"))
+            bad = False
+            for position, value in enumerate(values):
+                message = cmp.value_problem(
+                    left.kind,
+                    value,
+                    type_name=str(columns[name].get("type")),
+                    members=enum[1] if enum else None,
+                )
+                if message is not None:
+                    bad = True
+                    self.add([*at, position] if isinstance(operand, list) else at, message)
+            if not bad and cmp.is_numeric(left.kind):
+                self._rule_bounds(key, name, operator, operand, at)
+
+    def _rule_column(
+        self, key: str, name: str, left: cmp.Typed, operator: str, other: str, at: list[PathPart]
+    ) -> None:
+        columns = self.columns[key]
+        where = [*at, "column"] if at[-1] == operator else at
+        if other not in columns:
+            close = difflib.get_close_matches(other, list(columns), n=1)
+            self.add(
+                where,
+                f"names {_show(other)}, which is not a column of {key}"
+                + (f" (did you mean {close[0]}?)" if close else ""),
+            )
+            return
+        if "rollup" in _mapping(columns[other].get("generate")):
+            self.add(
+                where,
+                f"{other} is a rollup, computed from the child rows after every row is drawn, "
+                "so a rule cannot hold it",
+            )
+            return
+        message = cmp.kind_problem(operator, left, self._typed(key, other))
+        if message is not None:
+            self.add(where, message)
+            return
+        if other == name:
+            if operator in ("ne", "gt", "lt"):
+                words = {"ne": "differs from", "gt": "is above", "lt": "is below"}[operator]
+                self.add(at, f"can never hold: {name} never {words} itself")
+            return
+        if cmp.is_numeric(left.kind):
+            self._rule_bounds(key, name, operator, {"column": other}, at)
+
+    def _rule_bounds(
+        self, key: str, name: str, operator: str, operand: Any, at: list[PathPart]
+    ) -> None:
+        """Warn-free, hint-based check: an error when the generation hints make the rule
+        impossible (a `gt` between two numbers whose ranges leave no room for it)."""
+        low, high = self._range(key, name)
+        other = cmp.column_operand(operand)
+        if other is not None:
+            other_low, other_high = self._range(key, other)
+            subject = f"{other} is generated {self._bounds(other_low, other_high)}"
+        elif isinstance(operand, list) and operator in ("in", "not_in"):
+            return
+        elif isinstance(operand, list):
+            other_low, other_high = operand[0], operand[1]
+            subject = f"the rule's range is {operand[0]} to {operand[1]}"
+        else:
+            other_low = other_high = operand
+            subject = f"the rule's value is {operand}"
+        if low is None and high is None:
+            return
+        never = False
+        if operator == "gt":
+            never = high is not None and other_low is not None and high <= other_low
+        elif operator == "gte":
+            never = high is not None and other_low is not None and high < other_low
+        elif operator == "lt":
+            never = low is not None and other_high is not None and low >= other_high
+        elif operator == "lte":
+            never = low is not None and other_high is not None and low > other_high
+        elif operator in ("eq", "between"):
+            never = (high is not None and other_low is not None and high < other_low) or (
+                low is not None and other_high is not None and other_high < low
+            )
+        elif operator == "ne":
+            never = (
+                None not in (low, high, other_low, other_high)
+                and low == high == other_low == other_high
+            )
+        if never:
+            self.add(
+                at,
+                f"can never hold: {name} is generated {self._bounds(low, high)}, and {subject}",
+            )
+
+    @staticmethod
+    def _bounds(low: Optional[float], high: Optional[float]) -> str:
+        if low is not None and high is not None:
+            return f"between {low} and {high}"
+        return f"at least {low}" if low is not None else f"at most {high}"
 
     def _grain_and_incremental(self, key: str, table: Mapping, columns: dict[str, dict]) -> None:
         base = ["tables", key]
@@ -721,6 +927,17 @@ class _Checks:
             path,
             f"`{what}` is spec 0.6.0, and the document is written against {self.minor}: "
             "write `model2data: 0.6.0`",
+        )
+        return True
+
+    def _needs_0_7(self, path: list[PathPart], what: str) -> bool:
+        """Report what 0.7.0 added (`what`) in a 0.2-0.6 document; True when it was reported."""
+        if self.minor not in ("0.2", "0.3", "0.4", "0.5", "0.6"):
+            return False
+        self.add(
+            path,
+            f"`{what}` is spec 0.7.0, and the document is written against {self.minor}: "
+            "write `model2data: 0.7.0`",
         )
         return True
 
@@ -1507,7 +1724,7 @@ class _Checks:
                         suggestion=Suggestion(
                             format_path(path),
                             value,
-                            None if self.minor in (None, "0.5", "0.6") else "0.5.0",
+                            None if self.minor in (None, "0.5", "0.6", "0.7") else "0.5.0",
                         ),
                     )
                 )

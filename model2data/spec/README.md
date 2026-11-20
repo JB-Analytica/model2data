@@ -1,4 +1,4 @@
-# The model2data model — spec 0.6.0
+# The model2data model — spec 0.7.0
 
 A model2data model is one document: the tables of a data model, their columns and keys, the
 relationships between them, the enums a column can be typed as, and how every column's values
@@ -79,7 +79,7 @@ The spec is versioned on its own, apart from the engine and the studio, with
 [semantic versioning](https://semver.org). The version is in the schema's `$id`:
 
 ```
-https://www.jbanalytica.com/model2data/spec/0.6.0/model.schema.json
+https://www.jbanalytica.com/model2data/spec/0.7.0/model.schema.json
 ```
 
 A patch release changes wording only. A minor release adds something optional. A major release
@@ -111,6 +111,13 @@ key numbers the rows 1 to n, in order (see [Keys](#keys)).
 document is a 0.6.0 document that uses neither, and reads as it always read. A document that
 uses either says `model2data: 0.6.0`, and either in a document that says an earlier version is
 an error. A writer writes the version the document was read with, and 0.6.0 once it uses either.
+
+0.7.0 adds a table's [`rules`](#rules) and the [comparison grammar](#comparisons) they are
+written in, and nothing else so far: a 0.2 to 0.6 document is a 0.7.0 document that uses none
+of it, and reads as it always read. A document that uses `rules` says `model2data: 0.7.0`, and
+`rules` in a document that says an earlier version is an error. A writer writes the version the
+document was read with, and 0.7.0 once it uses `rules`. The metrics spec's `{column: ...}`
+operand, which uses the same grammar, is metrics spec 0.2.0.
 
 0.2.0 replaced 0.1.0, which carried hints as JSON inside DBML notes. See
 [From 0.1](#from-01).
@@ -376,6 +383,101 @@ does without it. With fewer rows than N × parents, as many parents as the rows 
 and the reader says so; it is not an error. A row so given its parent keeps it: where a date of
 the row must not fall before the parent's (`after`), the date moves instead.
 
+### Comparisons
+
+A **comparison** says something about a column's value in a row: `{<column>: {<operator>:
+<operand>}}`. A table's [`rules`](#rules) are comparisons, and so is a `where` in the [metrics
+spec](metrics/README.md#filters); both read this one grammar, and later parts of the spec use
+it too. A condition is a value (`eq`), a list of values (`in`), or a mapping of operators, every
+one of which must hold.
+
+| Operator | Holds when the column |
+|----------|------------------------|
+| `eq: v` | equals `v` |
+| `ne: v` | differs from `v` |
+| `in: [v, ...]` | equals one of them |
+| `not_in: [v, ...]` | equals none of them |
+| `gt`, `gte`, `lt`, `lte: v` | is greater than, at least, less than, at most `v` |
+| `between: [a, b]` | is at least `a` and at most `b` |
+| `is_null: true` / `false` | is null / is not null |
+
+`v` is a **literal** or, for `eq`, `ne`, `gt`, `gte`, `lt` and `lte`, a reference:
+
+- `{column: <name>}`: the value of that column **in the same row**. The name is a column of the
+  table the comparison is on (in a metrics file, a column path the metric reaches).
+- `{run: as_of}`: the run's anchor timestamp, the `as_of` the run is anchored on (midnight of
+  that day). It is the one value from outside the row. It is for the model; a metric has no
+  run, so a metrics file cannot use it.
+
+`in`, `not_in` and `between` take literal lists, never a reference.
+
+**Kinds.** The kinds are those of [Generation hints](#generation-hints). Two things are compared
+only when they are of one kind: numbers (an integer and a decimal alike) with numbers, a date
+and a timestamp with each other and with `{run: as_of}`, an enum with the same enum, text with
+text, a boolean with a boolean. A number is not compared with a date, nor an enum with text. The
+order operators (`gt`, `gte`, `lt`, `lte`, `between`) apply to numbers, dates and timestamps
+only: an enum's order is not its members' and text order depends on a collation, so list the
+values with `in` instead. A literal is checked against its column's kind: a member of the enum,
+`true` or `false`, a number (a whole one for an integer column), an ISO 8601 date or timestamp
+string with no time zone, or text.
+
+**Nulls** behave as in SQL: a comparison with a null on either side is false, and `is_null` is
+the way to test for one. (Rules treat a null a little differently: see [Rules](#rules).)
+
+### Rules
+
+`rules` on a table (spec 0.7.0) lists comparisons that every generated row of the table
+satisfies, between columns of the same row:
+
+```yaml
+games:
+  rules:
+    - {home_team_id: {ne: {column: away_team_id}}}   # a team never plays itself
+    - {home_score: {ne: {column: away_score}}}       # no draws
+    - {played_at: {lte: {run: as_of}}}               # nothing is dated in the future
+  columns:
+    id: {type: bigint, pk: true}
+    home_team_id: {type: bigint, not_null: true, references: teams.id}
+    away_team_id: {type: bigint, not_null: true, references: teams.id}
+    home_score: {type: int, generate: {min: 0, max: 5}}
+    away_score: {type: int, generate: {min: 0, max: 5}}
+    played_at: timestamp
+```
+
+Each entry is a [comparison](#comparisons) whose right-hand side is a literal, a column of the
+same table (`{column: ...}`) or the run's `as_of`. Several columns in one entry are several
+rules. After a table's columns are drawn, every row that breaks a rule has one column of it
+drawn again, until the rule holds:
+
+- **The column drawn again** is the one that comes **later in the table's column order**, of the
+  columns the rule reads (above, `away_team_id` and `away_score`; the earlier column keeps what
+  it drew). A column that cannot be drawn again without breaking something else is passed over
+  for the next one: a key (`pk`, `unique`, a column of a `keys` entry), a rollup, a foreign key
+  with `at_least`, a column another column's `when` names, and a column copied from a parent
+  through a reference. A rule with none left is not forced (see below).
+- **A value drawn again** is drawn as the column is drawn without the rule: by its type, its
+  `min`, `max`, `distribution` and `weights`, and a foreign key from the rows of its parent, so
+  it still names a parent that exists. It is never null, and only the rows that broke the rule
+  are touched: a column with `when` keeps the nulls on the rows it does not match.
+- **A null operand** exempts the row, as an SQL check constraint does: a rule on a nullable
+  column does not turn nulls into values, so `{home_score: {ne: {column: away_score}}}` holds
+  on a row where either score is null. Write `is_null: false` as a rule to say a column has a
+  value; a `not_null` column says the same.
+- **The retries are bounded**, as a composite key's are: 20 rounds, each drawing again the rows
+  still breaking each rule once, the later column for the first ten and, for a row still
+  breaking the rule after that, the other columns of it in turn (so a `gte` that the later
+  column's range cannot meet for some value of the earlier one is met by moving the earlier
+  one). A rule a column's value space cannot satisfy (`ne` between two columns that can each
+  hold one value) leaves rows that break it, and the reader reports each rule left unmet with
+  the number of rows: it is not an error.
+- **Determinism.** The redraws come from a stream of their own, derived from the run's seed and
+  the table, and no other stream moves: a table without `rules` generates what it did before,
+  and in a table with them only the rows that broke a rule differ.
+- **A table with `incremental`** that inserts or updates rows after the first day is refused
+  when days are generated: the rules hold for the first day's rows only.
+
+A rule across a foreign key (`{column: x, via: y}`) is not supported yet, and is an error.
+
 ### Modelling
 
 `role` and `grain` on a table and `measure` on a column steer what a consumer derives from the
@@ -565,8 +667,8 @@ reports each failure with the path of the value (`tables.orders.columns.status.g
 12. A `measure` aggregating by `sum`, `average`, `min`, `max` or `median` is on a numeric column.
 13. `defects`, `run.defects` and `incremental.history` only in a document of spec 0.3.0 or
     later, `when` only in a document of spec 0.4.0 or later, a list or a parent's column in
-    `after` only in one of 0.5.0 or later, and `rollup` and `at_least` only in one of 0.6.0 or
-    later.
+    `after` only in one of 0.5.0 or later, `rollup` and `at_least` only in one of 0.6.0 or
+    later, and `rules` only in one of 0.7.0 or later.
 14. Every defect has exactly one of `count` and `share`, names a column of its table, and gives a
     `type` and `column` no other entry of the table gives. `duplicate_keys` names a primary key
     or a unique column, or its table has a primary key; when `run` gives the table's rows, its
@@ -596,6 +698,14 @@ reports each failure with the path of the value (`tables.orders.columns.status.g
     a temporal one. No `when`, `after` or reference names a rolled-up column, and rollups do
     not read each other in a cycle.
 18. `at_least` is on a foreign key that is not unique, `pk` or a one-column key.
+19. Every [rule](#rules) is a mapping of columns of its own table to conditions; its operator is
+    one of the [comparison](#comparisons) grammar's, its operand has the shape the operator
+    takes, a `{column: ...}` names another column of the table, `{run: ...}` is `{run: as_of}`,
+    the two sides are of one kind and an order operator is on a number, date or timestamp, a
+    literal fits its column, and `via` is not used. No rule names a rollup column. A rule the
+    generation hints make impossible is an error: `ne`, `gt` or `lt` between a column and
+    itself, and a comparison between numeric columns (or a column and a literal) whose `min` and
+    `max` leave no room for it (`gt` where the left column's `max` is below the right's `min`).
 
 ### Warnings
 

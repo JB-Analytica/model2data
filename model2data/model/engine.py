@@ -115,6 +115,7 @@ def _table_def(model: Model, key: str, table: Table) -> TableDef:
         description=table.description,
         composite_keys=composite_keys,
         note=_table_hints(table),
+        rules=[dict(rule) for rule in table.rules],
     )
 
 

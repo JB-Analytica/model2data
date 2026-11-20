@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+Models and metrics files that use none of what is added here read and generate exactly as in
+1.22.0: the same model, seed and `--as-of` write the same files.
+
+### Added
+- **`rules` on a table (model spec 0.7.0): comparisons every generated row satisfies.** Each is
+  a comparison between columns of the same row, or against a constant or the run's anchor:
+  `rules: [{home_team_id: {ne: {column: away_team_id}}}, {home_score: {ne: {column: away_score}}}]`.
+  After a table's columns are drawn, a row that breaks a rule has the column that comes later in
+  the table drawn again (a foreign key still names a parent, a column with `when` keeps its
+  nulls), up to 20 rounds from a stream of its own, so no other column or table changes. Keys,
+  rollups, a foreign key with `at_least` and a column a `when` names are never drawn again; a row
+  where a column the rule reads is null is not held to it, as with an SQL check constraint. A rule
+  the values cannot satisfy is listed in the summary (`generate.core.get_unsatisfied_rules()`),
+  not an error. `validate` reports a rule that names a column the table does not have, compares
+  things of different kinds, uses an order operator on text, an enum or a boolean, can never hold
+  by the columns' `min` and `max`, compares a column with itself, or uses `via` (a rule across a
+  foreign key is not supported yet). A table with rules and `incremental` is refused with
+  `--days`: the rules hold for the first day's rows only.
+- **The comparison grammar, as one module.** `model2data.generate.comparison` parses, checks and
+  evaluates `{<column>: {<operator>: <operand>}}`: the operators of a metric's `where` (`eq`,
+  `ne`, `in`, `not_in`, `gt`, `gte`, `lt`, `lte`, `between`, `is_null`) and two new operands,
+  `{column: <name>}` (that column in the same row) and `{run: as_of}` (the run's anchor, for the
+  model only). Metrics filters and table rules read it, so they cannot disagree. The spec README
+  has a "Comparisons" and a "Rules" section.
+- **A metric's filter can compare two columns (metrics spec 0.2.0).** `games.winner_team_id: {eq:
+  {column: games.home_team_id}}` counts the games the home team won. The other column is on the
+  metric's table or one it reaches along exactly one path, of a kind the first can be compared
+  with. It compiles into the known values, the dbt tests, the Ossie export and the Lightdash
+  export (in the metric's `sql`, as a filter list holds values only). A metrics file that uses it
+  says `model2data-metrics: 0.2.0`; one that says 0.1.0 and uses it is an error, and a 0.1.0
+  file reads as before. `metric_values.json` says `0.2.0` only when a metric uses it.
+
+### Changed
+- `validate` reads model spec 0.7.0 (0.2 to 0.6 documents as before) and metrics spec 0.2.0
+  (0.1 files as before), and prints the version a metrics file says.
+
 ## [1.22.0] - 2026-11-20
 
 Two things change what a run writes, both on purpose and both listed first. A model that has no

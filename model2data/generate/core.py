@@ -35,6 +35,11 @@ from model2data.generate.rollups import (
     has_rollups,
     protected_rows,
 )
+from model2data.generate.rules import (
+    apply_rules,
+    get_unsatisfied_rules,  # noqa: F401  (the CLI reads it from here, beside the other reports)
+    reset_rules_state,
+)
 from model2data.generate.timeline import _resolve_anchor, order_row_times
 from model2data.generate.when import SeedFor, apply_when
 from model2data.parse.dbml import ColumnDef, TableDef
@@ -222,6 +227,7 @@ def generate_data_from_dbml(
     reset_dedup_state()
     reset_duplicate_unique_columns()
     reset_capped_tables()
+    reset_rules_state()
     reset_row_pools()
 
     # ---------------------------------------------------------
@@ -396,6 +402,27 @@ def generate_data_from_dbml(
         )
         if table_rules:
             df = _hold_parent_rules(df, table_def, table_rules, generated, as_of, profile)
+        if table_def.rules:
+            df = apply_rules(
+                df,
+                table_def,
+                table_name=table_name,
+                fk_pools=_fk_pools(df, table_def, table_name, fk_lookup, generated),
+                locked=_rule_locked_columns(table_def, table_name, attribute_refs),
+                seed=(
+                    _table_stream_seed(
+                        seed,
+                        f"{table_name}|rules",
+                        table_seeds.get(table_name) if table_seeds else None,
+                    )
+                    if seed is not None
+                    else None
+                ),
+                as_of=as_of,
+                run_anchor=_midnight(as_of),
+                time_profile=profile,
+                skew=skew,
+            )
 
         df = _coerce_integer_dtypes(df, table_def)
         generated[table_name] = df
@@ -584,6 +611,53 @@ def _hold_parent_rules(
             df, table_def, as_of=as_of, time_profile=profile, rows=sorted(moved), floors=floors
         )
     return df
+
+
+def _fk_pools(
+    df: pd.DataFrame,
+    table_def: TableDef,
+    table_name: str,
+    fk_lookup: dict[tuple[str, str], tuple[str, str]],
+    generated: dict[str, pd.DataFrame],
+) -> dict[str, Optional[pd.Series]]:
+    """Each foreign-key column of the table with the parent values it draws from, None
+    when the parent's rows are not there (yet)."""
+    pools: dict[str, Optional[pd.Series]] = {}
+    for column in table_def.columns:
+        target = fk_lookup.get((table_name, column.name))
+        if target is None:
+            continue
+        parent_table, parent_column = target
+        parent = df if parent_table == table_name else generated.get(parent_table)
+        pools[column.name] = (
+            parent[parent_column] if parent is not None and parent_column in parent else None
+        )
+    return pools
+
+
+def _rule_locked_columns(
+    table_def: TableDef, table_name: str, attribute_refs: list[dict]
+) -> set[str]:
+    """The columns a table's `rules` may not draw again: its keys, a column copied from a
+    parent's attribute, a rollup, a foreign key with `at_least` and a column a `when` names
+    (see generate.rules)."""
+    locked = {
+        column.name
+        for column in table_def.columns
+        if "pk" in column.settings
+        or "unique" in column.settings
+        or "rollup" in (column.note or {})
+        or at_least_of(column)
+    }
+    for key in table_def.composite_keys:
+        locked.update(key.get("columns") or [])
+    # A column another column's `when` reads decides which rows that one holds a value on.
+    for column in table_def.columns:
+        locked.update((column.note or {}).get("when") or {})
+    locked.update(
+        ref["source_column"] for ref in attribute_refs if ref["source_table"] == table_name
+    )
+    return locked
 
 
 def _midnight(as_of: AsOf) -> datetime:

@@ -5,7 +5,7 @@
 | Command | Does | Exit |
 |---|---|---|
 | `model2data --file M` | same as `model2data generate --file M` | see below |
-| `model2data validate M...` | check models against spec 0.6.0, `*.metrics.yml` files against the metrics spec and their model (`--model M`, else the model beside it with the same stem), and `*.dashboard.yml` files as `dashboard check` does | 0 conforms (warnings allowed), 1 any error |
+| `model2data validate M...` | check models against spec 0.7.0, `*.metrics.yml` files against the metrics spec and their model (`--model M`, else the model beside it with the same stem), and `*.dashboard.yml` files as `dashboard check` does | 0 conforms (warnings allowed), 1 any error |
 | `model2data convert M` | print M as `.model2data.yml`; `-o FILE` writes it, `--force` overwrites | 0 ok, 1 unreadable model or output exists |
 | `model2data metrics list -f M [--metrics F]` | every metric: the file's, then the inferred ones | 0, 1 on a model or metrics error |
 | `model2data metrics export -f M [--metrics F] --to ossie\|lightdash` | the model and its metrics as Apache Ossie 0.1.1, or as Lightdash meta in one dbt properties file for the staging models; `-o FILE` writes it, `--force` overwrites | 0, 1 on an error or an existing output, 2 on another `--to` |
@@ -65,14 +65,14 @@ columns. Add `not_null` to every column that must always have a value.
   `distinct`, `skew`, `after`, `business_hours`, `growth`, `seasonality`, `transitions`,
   `when`, `rollup`, `at_least`.
 - Table: `columns`, `description`, `color`, `role`, `grain`, `keys`, `foreign_keys`,
-  `incremental`, `defects`.
+  `incremental`, `rules`, `defects`.
 - Top level: `model2data` (spec version), `name`, `description`, `enums`, `tables`,
   `relationships`, `groups`, `run`.
 
 Each key in use (this model validates):
 
 ```yaml
-model2data: 0.6.0
+model2data: 0.7.0
 name: saas
 enums:
   plan_tier: [free, pro, enterprise]
@@ -165,6 +165,17 @@ the dbt test `model2data_rollup`, always at severity error. A rollup over a tabl
 no account without an invoice). Pair it with a rollup so no total is 0 by accident. With fewer
 rows than N × parents the summary lists the shortfall; raise the table's rows. Not on a unique
 foreign key.
+
+`rules` on a table (spec 0.7.0, which the model then names) lists comparisons every row
+satisfies, between columns of the same row: `rules: [{home_team_id: {ne: {column: away_team_id}}},
+{home_score: {ne: {column: away_score}}}]`. Operators: `eq`, `ne`, `in`, `not_in`, `gt`, `gte`, `lt`,
+`lte`, `between`, `is_null`; the right-hand side is a literal, `{column: other_column}` or
+`{run: as_of}` (the run's anchor); order operators compare numbers, dates and timestamps only.
+After a table is drawn, a row that breaks a rule has the later of its columns drawn again (a foreign
+key still names a parent), up to 20 rounds; a rule a column's value space cannot meet is listed
+in the summary. A row where a column the rule reads is null is not held to it. Keys, rollups and
+a column a `when` names are not drawn again. A rule across a foreign key (`via`) is not supported
+yet, and a table with rules and `incremental` cannot run with `--days`.
 
 A reference onto a parent's plain column next to a foreign key to the same parent
 (`unit_price: {references: products.price}` beside `product_id: {references: products.id}`)

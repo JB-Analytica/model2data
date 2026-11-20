@@ -37,6 +37,8 @@ class TableDef:
     composite_keys: list[dict] = field(default_factory=list)
     # Table-level hints: `role` and `grain`, when the model sets them.
     note: Optional[dict] = None
+    # The table's `rules`: comparison mappings every generated row satisfies.
+    rules: list[dict] = field(default_factory=list)
 
 
 # Many-to-many (`<>`) refs generate nothing, so they are not in the refs
