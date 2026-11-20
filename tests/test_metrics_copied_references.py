@@ -165,3 +165,32 @@ def test_the_lightdash_export_joins_products_without_a_warning():
     items = next(m for m in export.models if m["name"] == "stg_order_items")
     joined = [join["join"] for join in items["config"]["meta"]["joins"]]
     assert "stg_products" in joined
+
+
+def test_a_unique_column_counts_as_the_parent_key():
+    document = {
+        "model2data": "0.6.0",
+        "name": "catalogue",
+        "tables": {
+            "products": {
+                "columns": {
+                    "code": {"type": "text", "unique": True},
+                    "price": {"type": "numeric"},
+                },
+            },
+            "lines": {
+                "columns": {
+                    "line_no": {"type": "int", "pk": True},
+                    "product_code": {"type": "text", "references": "products.code"},
+                    "unit_price": {"type": "numeric", "references": "products.price"},
+                }
+            },
+        },
+    }
+    model = from_dict(document)
+    assert model.is_key_column("products", "code")
+    assert not model.is_key_column("products", "price")
+    assert model.is_key_column("lines", "line_no")
+    assert not model.is_key_column("missing", "code")
+    assert model.copies("lines", "unit_price")
+    assert not model.copies("lines", "product_code")

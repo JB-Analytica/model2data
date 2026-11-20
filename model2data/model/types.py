@@ -201,8 +201,8 @@ class Model:
     def is_key_column(self, table: str, column: str) -> bool:
         """A column the generator reads as one row per value: a one-column key, or `id`.
 
-        That is the table's single-column primary key, a single-column unique key
-        (`unique: true` or `keys: [{unique: [c]}]`), or a column named `id`.
+        That is the table's single-column primary key, a `unique: true` column (a
+        one-column unique key always reads as one), or a column named `id`.
         """
         if column.lower() == "id":
             return True
@@ -210,8 +210,6 @@ class Model:
         if found is None:
             return False
         if found.primary_key() == [column]:
-            return True
-        if any(key.columns == [column] for key in found.keys if key.kind in ("pk", "unique")):
             return True
         own = found.columns.get(column)
         return own is not None and own.unique
