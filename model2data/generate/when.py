@@ -33,7 +33,7 @@ are put back as they were afterwards. A model without `when` never reaches this 
 from __future__ import annotations
 
 import random
-from collections.abc import Iterator, Mapping
+from collections.abc import Collection, Iterator, Mapping
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from typing import Any, Callable, Optional
@@ -41,13 +41,14 @@ from typing import Any, Callable, Optional
 import faker.generator
 import pandas as pd
 
-from model2data.generate import kinds
+from model2data.generate import kinds, windows
 from model2data.generate.faker import AsOf, generate_column_values
 from model2data.generate.options import TimeProfile
 from model2data.generate.timeline import (
     _build_dependencies,
     _format_value,
     _parse_value,
+    _resolve_anchor,
     _topological_order,
     column_business_hours,
     place_after,
@@ -66,6 +67,21 @@ def conditions(column: ColumnDef) -> Optional[dict[str, list]]:
 def when_columns(table_def: TableDef) -> list[ColumnDef]:
     """The table's columns that carry `when`, in table order."""
     return [column for column in table_def.columns if conditions(column) is not None]
+
+
+def null_unmatched(frame: pd.DataFrame, table_def: TableDef, column: ColumnDef) -> None:
+    """Null `column` of `frame` on the rows its `when` does not match, in place; draws nothing.
+
+    What a derived column's `when` does (generate.derive): the derivation decides the value
+    on the rows that match, so nothing is filled.
+    """
+    by_name = {other.name: other for other in table_def.columns}
+    match = matching(frame, by_name, conditions(column) or {})
+    values = frame[column.name].tolist()
+    for row, matches in enumerate(match):
+        if not matches:
+            values[row] = None
+    frame[column.name] = pd.Series(values, index=frame.index, dtype=object)
 
 
 def _is_null(value: Any) -> bool:
@@ -134,7 +150,9 @@ class _Order:
         temporal = [
             column
             for column in table_def.columns
-            if column.name in frame.columns and _temporal_kind(column) is not None
+            if column.name in frame.columns
+            and _temporal_kind(column) is not None
+            and "derive" not in (column.note or {})
         ]
         self.deps = _build_dependencies(table_def, self.by_name, temporal)
         self.order = _topological_order(table_def, self.deps)
@@ -212,8 +230,11 @@ def apply_when(
     time_profile: Optional[TimeProfile] = None,
     floor: Optional[datetime] = None,
     held: Optional[Callable[[str], list]] = None,
+    only: Optional[Collection[str]] = None,
 ) -> None:
     """Null each `when` column of `frame` where its rows do not match, and fill where they do.
+
+    A derived column is left to `generate.derive`; `only` limits the columns done.
 
     In place. `cap` is the latest moment a filled date or timestamp may take
     (midnight of `as_of` on the first day, the end of the day on a later one).
@@ -224,12 +245,24 @@ def apply_when(
     column holds (the table's rows before the day), drawn from like the
     frame's own when filling a column that is not temporal.
     """
-    columns = when_columns(table_def)
+    columns = [
+        column
+        for column in when_columns(table_def)
+        if "derive" not in (column.note or {}) and (only is None or column.name in only)
+    ]
     if not columns:
         return
     order = _Order(table_def, frame, time_profile)
+    base_cap = cap
     for column in columns:
         name = column.name
+        # A column with a window of its own may be filled up to the end of it.
+        kind_of_column = _temporal_kind(column)
+        cap = (
+            windows.window(column.note, kind_of_column, _resolve_anchor(as_of))[1]
+            if kind_of_column is not None and windows.has_window(column.note)
+            else base_cap
+        )
         match = matching(frame, order.by_name, conditions(column) or {})
         values = frame[name].tolist()
         nulls = [row for row, value in enumerate(values) if match[row] and _is_null(value)]

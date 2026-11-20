@@ -28,7 +28,7 @@ import random
 import re
 from bisect import bisect_right
 from collections import deque
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from itertools import accumulate
 from typing import Optional, Union
 
@@ -36,6 +36,7 @@ from pandas import NaT
 
 from model2data.generate.kinds import temporal_kind
 from model2data.generate.options import TimeProfile
+from model2data.generate.windows import has_window, window
 from model2data.parse.dbml import ColumnDef, TableDef
 
 # Mirrors generate.faker's `AsOf`/`_anchor_date`. Not imported from there: this
@@ -190,6 +191,43 @@ def weighted_timestamps(row_count: int, profile: TimeProfile, anchor: date) -> l
     return values
 
 
+def windowed_timestamps(
+    row_count: int, profile: TimeProfile, start: datetime, end: datetime
+) -> list[str]:
+    """Draw `row_count` timestamps in `[start, end]`, shaped by `profile` (a column with `min`/`max`).
+
+    A day of the window is drawn first, weighted as `weighted_dates` weights it, with
+    `growth` running from the window's first day to its last; the time of day is uniform,
+    or from `HOUR_WEIGHTS` under `business_hours`. A time outside the window (before
+    `start` on the first day, after `end` on the last) is drawn again a few times, then
+    moved to the nearer bound.
+    """
+    first = start.date()
+    last = (
+        (end - timedelta(seconds=1)).date()
+        if end > start and end.time() == time.min
+        else end.date()
+    )
+    days = _window_days(first, last)
+    weights = [_day_weight(day, first, last, profile) for day in days]
+    chosen = random.choices(days, weights=weights, k=row_count)
+    values: list[str] = []
+    for day in chosen:
+        midnight = datetime(day.year, day.month, day.day)
+        moment = midnight
+        for _ in range(_PLACE_TRIES):
+            if profile.business_hours:
+                hour = random.choices(range(24), weights=HOUR_WEIGHTS)[0]
+                offset = hour * 3600 + random.randrange(3600)
+            else:
+                offset = random.randrange(86400)
+            moment = midnight + timedelta(seconds=offset)
+            if start <= moment <= end:
+                break
+        values.append(min(max(moment, start), end).isoformat(sep=" "))
+    return values
+
+
 # ---------------------------------------------------------
 # Within-row ordering (Feature 2)
 # ---------------------------------------------------------
@@ -202,6 +240,9 @@ _DATE_GAP_SCALE_DAYS = 3
 # How many gaps `place_after` draws for a moment inside the window, in the
 # column's shape, before it settles for one drawn evenly between the bounds.
 _PLACE_TRIES = 20
+
+# How far past a date after `as_of` a column without a window of its own may follow it.
+_FOLLOW_AHEAD_DAYS = 30
 
 # A weekend day's weight against a weekday's under `business_hours`, as
 # `_day_weight` weighs it.
@@ -407,6 +448,7 @@ def creation_column(table_def: TableDef) -> Optional[ColumnDef]:
         if not column.enum_values
         and _column_kind(column.data_type) is not None
         and "rollup" not in (column.note or {})
+        and "derive" not in (column.note or {})
     ]
     name = creation_column_name(
         [(column.name, bool(same_row_after(column.note))) for column in temporal]
@@ -593,6 +635,9 @@ def order_row_times(
         # A `rollup` is computed once every table exists (generate.rollups):
         # nothing is ordered after the value it holds now, nor it after anything.
         and "rollup" not in (column.note or {})
+        # A derived column holds what its derivation says once the row's other columns
+        # are final (generate.derive); nothing is ordered after it, nor it after anything.
+        and "derive" not in (column.note or {})
     ]
     if not temporal_columns:
         return df
@@ -619,6 +664,11 @@ def order_row_times(
             required_kinds[name] = other_kind
         business_hours = column_business_hours(columns_by_name[column_name], time_profile)
         floor = (floors or {}).get(column_name)
+        own_note = columns_by_name[column_name].note
+        # A column with `min`/`max` is placed up to the end of its window, which may lie
+        # after `as_of`; one without a window of its own, following a date after `as_of`,
+        # lands within `_FOLLOW_AHEAD_DAYS` of it (only a windowed column is ever dated so).
+        upper = window(own_note, kind, anchor)[1] if has_window(own_note) else cap
 
         for idx in df.index if rows is None else rows:
             if _parse_value(df.at[idx, column_name], kind) is None:
@@ -639,7 +689,10 @@ def order_row_times(
                 continue
             latest_required = max(earlier)
 
-            moment = place_after(latest_required, kind, cap, business_hours)
+            ceiling = upper
+            if ceiling == cap and latest_required > cap:
+                ceiling = latest_required + timedelta(days=_FOLLOW_AHEAD_DAYS)
+            moment = place_after(latest_required, kind, ceiling, business_hours)
             df.at[idx, column_name] = _format_value(moment, kind)
 
     return df

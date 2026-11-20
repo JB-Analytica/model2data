@@ -1,0 +1,43 @@
+# yaml-language-server: $schema=https://www.jbanalytica.com/model2data/spec/dashboards/0.1.0/dashboard.schema.json
+model2data-dashboard: 0.1.0
+model: sports_league
+title: League standings
+pages:
+  - id: season
+    name: Season
+    grain: month                        # what the line tile is on
+    tiles:
+      - id: intro
+        kind: text
+        text: Games played so far this season, and how often the home club wins.
+        place: {x: 0, y: 0, w: 12, h: 1}
+      - id: games-played
+        kind: kpi
+        title: Games played
+        metric: games_played
+        place: {x: 0, y: 1, w: 4, h: 2}
+      - id: home-win-rate
+        kind: kpi
+        title: Home win rate
+        metric: home_win_rate
+        place: {x: 4, y: 1, w: 4, h: 2}
+      - id: points-per-game
+        kind: kpi
+        title: Points per game
+        metric: points_per_game
+        place: {x: 8, y: 1, w: 4, h: 2}
+      - id: games-by-month
+        kind: line
+        title: Games played by month
+        metric: games_played
+        place: {x: 0, y: 3, w: 12, h: 6}
+  - id: fixtures
+    name: Fixtures
+    tiles:
+      - id: fixture-list
+        kind: table
+        title: Games
+        table: games
+        columns: [id, tip_off_at, status, home_score, away_score, winner_team_id]
+        rows: 20
+        place: {x: 0, y: 0, w: 12, h: 8}

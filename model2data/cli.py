@@ -1,4 +1,5 @@
 import random
+import re
 import shutil
 from collections.abc import Iterable
 from datetime import date, datetime
@@ -35,6 +36,7 @@ from model2data.generate.core import (
     get_cyclic_tables,
     get_uncovered_parents,
     get_unresolved_composite_keys,
+    get_unsatisfied_rules,
 )
 from model2data.generate.days import (
     DayResult,
@@ -188,7 +190,7 @@ app = typer.Typer(
     cls=_GenerateByDefault,
     help=(
         "model2data: Generate analytics-ready datasets from a data model.\n\n"
-        "Given a model -- a .model2data.yml document (spec 0.6.0), the same as JSON,\n"
+        "Given a model -- a .model2data.yml document (spec 0.7.0), the same as JSON,\n"
         "or a DBML file -- this tool produces:\n"
         "• Synthetic but realistic data\n"
         "• A runnable dbt project scaffold\n"
@@ -779,6 +781,7 @@ def main(
     duplicate_unique = get_duplicate_unique_columns()
     capped_tables = get_capped_tables()
     uncovered = get_uncovered_parents()
+    unsatisfied_rules = get_unsatisfied_rules()
 
     typer.echo("\n📊 Summary")
     typer.echo(f"  Tables generated:        {len(generated_tables)}")
@@ -819,8 +822,8 @@ def main(
             typer.echo(f"    - {label}")
     if capped_tables:
         typer.echo(
-            "  ⚠️  Tables generated with fewer rows than asked, so a unique reference "
-            "keeps one row per parent value:"
+            "  ⚠️  Tables generated with fewer rows than asked, so a unique column "
+            "keeps one row per parent value or enum member:"
         )
         for label in capped_tables:
             typer.echo(f"    - {label}")
@@ -830,6 +833,13 @@ def main(
             "to cover every parent):"
         )
         for label in uncovered:
+            typer.echo(f"    - {label}")
+    if unsatisfied_rules:
+        typer.echo(
+            "  ⚠️  Rules some rows still break after the retries (the value space may be too "
+            "small for the rule, or the columns it could redraw are keys):"
+        )
+        for label in unsatisfied_rules:
             typer.echo(f"    - {label}")
 
     if metrics_count is not None:
@@ -858,10 +868,10 @@ def main(
 
 
 def _spec_of(file: Path) -> str:
-    """The spec a conforming model is written against: 0.6.0, 0.5.0, 0.4.0, 0.3.0, or 0.2.0
-    (DBML without `when`, a 0.5.0 `after`, `rollup` or `at_least` included)."""
+    """The spec a conforming model is written against: 0.7.0, 0.6.0, 0.5.0, 0.4.0, 0.3.0, or
+    0.2.0 (DBML without `when`, a 0.5.0 `after`, `rollup` or `at_least` included)."""
     version = str(load(file).version)
-    for minor in ("0.6", "0.5", "0.4", "0.3"):
+    for minor in ("0.7", "0.6", "0.5", "0.4", "0.3"):
         if version.startswith(minor):
             return f"{minor}.0"
     return "0.2.0"
@@ -957,10 +967,10 @@ def validate_command(
         ),
     ),
 ):
-    """Check that models conform to spec 0.6.0 (or 0.2.x-0.5.x), printing every issue with its path.
+    """Check that models conform to spec 0.7.0 (or 0.2.x-0.6.x), printing every issue with its path.
 
     Takes one or more files and/or --glob patterns. A metrics file (*.metrics.yml) is checked
-    against metrics spec 0.1.0 and against its model; a dashboard (*.dashboard.yml) against
+    against metrics spec 0.2.0 and against its model; a dashboard (*.dashboard.yml) against
     dashboard spec 0.1.0 and the names of the model and metrics beside it, as `dashboard check`
     does. Exits 1 when any file has an error;
     warnings are printed, and the file conforms. A warning that a child's date `can fall
@@ -998,7 +1008,7 @@ def validate_command(
             if is_metrics_file(file):
                 model_note = f", checked against {against.name}" if against is not None else ""
                 typer.echo(
-                    f"✅ {shown} conforms to metrics spec {METRICS_SPEC_VERSION}{model_note}."
+                    f"✅ {shown} conforms to metrics spec {_metrics_spec_of(file)}{model_note}."
                 )
             elif dashboards.is_dashboard_file(file):
                 model_note = f", checked against {against.name}" if against is not None else ""
@@ -1017,6 +1027,17 @@ def validate_command(
             typer.echo(f"✅ {checked} {'conforms' if count == 1 else 'conform'}.")
     if failed:
         raise typer.Exit(1)
+
+
+def _metrics_spec_of(file: Path) -> str:
+    """The metrics spec a conforming file is written against: the version it says, as
+    `0.1.0` or `0.2.0` (a file that does not say one is the current spec's)."""
+    found = re.search(
+        r"^[\"']?model2data-metrics[\"']?:\s*[\"']?(\d+\.\d+)",
+        file.read_text("utf-8"),
+        re.MULTILINE,
+    )
+    return f"{found.group(1)}.0" if found else METRICS_SPEC_VERSION
 
 
 def _metrics_issues(file: Path, model_option: Optional[Path]) -> tuple[list[Issue], Optional[Path]]:
@@ -1066,7 +1087,7 @@ def convert_command(
 ):
     """Convert a model -- DBML, typically -- to a .model2data.yml document (spec 0.2.0, or
     0.3.0 when it has defects, 0.4.0 when it has `when`, 0.5.0 when an `after` is a list or
-    names a parent's column, 0.6.0 when it has `rollup` or `at_least`)."""
+    names a parent's column, 0.6.0 when it has `rollup` or `at_least`, 0.7.0 when a table has `rules`)."""
     try:
         model = load(file)
     except ModelError as error:
@@ -1133,7 +1154,7 @@ def guide_command(
 
 metrics_app = typer.Typer(
     help=(
-        "The model's metrics (metrics spec 0.1.0): list them, or export them without "
+        "The model's metrics (metrics spec 0.2.0): list them, or export them without "
         "generating. `generate --metrics FILE` computes their known values and dbt tests."
     ),
     no_args_is_help=True,

@@ -27,6 +27,7 @@ from collections.abc import Callable
 from decimal import Decimal
 from typing import Any
 
+from model2data.generate.comparison import column_operand
 from model2data.metrics import expression as expr
 from model2data.metrics.columns import SQL_TYPES, ColumnKind, column_kind, find_column
 from model2data.metrics.semantic import ResolvedMetric, SemanticModel
@@ -70,23 +71,40 @@ def _kw(word: str, upper: bool) -> str:
     return word.upper() if upper else word
 
 
-def condition_sql(condition: Condition, column: str, kind: ColumnKind, upper: bool = False) -> str:
-    """Every operator of `condition` on `column` (SQL text), all of them holding."""
+def condition_sql(
+    condition: Condition,
+    column: str,
+    kind: ColumnKind,
+    upper: bool = False,
+    operand_column: Callable[[str], str] | None = None,
+) -> str:
+    """Every operator of `condition` on `column` (SQL text), all of them holding.
+
+    `operand_column(path)` is the SQL of a column a `{column: ...}` operand names.
+    """
     k = lambda word: _kw(word, upper)  # noqa: E731
     lit = lambda value: literal(value, kind, upper)  # noqa: E731
+
+    def value(operand: Any) -> str:
+        other = column_operand(operand)
+        if other is None:
+            return lit(operand)
+        assert operand_column is not None
+        return operand_column(other)
+
     parts = []
     for operator, operand in condition.operators.items():
         if operator == "eq":
-            parts.append(f"{column} = {lit(operand)}")
+            parts.append(f"{column} = {value(operand)}")
         elif operator == "ne":
-            parts.append(f"{column} <> {lit(operand)}")
+            parts.append(f"{column} <> {value(operand)}")
         elif operator in ("in", "not_in"):
-            values = ", ".join(lit(value) for value in operand)
+            values = ", ".join(lit(item) for item in operand)
             word = k("in") if operator == "in" else f"{k('not')} {k('in')}"
             parts.append(f"{column} {word} ({values})")
         elif operator in ("gt", "gte", "lt", "lte"):
             sign = {"gt": ">", "gte": ">=", "lt": "<", "lte": "<="}[operator]
-            parts.append(f"{column} {sign} {lit(operand)}")
+            parts.append(f"{column} {sign} {value(operand)}")
         elif operator == "between":
             parts.append(f"{column} {k('between')} {lit(operand[0])} {k('and')} {lit(operand[1])}")
         else:  # is_null
@@ -113,7 +131,7 @@ def where_sql(where: Where, column_of: ColumnOf, upper: bool = False) -> str:
             )
         else:
             column, kind = column_of(term.column)
-            parts.append(condition_sql(term, column, kind, upper))
+            parts.append(condition_sql(term, column, kind, upper, lambda path: column_of(path)[0]))
     return parts[0] if len(parts) == 1 else "(" + f" {_kw('and', upper)} ".join(parts) + ")"
 
 
@@ -208,7 +226,11 @@ def _parts(
 ) -> tuple[str, _From]:
     # The total joins what its filter reads; by month, the time column's table as well.
     needed = (
-        {condition.column.rpartition(".")[0] for condition in metric.where.conditions()}
+        {
+            path.rpartition(".")[0]
+            for condition in metric.where.conditions()
+            for path in condition.paths()
+        }
         if metric.where is not None
         else set()
     )

@@ -328,7 +328,9 @@ def _resolve_metric(model: Model, graph: Graph, name: str, metric: Metric) -> Re
         out.time_kind = column_kind(model, time_column)
     if metric.where is not None:
         joined.extend(
-            condition.column.rpartition(".")[0] for condition in metric.where.conditions()
+            path.rpartition(".")[0]
+            for condition in metric.where.conditions()
+            for path in condition.paths()
         )
     for table in joined:
         if table != out.table and table not in out.joins:

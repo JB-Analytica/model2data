@@ -30,6 +30,7 @@ from model2data.generate.hints import validate_hints
 from model2data.model import dump, from_dbml, from_dict, load, to_engine
 from model2data.model.document import document_version
 from model2data.model.errors import ModelError
+from model2data.parse.dbml import ColumnDef
 
 AS_OF = date(2026, 11, 19)
 ROWS = {"customers": 40, "products": 12, "orders": 100, "order_items": 220}
@@ -1053,3 +1054,12 @@ def test_a_customers_first_order_is_its_earliest_order():
     earliest = orders.groupby("customer_id")["ordered_at"].min()
     customers = frames["customers"].set_index("id")
     assert (customers["first_order_at"] == earliest.reindex(customers.index)).all()
+
+
+def test_the_engine_refuses_a_derivation_that_reads_a_rollup():
+    inputs = to_engine(from_dict(_shop()))
+    derived = {"cases": [{"if": {"total_amount": {"gt": 100}}, "then": "big"}], "else": "small"}
+    inputs.tables["orders"].columns.append(ColumnDef("size", "text", note={"derive": derived}))
+    found = [p for p in rollups.problems(inputs.tables, inputs.refs) if p.hint == "derive"]
+    assert [(p.table, p.column) for p in found] == [("orders", "size")]
+    assert '"derive" reads orders.total_amount, a rollup' in found[0].message

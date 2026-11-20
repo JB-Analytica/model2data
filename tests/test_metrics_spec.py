@@ -46,9 +46,12 @@ def test_the_schema_id_is_the_url_documents_point_at():
         SCHEMA_URL
         == f"https://www.jbanalytica.com/model2data/spec/metrics/{SPEC_VERSION}/metrics.schema.json"
     )
+    # The example is a 0.1.0 file that uses nothing 0.2.0 added: it keeps saying 0.1.0 and
+    # pointing at that version's schema, which is still served (see PUBLISHING.md).
     example = (SPEC / "examples" / "coffee_webshop.metrics.yml").read_text(encoding="utf-8")
-    assert example.splitlines()[0] == f"# yaml-language-server: $schema={SCHEMA_URL}"
-    assert f"model2data-metrics: {SPEC_VERSION}" in example
+    older = SCHEMA_URL.replace(SPEC_VERSION, "0.1.0")
+    assert example.splitlines()[0] == f"# yaml-language-server: $schema={older}"
+    assert "model2data-metrics: 0.1.0" in example
     assert README.startswith(f"# model2data metrics — spec {SPEC_VERSION}")
 
 

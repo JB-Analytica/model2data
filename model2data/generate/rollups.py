@@ -54,6 +54,7 @@ import numpy as np
 import pandas as pd
 
 from model2data.generate import kinds
+from model2data.generate.derive import derivation_reads
 from model2data.generate.relationships import _key_kind, build_fk_lookup, classify_refs
 from model2data.parse.dbml import ColumnDef, TableDef
 
@@ -78,6 +79,7 @@ CONFLICTS = (
     "seasonality",
     "business_hours",
     "when",
+    "derive",
 )
 _SCALE = re.compile(r"\(\s*\d+\s*,\s*(\d+)\s*\)")
 # The places the generator rounds a decimal column without a declared scale to.
@@ -461,6 +463,18 @@ def _reader_problems(
                                 column.name,
                                 "when",
                                 f'"when" names {why((table_name, other))}.',
+                            )
+                        )
+            derive = note.get("derive")
+            if isinstance(derive, Mapping):
+                for other in derivation_reads(derive):
+                    if (table_name, other) in rollups:
+                        found.append(
+                            Problem(
+                                table_name,
+                                column.name,
+                                "derive",
+                                f'"derive" reads {why((table_name, other))}.',
                             )
                         )
             after = note.get("after")

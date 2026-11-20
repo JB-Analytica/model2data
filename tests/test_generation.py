@@ -4,6 +4,7 @@ from model2data.generate.core import (
     _mirror_attributes,
     _topological_table_order,
     generate_data_from_dbml,
+    get_capped_tables,
     get_cyclic_tables,
     get_unresolved_composite_keys,
 )
@@ -555,13 +556,16 @@ def test_unique_enum_with_more_members_than_rows_stays_unique():
     assert get_duplicate_unique_columns() == []
 
 
-def test_unique_enum_with_fewer_members_than_rows_is_reported():
+def test_unique_enum_with_fewer_members_than_rows_caps_the_table():
     df = generate_data_from_dbml(_plans_table({"unique", "not null"}), [], base_rows=6, seed=1)[
         "plans"
     ]
-    # Every member is used before any repeats, and the two repeats are said.
-    assert set(df["plan_name"]) == set(PLANS)
-    assert get_duplicate_unique_columns() == ["plans.plan_name: 2 duplicate value(s)"]
+    # One row per member, each once, and the cap is said rather than a repeat.
+    assert sorted(df["plan_name"]) == sorted(PLANS)
+    assert get_duplicate_unique_columns() == []
+    assert get_capped_tables() == [
+        "plans: 4 rows, not 6 (plan_name is a unique enum with 4 member(s))"
+    ]
 
 
 def test_unique_enum_that_draws_distinct_keeps_the_bytes_of_the_plain_draw():

@@ -19,6 +19,7 @@ from faker.providers import BaseProvider as _BaseProvider
 from faker.providers.lorem import Provider as _LoremProvider
 from faker.providers.person import Provider as _PersonProvider
 
+from model2data.generate import windows
 from model2data.generate.catalogue import ALIASES
 from model2data.generate.kinds import (
     is_boolean_type,
@@ -27,7 +28,7 @@ from model2data.generate.kinds import (
     temporal_kind,
 )
 from model2data.generate.options import UNIFORM, TimeProfile
-from model2data.generate.timeline import weighted_dates, weighted_timestamps
+from model2data.generate.timeline import weighted_dates, weighted_timestamps, windowed_timestamps
 from model2data.parse.dbml import ColumnDef
 
 # ---------------------------------------------------------
@@ -700,7 +701,12 @@ def _column_time_profile(
     return replace(base, **overrides)
 
 
-def _generate_dates(row_count: int, as_of: AsOf, time_profile: Optional[TimeProfile]) -> list:
+def _generate_dates(
+    row_count: int,
+    as_of: AsOf,
+    time_profile: Optional[TimeProfile],
+    note: Optional[dict] = None,
+) -> list:
     """The date branch's values: shaped by `time_profile` when it isn't uniform.
 
     A bare `-> list` return, matching `generate_column_values` itself: `values`
@@ -713,6 +719,11 @@ def _generate_dates(row_count: int, as_of: AsOf, time_profile: Optional[TimeProf
     `weighted_dates` itself stay properly typed for its own callers and tests.
     """
     anchor = _anchor_date(as_of)
+    if windows.has_window(note):
+        # A `min` and/or `max`: the column's own window, drawn the weighted way even
+        # when the profile is uniform (every day weighs the same then).
+        start, end = windows.window(note, "date", anchor)
+        return weighted_dates(row_count, time_profile or UNIFORM, start.date(), end.date())
     if time_profile is not None and not time_profile.is_uniform:
         return weighted_dates(
             row_count, time_profile, start=_years_before(anchor, _DATE_WINDOW_YEARS), end=anchor
@@ -726,12 +737,20 @@ def _generate_dates(row_count: int, as_of: AsOf, time_profile: Optional[TimeProf
     ]
 
 
-def _generate_timestamps(row_count: int, as_of: AsOf, time_profile: Optional[TimeProfile]) -> list:
+def _generate_timestamps(
+    row_count: int,
+    as_of: AsOf,
+    time_profile: Optional[TimeProfile],
+    note: Optional[dict] = None,
+) -> list:
     """The timestamp branch's values: shaped by `time_profile` when it isn't uniform.
 
     See `_generate_dates` for why this returns a bare `list` rather than
     `weighted_timestamps`'s own `list[str]`.
     """
+    if windows.has_window(note):
+        start, end = windows.window(note, "timestamp", _anchor_date(as_of))
+        return windowed_timestamps(row_count, time_profile or UNIFORM, start, end)
     if time_profile is not None and not time_profile.is_uniform:
         return weighted_timestamps(row_count, time_profile, anchor=_anchor_date(as_of))
     return [_random_datetime(as_of=as_of).isoformat(sep=" ") for _ in range(row_count)]
@@ -1019,10 +1038,14 @@ def generate_column_values(
     # generate.kinds) put anything naming a date and a time on the timestamp
     # branch, and only `time` alone on the time-of-day one.
     elif temporal_kind(base_type) == "date":
-        values = _generate_dates(row_count, as_of, _column_time_profile(column, time_profile))
+        values = _generate_dates(
+            row_count, as_of, _column_time_profile(column, time_profile), column.note
+        )
 
     elif temporal_kind(base_type) == "timestamp":
-        values = _generate_timestamps(row_count, as_of, _column_time_profile(column, time_profile))
+        values = _generate_timestamps(
+            row_count, as_of, _column_time_profile(column, time_profile), column.note
+        )
 
     elif "time" in base_type:
         values = [fake.time() for _ in range(row_count)]

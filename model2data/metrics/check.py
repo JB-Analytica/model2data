@@ -16,7 +16,6 @@ from __future__ import annotations
 import difflib
 import json
 from collections.abc import Mapping
-from datetime import date, datetime
 from functools import lru_cache
 from importlib import resources
 from typing import Any, Optional
@@ -24,6 +23,7 @@ from typing import Any, Optional
 import jsonschema
 from jsonschema.exceptions import ValidationError
 
+from model2data.generate import comparison as cmp
 from model2data.metrics import expression as expr
 from model2data.metrics.columns import (
     ColumnKind,
@@ -31,13 +31,13 @@ from model2data.metrics.columns import (
     find_column,
     is_numeric,
     is_temporal,
+    typed,
 )
 from model2data.metrics.graph import Graph, describe
 from model2data.metrics.infer import aggregation_of, inferred_metrics
 from model2data.metrics.types import (
     ANY_KIND_AGGREGATIONS,
     KIND_KEYS,
-    ORDER_OPERATORS,
     Condition,
     Metric,
     Metrics,
@@ -47,9 +47,10 @@ from model2data.model.errors import Issue, PathPart, format_path
 from model2data.model.types import Column, Model
 from model2data.model.validate import _describe, _schema_issues, _show
 
-SPEC_VERSION = "0.1.0"
-# The minor versions this reader implements.
-READS = ("0.1",)
+SPEC_VERSION = "0.2.0"
+# The minor versions this reader implements. 0.2.0 only adds `{column: ...}` as the value
+# in a condition, so a 0.1 file reads exactly as it did; it just cannot use it.
+READS = ("0.1", "0.2")
 SCHEMA_URL = (
     f"https://www.jbanalytica.com/model2data/spec/metrics/{SPEC_VERSION}/metrics.schema.json"
 )
@@ -103,7 +104,39 @@ def check_document(document: Any) -> list[Issue]:
             issues.extend(_kind_issues(str(name), metric))
             issues.extend(_expression_issues(str(name), metric))
     issues.extend(_cycle_issues(metrics))
+    issues.extend(_column_operand_issues(document, metrics))
     return list(dict.fromkeys(issues))
+
+
+def _column_operand_issues(document: Mapping, metrics: Mapping) -> list[Issue]:
+    """`{column: ...}` is metrics spec 0.2.0: in a file written against 0.1 it is an error."""
+    version = document.get("model2data-metrics")
+    if not isinstance(version, str) or ".".join(version.split(".")[:2]) != "0.1":
+        return []
+    issues: list[Issue] = []
+
+    def walk(path: list[PathPart], where: Any) -> None:
+        if not isinstance(where, Mapping):
+            return
+        for key, value in where.items():
+            if key in ("any", "all") and isinstance(value, list):
+                for index, item in enumerate(value):
+                    walk([*path, key, index], item)
+            elif isinstance(value, Mapping):
+                for operator, operand in value.items():
+                    if cmp.column_operand(operand) is not None:
+                        issues.append(
+                            Issue(
+                                format_path([*path, key, operator]),
+                                "`{column: ...}` is metrics spec 0.2.0, and the file is "
+                                f"written against {version}: write `model2data-metrics: 0.2.0`",
+                            )
+                        )
+
+    for name, metric in metrics.items():
+        if isinstance(metric, Mapping):
+            walk(["metrics", name, "where"], metric.get("where"))
+    return issues
 
 
 def _schema_error(error: ValidationError) -> list[Issue]:
@@ -129,7 +162,7 @@ def _version_issues(document: Mapping) -> list[Issue]:
             Issue(
                 "model2data-metrics",
                 f"the file is written against metrics spec {version}, and this reader "
-                f"implements metrics spec {SPEC_VERSION} (0.1.x). Upgrade model2data to read it.",
+                f"implements metrics spec {SPEC_VERSION} (0.1.x and 0.2.x). Upgrade model2data to read it.",
             )
         ]
     return []
@@ -436,15 +469,12 @@ class _ModelChecks:
             return
         self._reach(where, table, condition.column, "filter column")
         kind = column_kind(self.model, column)
+        left = typed(self.model, condition.column, column)
         for operator, operand in condition.operators.items():
             at = [*where, operator] if condition.written == "operators" else where
-            if operator in ORDER_OPERATORS and not (is_numeric(kind) or is_temporal(kind)):
-                self.error(
-                    at,
-                    f"`{operator}` compares by order, and {condition.column} is "
-                    f"{'an enum' if kind == 'enum' else kind}: list the values it may hold "
-                    "with `in` instead",
-                )
+            problem = cmp.order_problem(operator, left)
+            if problem is not None:
+                self.error(at, problem)
                 continue
             if operator == "is_null":
                 if operand is True and _never_null(column):
@@ -452,6 +482,9 @@ class _ModelChecks:
                         at,
                         f"can never match: {condition.column} is never null in the generated data",
                     )
+                continue
+            if (other := cmp.column_operand(operand)) is not None:
+                self._column_operand(at, table, left, operator, other)
                 continue
             values = operand if isinstance(operand, list) else [operand]
             ok = True
@@ -462,7 +495,7 @@ class _ModelChecks:
                     value_at = [*at, index] if isinstance(operand, list) else at
                     self.error(value_at, message)
             if operator == "between" and ok and len(values) == 2:
-                low, high = (_comparable(kind, value) for value in values)
+                low, high = (cmp.comparable(kind, value) for value in values)
                 if low is not None and high is not None and low > high:
                     self.warn(
                         at, f"can never match: {_show(values[0])} is above {_show(values[1])}"
@@ -470,6 +503,20 @@ class _ModelChecks:
                     continue
             if ok and is_numeric(kind):
                 self._never_matches(at, condition.column, column, operator, operand)
+
+    def _column_operand(
+        self, at: list[PathPart], table: str, left: cmp.Typed, operator: str, other: str
+    ) -> None:
+        """`{column: other}`: a column the model has, the metric reaches, and of a kind the
+        condition's own column can be compared with."""
+        at = [*at, "column"] if at[-1] == operator else at
+        found = self._column(at, other)
+        if found is None:
+            return
+        self._reach(at, table, other, "filter column")
+        message = cmp.kind_problem(operator, left, typed(self.model, other, found))
+        if message is not None:
+            self.error(at, message)
 
     def _never_matches(
         self, at: list[PathPart], name: str, column: Column, operator: str, operand: Any
@@ -517,50 +564,11 @@ def _never_null(column: Column) -> bool:
     return column.pk or column.not_null
 
 
-def _parse_temporal(kind: ColumnKind, value: str) -> Optional[datetime]:
-    """`value` as an ISO 8601 date (or, for a timestamp column, timestamp), else None."""
-    try:
-        if kind == "date" or len(value) == 10:
-            if len(value) != 10:
-                return None
-            day = date.fromisoformat(value)
-            return datetime(day.year, day.month, day.day)
-        parsed = datetime.fromisoformat(value)
-    except ValueError:
-        return None
-    return parsed if parsed.tzinfo is None else None
-
-
-def _comparable(kind: ColumnKind, value: Any) -> Any:
-    if is_temporal(kind) and isinstance(value, str):
-        return _parse_temporal(kind, value)
-    return value if _number(value) else None
-
-
 def _value_problem(model: Model, column: Column, kind: ColumnKind, value: Any) -> Optional[str]:
     """Why `value` cannot be a value of `column`, or None when it can."""
-    if kind == "enum":
-        enum = model.enum_for(column.type)
-        assert enum is not None
-        text = str(value) if isinstance(value, int) and not isinstance(value, bool) else value
-        if isinstance(text, str) and text in enum.members:
-            return None
-        members = ", ".join(enum.members)
-        hint = _did_you_mean(text, enum.members) if isinstance(text, str) else ""
-        return f"{_show(value)} is not a member of {column.type} ({members}){hint}"
-    if kind == "boolean":
-        return None if isinstance(value, bool) else f"must be true or false, not {_show(value)}"
-    if is_numeric(kind):
-        if not _number(value):
-            return f"must be a number, as {column.type} is numeric, not {_describe(value)}"
-        if kind == "integer" and isinstance(value, float) and not value.is_integer():
-            return f"must be a whole number, as {column.type} is an integer type (got {value!r})"
-        return None
-    if is_temporal(kind):
-        if isinstance(value, str) and _parse_temporal(kind, value) is not None:
-            return None
-        shape = "YYYY-MM-DD" if kind == "date" else "YYYY-MM-DD or YYYY-MM-DD HH:MM:SS"
-        return f"must be an ISO 8601 {kind} as a string, {shape} (got {_show(value)})"
-    if not isinstance(value, str):
-        return f"must be text, as {column.type} is a text column: quote it (got {_show(value)})"
-    return None
+    enum = model.enum_for(column.type) if kind == "enum" else None
+    members = enum.members if enum is not None else None
+    message = cmp.value_problem(kind, value, type_name=column.type, members=members)
+    if message is not None and kind == "enum" and isinstance(value, str):
+        message += _did_you_mean(value, members or [])
+    return message

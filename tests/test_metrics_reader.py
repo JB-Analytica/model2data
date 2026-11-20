@@ -191,9 +191,9 @@ def test_a_list_at_the_top_is_refused():
 
 
 def test_a_minor_version_this_reader_does_not_implement_is_refused():
-    issues = validate("model2data-metrics: 0.2.0\nmodel: shop\n")
+    issues = validate("model2data-metrics: 0.3.0\nmodel: shop\n")
     assert [(i.path, i.is_error) for i in issues] == [("model2data-metrics", True)]
-    assert "metrics spec 0.2.0" in issues[0].message
+    assert "metrics spec 0.3.0" in issues[0].message
 
 
 def test_a_malformed_version_is_the_schemas_to_report():

@@ -1,4 +1,4 @@
-# model2data metrics — spec 0.1.0
+# model2data metrics — spec 0.2.0
 
 A metrics file says what a model2data model's numbers mean: revenue, orders, average order value,
 each written once, next to the model they are computed from. It is a second, optional document,
@@ -7,8 +7,8 @@ each written once, next to the model they are computed from. It is a second, opt
 the [model spec](../README.md).
 
 ```yaml
-# yaml-language-server: $schema=https://www.jbanalytica.com/model2data/spec/metrics/0.1.0/metrics.schema.json
-model2data-metrics: 0.1.0
+# yaml-language-server: $schema=https://www.jbanalytica.com/model2data/spec/metrics/0.2.0/metrics.schema.json
+model2data-metrics: 0.2.0
 model: coffee_webshop          # the model's `name`
 
 metrics:
@@ -46,6 +46,8 @@ infer: true
 
 A complete example, which conforms against the example model beside it, is
 [`../examples/coffee_webshop.metrics.yml`](../examples/coffee_webshop.metrics.yml).
+[`../examples/sports_league.metrics.yml`](../examples/sports_league.metrics.yml) adds a filter that
+compares two columns (spec 0.2.0).
 
 The model and its generated data do not depend on the metrics file: a generator never reads it,
 and a model generates the same rows with or without one. What a metrics file adds is meaning
@@ -69,13 +71,19 @@ The metrics spec is versioned on its own, apart from the model spec, the engine 
 with [semantic versioning](https://semver.org). The version is in the schema's `$id`:
 
 ```
-https://www.jbanalytica.com/model2data/spec/metrics/0.1.0/metrics.schema.json
+https://www.jbanalytica.com/model2data/spec/metrics/0.2.0/metrics.schema.json
 ```
 
 A document names the version it is written against in `model2data-metrics:`. A patch release
 changes wording only; a minor release adds something optional, and, before 1.0.0, may also make a
 valid document invalid or change what one means, and says so. A reader refuses a minor version it
 does not implement (from 1.0.0, a major one) rather than guess.
+
+0.2.0 adds [`{column: ...}`](#comparing-with-another-column) as the value of a condition, and
+nothing else: a 0.1 document is a 0.2.0 document that does not use it, and a reader of 0.2.0
+reads it as it always read. Such a document keeps saying `model2data-metrics: 0.1.0` and
+pointing at the 0.1.0 schema; a document that uses `{column: ...}` says `0.2.0`, and it in a
+document that says 0.1 is an error.
 
 ## The YAML profile, and extensions
 
@@ -183,6 +191,9 @@ A condition is
 and `not_in: [cancelled]` leave out the rows with no status as well as the cancelled ones; write
 `any: [{orders.status: {ne: cancelled}}, {orders.status: {is_null: true}}]` to keep them.
 
+The operators, the operand forms and the kind rules are the model spec's [comparison
+grammar](../README.md#comparisons), which a table's `rules` use too.
+
 A **value** is checked against its column, by the model spec's kinds:
 
 | The column is | A value is |
@@ -199,7 +210,32 @@ columns only. On an enum, a boolean or text they are an error: an enum's order i
 members', and text order depends on the warehouse's collation, so a filter on it would not mean
 one thing. List the values with `in` instead.
 
-Not in 0.1.0: `not`, text matching (`like`, prefixes), dates relative to today.
+Not in 0.2.0: `not`, text matching (`like`, prefixes), dates relative to today.
+
+#### Comparing with another column
+
+Spec 0.2.0. `eq`, `ne`, `gt`, `gte`, `lt` and `lte` also take `{column: <path>}`, the value of
+that column **in the same row**, instead of a literal:
+
+```yaml
+home_wins:
+  count: games
+  where:
+    games.winner_team_id: {eq: {column: games.home_team_id}}
+```
+
+The column is written as a column path, as every column of a metrics file is, and it is
+[reached](#reaching-other-tables) exactly as a filter column is: it is on the metric's table, or
+on one the table's foreign keys lead to along exactly one path. A null on either side fails the
+condition, as everywhere (`ne` between two nullable columns leaves out the rows where either is
+null). The two columns must be of one kind: numbers (an integer and a decimal included) with
+numbers, dates and timestamps with each other, an enum with the same enum, text with text, a
+boolean with a boolean, and the order operators apply to numbers, dates and timestamps only. A
+list operator (`in`, `not_in`, `between`) takes literals, never a column.
+
+A consumer that exports the metric writes the comparison into the metric's own condition (SQL,
+Lightdash's `sql`, Ossie's expression); none of them has a place for a column in a filter list
+and none leaves the condition out.
 
 ### Reaching other tables
 
@@ -270,7 +306,7 @@ its name when the studio moves onto this spec.
 
 A conforming document also meets these, read on its own:
 
-1. `model2data-metrics` is a version this reader implements (0.1.x).
+1. `model2data-metrics` is a version this reader implements (0.1.x and 0.2.x), and a `{column: ...}` is only in a file that says 0.2.0 or later.
 2. Each metric has exactly one of `measure`, `count`, `ratio` and `expression`; `agg` only with
    `measure`; `time` and `where` only with `measure` or `count`.
 3. Every `expression` parses by the grammar above and uses at least one metric.
@@ -290,6 +326,8 @@ Read against its model, a conforming document also meets these:
 6. Every filter column and `time` is reachable from the metric's table along exactly one path.
 7. Every filter value fits its column, and no order operator is on an enum, boolean or text
    column.
+8. Every `{column: ...}` names a column of the model, reachable from the metric's table along
+   exactly one path, of a kind its condition's column can be compared with.
 
 ### Warnings
 

@@ -5,7 +5,7 @@
 | Command | Does | Exit |
 |---|---|---|
 | `model2data --file M` | same as `model2data generate --file M` | see below |
-| `model2data validate M...` | check models against spec 0.6.0, `*.metrics.yml` files against the metrics spec and their model (`--model M`, else the model beside it with the same stem), and `*.dashboard.yml` files as `dashboard check` does | 0 conforms (warnings allowed), 1 any error |
+| `model2data validate M...` | check models against spec 0.7.0, `*.metrics.yml` files against the metrics spec and their model (`--model M`, else the model beside it with the same stem), and `*.dashboard.yml` files as `dashboard check` does | 0 conforms (warnings allowed), 1 any error |
 | `model2data convert M` | print M as `.model2data.yml`; `-o FILE` writes it, `--force` overwrites | 0 ok, 1 unreadable model or output exists |
 | `model2data metrics list -f M [--metrics F]` | every metric: the file's, then the inferred ones | 0, 1 on a model or metrics error |
 | `model2data metrics export -f M [--metrics F] --to ossie\|lightdash` | the model and its metrics as Apache Ossie 0.1.1, or as Lightdash meta in one dbt properties file for the staging models; `-o FILE` writes it, `--force` overwrites | 0, 1 on an error or an existing output, 2 on another `--to` |
@@ -63,16 +63,16 @@ columns. Add `not_null` to every column that must always have a value.
   `references`, `measure`, `generate`.
 - `generate`: `min`, `max`, `distribution`, `null_rate`, `weights`, `true_rate`,
   `distinct`, `skew`, `after`, `business_hours`, `growth`, `seasonality`, `transitions`,
-  `when`, `rollup`, `at_least`.
-- Table: `columns`, `description`, `color`, `role`, `grain`, `keys`, `foreign_keys`,
-  `incremental`, `defects`.
+  `when`, `rollup`, `at_least`, `derive`.
+- Table: `columns`, `description`, `color`, `role`, `grain`, `combinations`, `keys`,
+  `foreign_keys`, `incremental`, `rules`, `defects`.
 - Top level: `model2data` (spec version), `name`, `description`, `enums`, `tables`,
   `relationships`, `groups`, `run`.
 
 Each key in use (this model validates):
 
 ```yaml
-model2data: 0.6.0
+model2data: 0.7.0
 name: saas
 enums:
   plan_tier: [free, pro, enterprise]
@@ -165,6 +165,49 @@ the dbt test `model2data_rollup`, always at severity error. A rollup over a tabl
 no account without an invoice). Pair it with a rollup so no total is 0 by accident. With fewer
 rows than N × parents the summary lists the shortfall; raise the table's rows. Not on a unique
 foreign key.
+
+`rules` on a table (spec 0.7.0, which the model then names) lists comparisons every row
+satisfies, between columns of the same row: `rules: [{home_team_id: {ne: {column: away_team_id}}},
+{home_score: {ne: {column: away_score}}}]`. Operators: `eq`, `ne`, `in`, `not_in`, `gt`, `gte`, `lt`,
+`lte`, `between`, `is_null`; the right-hand side is a literal, `{column: other_column}` or
+`{run: as_of}` (the run's anchor); order operators compare numbers, dates and timestamps only.
+After a table is drawn, a row that breaks a rule has the later of its columns drawn again (a foreign
+key still names a parent), up to 20 rounds; a rule a column's value space cannot meet is listed
+in the summary. A row where a column the rule reads is null is not held to it. Keys, rollups and
+a column a `when` names are not drawn again. A rule across a foreign key (`via`) is not supported
+yet, and a table with rules and `incremental` cannot run with `--days`.
+
+`combinations` on a table (spec 0.7.0) makes its rows every pairing of its parents' rows, less
+what its rules exclude: `combinations: [home_team_id, away_team_id]` with the rule `{home_team_id:
+{ne: {column: away_team_id}}}` on 16 teams is 16 x 16 - 16 = 240 games, each pair once. Use it when
+every combination must exist (every team home and away, every product in every store) and random
+draws plus a unique key cannot promise it. List two or more foreign keys of the table (not null,
+no hint, `when`, `derive`, `at_least`, `pk` or `unique` on them); the row count follows from the
+parents, so `rows_per_table`, `--rows-for` and `--rows` do not apply to it. The rows come in the
+parents' row order, the first listed column outermost; a rule that reads only those columns removes
+combinations, a rule that reads others redraws the others. The columns are a unique key together
+(dbt tests them as one). Every other column is generated as usual. More than 1,000,000 combinations
+is refused, and a table with `combinations` and `incremental` cannot run with `--days`.
+
+`min` and `max` on a date or timestamp column (spec 0.7.0) are ISO strings that fix the window its
+values fall in, and may lie after the run's `as_of`: `tip_off_at: {type: timestamp, generate: {min:
+"2026-10-02", max: "2027-04-30"}}` schedules a season past today. A date alone as a timestamp's
+`max` is the end of that day; with one bound alone the other keeps its default (up to `as_of`).
+`growth`, `seasonality` and `business_hours` shape the draw inside the window, and `after` still
+holds. A table with a window and `incremental` cannot run with `--days`.
+
+`derive` (spec 0.7.0) makes a column a consequence of others of its row, drawing nothing:
+`game_date: {type: date, generate: {derive: {date_of: tip_off_at}}}`, `copy: other_column`, or
+`cases`, the first `{if: <comparison>, then: <value>}` that holds on the row giving the value and
+`else` the value when none does (null when left out); a value is a literal, `{column: x}` or
+`{run: as_of}`, as in `status: {type: game_status, generate: {derive: {cases: [{if: {tip_off_at:
+{lte: {run: as_of}}}, then: final}], else: scheduled}}}`. With `when`, `when` says where it is
+null. A derived foreign key must come from another foreign key onto the same parent
+(`winner_team_id` from `home_team_id` or `away_team_id`). It is no key and takes no other value
+hint, nothing reads it with `after`, and derivations do not read each other in a loop. The table
+holds every derived value over the final values of the columns it reads, every `when` over the
+final values of what it names, and every rule that can be met; a table with `derive` and
+`incremental` cannot run with `--days`.
 
 A reference onto a parent's plain column next to a foreign key to the same parent
 (`unit_price: {references: products.price}` beside `product_id: {references: products.id}`)

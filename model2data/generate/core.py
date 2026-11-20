@@ -3,13 +3,15 @@ from __future__ import annotations
 import hashlib
 import random
 from collections import defaultdict, deque
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import datetime
 from typing import Any, Optional
 
 import pandas as pd
 from faker import Faker
 
+from model2data.generate.combinations import combination_frame
+from model2data.generate.derive import has_derived, is_derived, settle
 from model2data.generate.faker import (
     AsOf,
     generate_column_values,
@@ -34,6 +36,11 @@ from model2data.generate.rollups import (
     cover_parents,
     has_rollups,
     protected_rows,
+)
+from model2data.generate.rules import (
+    apply_rules,
+    get_unsatisfied_rules,  # noqa: F401  (the CLI reads it from here, beside the other reports)
+    reset_rules_state,
 )
 from model2data.generate.timeline import _resolve_anchor, order_row_times
 from model2data.generate.when import SeedFor, apply_when
@@ -113,18 +120,27 @@ def _unique_reference_cap(
     generated: dict[str, pd.DataFrame],
     row_count: int,
 ) -> tuple[int, Optional[str]]:
-    """The rows this table can hold with every unique referencing column unique.
+    """The rows this table can hold with every unique referencing or enum column unique.
 
     A `pk` or `unique` column that references a column of an already-generated
     table takes each parent value at most once, so the table holds at most as
     many rows as that parent column holds distinct values. Self-references are
     left alone (the parent column is this table's own, built in the same pass),
     and so is a parent with no values at all, which a cap of zero would not
-    help. Returns the row count to use and, when it is lower, why.
+    help. A unique enum column takes each member at most once, so the table
+    holds at most as many rows as the enum has members (the clubs of a league,
+    the stores of a chain). Returns the row count to use and, when it is lower,
+    why.
     """
     capped, reason = row_count, None
     for column in table_def.columns:
         if "pk" not in column.settings and "unique" not in column.settings:
+            continue
+        if column.enum_values and (table_name, column.name) not in fk_lookup:
+            members = len(set(column.enum_values))
+            if 0 < members < capped:
+                capped = members
+                reason = f"{column.name} is a unique enum with {members} member(s)"
             continue
         fk_target = fk_lookup.get((table_name, column.name))
         if not fk_target or fk_target[0] == table_name:
@@ -222,6 +238,7 @@ def generate_data_from_dbml(
     reset_dedup_state()
     reset_duplicate_unique_columns()
     reset_capped_tables()
+    reset_rules_state()
     reset_row_pools()
 
     # ---------------------------------------------------------
@@ -234,19 +251,34 @@ def generate_data_from_dbml(
     # Generate tables in dependency order
     # ---------------------------------------------------------
     ordered_tables, deferred_edges = _table_order(tables, fk_refs)
+    settlers: dict[str, Callable[[pd.DataFrame], None]] = {}
     # The columns whose `after` names a parent's column (see generate.parents).
     rules = parent_rules(tables, fk_refs, ordered_tables)
     generated: dict[str, pd.DataFrame] = {}
 
     for table_name in ordered_tables:
         table_def = tables[table_name]
-        row_count = _determine_row_count(table_def.name, base_rows, row_overrides)
-        asked = row_count
-        row_count, cap_reason = _unique_reference_cap(
-            table_def, table_name, fk_lookup, generated, row_count
-        )
-        if cap_reason is not None:
-            _capped_tables.append(f"{table_name}: {row_count} rows, not {asked} ({cap_reason})")
+        combos: Optional[pd.DataFrame] = None
+        if table_def.combinations:
+            # The rows follow from the parents: no count is asked for (spec 0.7.0).
+            if row_overrides and table_name in row_overrides:
+                raise ValueError(
+                    f'{table_name}: "combinations" make its rows, one for every combination of '
+                    f"{', '.join(table_def.combinations)}, so a row count cannot be set for it "
+                    "(`run.rows_per_table`, `--rows-for`)"
+                )
+            combos = combination_frame(
+                table_def, table_name, fk_lookup, generated, run_anchor=_midnight(as_of)
+            )
+            row_count = len(combos)
+        else:
+            row_count = _determine_row_count(table_def.name, base_rows, row_overrides)
+            asked = row_count
+            row_count, cap_reason = _unique_reference_cap(
+                table_def, table_name, fk_lookup, generated, row_count
+            )
+            if cap_reason is not None:
+                _capped_tables.append(f"{table_name}: {row_count} rows, not {asked} ({cap_reason})")
 
         # Give this table its own RNG stream before a single value of it is
         # drawn. One stream for the whole run meant re-rolling a table
@@ -303,6 +335,15 @@ def generate_data_from_dbml(
         # First pass: columns + FKs
         # -----------------------
         for column in table_def.columns:
+            if combos is not None and column.name in combos.columns:
+                # One of the combinations the rows are (generate.combinations): drawn by
+                # nothing, and never drawn again.
+                data[column.name] = combos[column.name].tolist()
+                continue
+            if is_derived(column):
+                # Computed from the other columns once they are final: draws nothing.
+                data[column.name] = [None] * row_count
+                continue
             fk_series = None
             fk_target = fk_lookup.get((table_name, column.name))
 
@@ -386,16 +427,62 @@ def generate_data_from_dbml(
 
         # `when` last, once every column it reads holds its final value, and
         # from streams of its own: see generate.when.
-        apply_when(
-            df,
-            table_def,
-            cap=_midnight(as_of),
-            seed_for=_when_seed(seed, table_name, table_seeds),
-            as_of=as_of,
-            time_profile=profile,
-        )
+        when_seed = _when_seed(seed, table_name, table_seeds)
+        derived = has_derived(table_def)
+
+        def settle_table(frame: pd.DataFrame, *, table_def=table_def, when_seed=when_seed) -> None:
+            settle(
+                frame,
+                table_def,
+                run_anchor=_midnight(as_of),
+                cap=_midnight(as_of),
+                seed_for=when_seed,
+                as_of=as_of,
+                time_profile=profile,
+            )
+
+        if derived:
+            # Derived columns and the `when`s that read or are read by them, in dependency
+            # order, then again once the rest of the table is final (generate.derive).
+            settle_table(df)
+            settlers[table_name] = settle_table
+        else:
+            apply_when(
+                df,
+                table_def,
+                cap=_midnight(as_of),
+                seed_for=when_seed,
+                as_of=as_of,
+                time_profile=profile,
+            )
         if table_rules:
             df = _hold_parent_rules(df, table_def, table_rules, generated, as_of, profile)
+        if table_def.rules:
+            df = apply_rules(
+                df,
+                table_def,
+                table_name=table_name,
+                fk_pools=_fk_pools(df, table_def, table_name, fk_lookup, generated),
+                locked=_rule_locked_columns(table_def, table_name, attribute_refs),
+                seed=(
+                    _table_stream_seed(
+                        seed,
+                        f"{table_name}|rules",
+                        table_seeds.get(table_name) if table_seeds else None,
+                    )
+                    if seed is not None
+                    else None
+                ),
+                as_of=as_of,
+                run_anchor=_midnight(as_of),
+                time_profile=profile,
+                skew=skew,
+                refresh=settle_table if derived else None,
+            )
+        if derived:
+            # The last word: a date a parent's `after` moved or a column a rule redrew
+            # may be what a derived column or a `when` reads.
+            settle_table(df)
 
         df = _coerce_integer_dtypes(df, table_def)
         generated[table_name] = df
@@ -407,7 +494,10 @@ def generate_data_from_dbml(
     # Nullable foreign keys that broke an FK cycle: their parent was generated
     # after them, so they are drawn now, from the rows it ended up holding.
     # ---------------------------------------------------------
+    redrawn: set[str] = set()
     for table_name, column in _deferred_fk_columns(tables, fk_refs, deferred_edges):
+        if is_derived(column) or column.name in tables[table_name].combinations:
+            continue  # holds what its derivation or its combinations said
         table_def = tables[table_name]
         parent_table, parent_column = fk_lookup[(table_name, column.name)]
         if seed is not None:
@@ -436,6 +526,14 @@ def generate_data_from_dbml(
         df = _mirror_attributes(df, table_name, attribute_refs, fk_refs, generated)
         generated[table_name] = _coerce_integer_dtypes(df, table_def)
         release_row_pools(table_name)
+        redrawn.add(table_name)
+
+    # A derived column may read a key drawn just now (a copy of it, a case on it):
+    # its table settles again, so it holds what its derivation says of the final rows.
+    for table_name in sorted(redrawn & settlers.keys()):
+        df = generated[table_name]
+        settlers[table_name](df)
+        generated[table_name] = _coerce_integer_dtypes(df, tables[table_name])
 
     # ---------------------------------------------------------
     # Rollups, once every table holds its final rows: no draws, so nothing
@@ -586,6 +684,55 @@ def _hold_parent_rules(
     return df
 
 
+def _fk_pools(
+    df: pd.DataFrame,
+    table_def: TableDef,
+    table_name: str,
+    fk_lookup: dict[tuple[str, str], tuple[str, str]],
+    generated: dict[str, pd.DataFrame],
+) -> dict[str, Optional[pd.Series]]:
+    """Each foreign-key column of the table with the parent values it draws from, None
+    when the parent's rows are not there (yet)."""
+    pools: dict[str, Optional[pd.Series]] = {}
+    for column in table_def.columns:
+        target = fk_lookup.get((table_name, column.name))
+        if target is None:
+            continue
+        parent_table, parent_column = target
+        parent = df if parent_table == table_name else generated.get(parent_table)
+        pools[column.name] = (
+            parent[parent_column] if parent is not None and parent_column in parent else None
+        )
+    return pools
+
+
+def _rule_locked_columns(
+    table_def: TableDef, table_name: str, attribute_refs: list[dict]
+) -> set[str]:
+    """The columns a table's `rules` may not draw again: its keys, a column copied from a
+    parent's attribute, a rollup, a foreign key with `at_least` and a column a `when` names
+    (see generate.rules)."""
+    locked = {
+        column.name
+        for column in table_def.columns
+        if "pk" in column.settings
+        or "unique" in column.settings
+        or "rollup" in (column.note or {})
+        or is_derived(column)
+        or at_least_of(column)
+    }
+    for key in table_def.composite_keys:
+        locked.update(key.get("columns") or [])
+    # A column another column's `when` reads decides which rows that one holds a value on.
+    for column in table_def.columns:
+        locked.update((column.note or {}).get("when") or {})
+    locked.update(
+        ref["source_column"] for ref in attribute_refs if ref["source_table"] == table_name
+    )
+    locked.update(table_def.combinations)
+    return locked
+
+
 def _midnight(as_of: AsOf) -> datetime:
     """Midnight of the run's anchor day: the latest moment a first-day timestamp takes."""
     anchor = _resolve_anchor(as_of)
@@ -690,6 +837,8 @@ def _deduplicate_composite_keys(
         key_columns = key.get("columns") or []
         if not key_columns or any(c not in df.columns for c in key_columns):
             continue
+        if table_def.combinations and key_columns == table_def.combinations:
+            continue  # one row for each combination: already unique
 
         regen_columns = [(c, columns_by_name[c]) for c in key_columns]
 

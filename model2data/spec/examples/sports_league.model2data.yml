@@ -1,0 +1,86 @@
+# yaml-language-server: $schema=https://www.jbanalytica.com/model2data/spec/0.7.0/model.schema.json
+model2data: 0.7.0
+name: sports_league
+description: >
+  One season of a twelve-club league: the clubs, their players and every game, each club playing
+  every other home and away. All club names are fictional.
+
+enums:
+  # A closed set, so an enum rather than a generator: with `unique` below, one row per member.
+  club_name:
+    [Harbour Rovers, Ironbridge United, Kestrel Athletic, Lakeside Town, Marlow Wanderers, Northgate City, Oakfield Albion, Pinewood Rangers, Queensmere FC, Redcliff Dynamo, Stonebridge Wolves, Westvale Harriers]
+  game_status: [scheduled, final]
+  position: [goalkeeper, defender, midfielder, forward]
+
+tables:
+  clubs:
+    description: One row per club; twelve, because the enum has twelve members
+    columns:
+      id: {type: bigint, pk: true}
+      name: {type: club_name, unique: true, not_null: true}   # unique enum: capped at 12 rows
+
+  players:
+    description: The squads
+    columns:
+      id: {type: bigint, pk: true}
+      club_id:
+        type: bigint
+        not_null: true
+        references: clubs.id
+        generate: {at_least: 18}          # every club has a squad of at least 18
+      first_name: {type: first_name, not_null: true}   # people come from the run's locale
+      last_name: {type: last_name, not_null: true}
+      position:
+        type: position
+        not_null: true
+        generate: {weights: {defender: 6, midfielder: 6, forward: 4, goalkeeper: 2}}
+
+  games:
+    description: One row per fixture; every club plays every other club home and away
+    # 12 x 12 - 12 = 132 rows: no random draw could promise each pair exactly once
+    combinations: [home_team_id, away_team_id]
+    rules:
+      - {home_team_id: {ne: {column: away_team_id}}}   # a club never plays itself
+      - {home_score: {ne: {column: away_score}}}       # no draws
+    columns:
+      id: {type: bigint, pk: true}
+      home_team_id: {type: bigint, references: clubs.id}
+      away_team_id: {type: bigint, references: clubs.id}
+      tip_off_at:
+        type: timestamp
+        not_null: true
+        # a season that runs past the run's day, so part of it is still to be played
+        generate: {min: "2026-08-15", max: "2027-05-15"}
+      game_date:
+        type: date
+        generate: {derive: {date_of: tip_off_at}}
+      status:
+        type: game_status
+        not_null: true
+        generate:
+          derive:                         # played once the run's day has reached the tip-off
+            cases:
+              - if: {tip_off_at: {lte: {run: as_of}}}
+                then: final
+            else: scheduled
+      home_score: {type: int, generate: {min: 0, max: 5, when: {status: [final]}}}   # played games only
+      away_score: {type: int, generate: {min: 0, max: 5, when: {status: [final]}}}
+      winner_team_id:
+        type: bigint
+        references: clubs.id
+        generate:
+          when: {status: [final]}
+          derive:                         # the winner is always one of the two clubs
+            cases:
+              - if: {home_score: {gt: {column: away_score}}}
+                then: {column: home_team_id}
+            else: {column: away_team_id}
+      result_posted_at:
+        type: timestamp
+        generate: {after: tip_off_at, when: {status: [final]}}   # a result follows its game
+
+run:
+  seed: 42
+  as_of: "2026-12-01"
+  locale: nl_BE
+  rows_per_table: {clubs: 12, players: 300}

@@ -38,7 +38,8 @@ def test_the_vendored_schema_is_ossie_0_1_1():
 
 @pytest.mark.parametrize(
     "model_path",
-    sorted((ROOT / "examples").glob("*.model2data.yml")) + [SPEC / "coffee_webshop.model2data.yml"],
+    sorted((ROOT / "examples").glob("*.model2data.yml"))
+    + [SPEC / "coffee_webshop.model2data.yml", SPEC / "sports_league.model2data.yml"],
     ids=lambda path: path.name,
 )
 def test_every_example_model_exports_a_valid_document(model_path):

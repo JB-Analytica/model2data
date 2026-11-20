@@ -1,7 +1,7 @@
 # The model file
 
 A model is one YAML document, `<name>.model2data.yml` — or the same document as JSON. Its
-format is [spec 0.6.0](../model2data/spec/README.md), with a JSON Schema
+format is [spec 0.7.0](../model2data/spec/README.md), with a JSON Schema
 ([`model.schema.json`](../model2data/spec/model.schema.json)) your editor can autocomplete and check
 against:
 
@@ -51,8 +51,9 @@ run:
 A column's `type` is an SQL type, an enum of the model, or a generator (`email`, `first_name`,
 `ean13`, ...). `generate` holds its hints, each a typed value the schema documents. `run` saves
 the generation settings with the model; every CLI option overrides the one it names. The
-[reference example](../model2data/spec/examples/coffee_webshop.model2data.yml) is a complete model,
-and every schema in [`examples/`](../examples/) comes as one.
+[reference example](../model2data/spec/examples/coffee_webshop.model2data.yml) is a complete model, and the
+[sports league](../model2data/spec/examples/sports_league.model2data.yml) shows what 0.7.0 adds
+(derived columns, rules, date windows, combinations). Every schema in [`examples/`](../examples/) comes as one.
 
 Check a model without generating anything — every issue is printed with its path in the document:
 
@@ -117,6 +118,155 @@ tables:
 
 The generated dbt project tests every rollup with `model2data_rollup` (see
 [The generated dbt project](dbt-project.md)).
+
+## Rows that must obey a rule
+
+Columns are drawn one by one, so a game can have the same team at home and away, or end level
+in a sport with no draws. `rules` (spec 0.7.0) on a table lists comparisons every row
+satisfies:
+
+```yaml
+model2data: 0.7.0
+tables:
+  games:
+    rules:
+      - {home_team_id: {ne: {column: away_team_id}}}   # a team never plays itself
+      - {home_score: {ne: {column: away_score}}}       # no draws
+      - {played_at: {lte: {run: as_of}}}               # nothing is dated in the future
+    columns:
+      id: {type: bigint, pk: true}
+      home_team_id: {type: bigint, not_null: true, references: teams.id}
+      away_team_id: {type: bigint, not_null: true, references: teams.id}
+      home_score: {type: int, generate: {min: 0, max: 5}}
+      away_score: {type: int, generate: {min: 0, max: 5}}
+      played_at: timestamp
+```
+
+- **The comparison:** `eq`, `ne`, `in`, `not_in`, `gt`, `gte`, `lt`, `lte`, `between` and
+  `is_null`, with a literal, `{column: other_column}` (that column in the same row) or
+  `{run: as_of}` (the run's anchor) on the right. Order operators compare numbers, dates and
+  timestamps; a number is not compared with a date or an enum with text. A metric's filter
+  (`where`, in the metrics file) takes `{column: ...}` the same way (metrics spec 0.2.0).
+- **How a row is fixed:** a row that breaks a rule has the column that comes later in the table
+  drawn again (`away_team_id`, `away_score`), up to 20 rounds. A foreign key still names a parent
+  that exists, a column with `when` keeps its nulls, and only the rows that broke a rule change:
+  a table without rules generates the same bytes as before, and so does every other table.
+- **Nulls:** a row where a column the rule reads is null is not held to it, as with an SQL
+  check constraint.
+- **Not forced:** a key, a rollup, a foreign key with `at_least` and a column a `when` names are
+  never drawn again; a rule the values cannot satisfy (two columns that can each hold one value
+  and must differ) is listed in the summary with its number of rows, not an error. `validate`
+  names a rule that can never hold (`gt` between columns whose `min` and `max` leave no room).
+- **Days:** with `--days`, a table with rules and `incremental` is refused: the rules hold for
+  the first day's rows only. A rule across a foreign key (`via`) is not supported yet.
+
+## A row for every combination
+
+Random draws and a unique key cannot promise that every team plays every other team at home and
+away. `combinations` (spec 0.7.0) on a table makes its rows one for every combination of the
+parent rows its foreign keys point at, less the combinations its rules exclude:
+
+```yaml
+model2data: 0.7.0
+tables:
+  games:
+    combinations: [home_team_id, away_team_id]
+    rules:
+      - {home_team_id: {ne: {column: away_team_id}}}
+    columns:
+      id: {type: bigint, pk: true}
+      home_team_id: {type: bigint, not_null: true, references: teams.id}
+      away_team_id: {type: bigint, not_null: true, references: teams.id}
+```
+
+With 16 teams that is 16 x 16 - 16 = 240 games. It is as general as it is sporty: every product
+in every store, every employee for every review cycle, every pair of currencies.
+
+- **The rows:** the product of the parents' primary-key values, in the parents' row order with
+  the first listed column outermost. Two or more columns, onto the same parent or different ones.
+- **The row count is not yours to set:** it follows from the parents, so `run.rows_per_table` and
+  `--rows-for` naming the table are errors, and `run.rows` does not apply to it. More than
+  1,000,000 combinations is refused, with the parents' sizes.
+- **Rules:** a rule that reads only the combination columns is applied to the combinations,
+  before anything else is generated, and removes the ones that fail it. A rule that reads other
+  columns works as above, and never draws a combination column again.
+- **The other columns** are generated as usual for that row count: `derive`, `when`, date windows
+  and rules all work on them, as in the league above.
+- **A unique key:** the listed columns are a key together, so the dbt export tests them as one,
+  like any composite unique key. They are never null and take no hint, `when`, `derive`,
+  `at_least`, `pk` or `unique` of their own.
+- **Order and cycles:** the parents are generated first, so a combination over the table itself
+  or over a table that depends on it is an error. Days: with `--days`, a table with
+  `combinations` and `incremental` is refused.
+
+## Dates that lie ahead, and values that follow from others
+
+By default every date a model draws falls before the run's `as_of`, so a schedule has nothing to
+stand on. `min` and `max` on a date or timestamp column (spec 0.7.0) set its window, and `derive`
+makes a column the consequence of others:
+
+```yaml
+model2data: 0.7.0
+enums:
+  game_status: [final, scheduled]
+tables:
+  games:
+    rules:
+      - {home_team_id: {ne: {column: away_team_id}}}
+      - {home_score: {ne: {column: away_score}}}
+    columns:
+      id: {type: bigint, pk: true}
+      home_team_id: {type: bigint, not_null: true, references: teams.id}
+      away_team_id: {type: bigint, not_null: true, references: teams.id}
+      tip_off_at:
+        type: timestamp
+        not_null: true
+        generate: {min: "2026-10-02", max: "2027-04-30"}
+      game_date:
+        type: date
+        generate: {derive: {date_of: tip_off_at}}
+      status:
+        type: game_status
+        generate:
+          derive:
+            cases:
+              - {if: {tip_off_at: {lte: {run: as_of}}}, then: final}
+            else: scheduled
+      home_score: {type: int, generate: {min: 55, max: 125, when: {status: [final]}}}
+      away_score: {type: int, generate: {min: 55, max: 125, when: {status: [final]}}}
+      winner_team_id:
+        type: bigint
+        references: teams.id
+        generate:
+          when: {status: [final]}
+          derive:
+            cases:
+              - {if: {home_score: {gt: {column: away_score}}}, then: {column: home_team_id}}
+            else: {column: away_team_id}
+```
+
+Games before the run's day are `final` with scores and a winner; later ones are `scheduled` and
+have none.
+
+- **Windows:** `min` and `max` are ISO 8601 strings and may lie after `as_of`. A date alone as a
+  timestamp's `max` is the end of that day. With one bound alone the other keeps its default
+  (a year for a timestamp, two for a date, up to `as_of`). `growth`, `seasonality` and
+  `business_hours` shape the draw inside the window, and `after` still holds; `validate` reports
+  a `max` before the first day of the column it follows.
+- **`derive`:** `cases` (the first `if` that holds gives the `then`, else the `else`, null when
+  there is none), `copy: column` or `date_of: column`. An `if` is the comparison of a rule, so
+  `{column: ...}` and `{run: as_of}` work; a value is a literal, `{column: x}` or `{run: as_of}`.
+  A derived column draws nothing, is no key and takes no other value hint; a derived foreign
+  key must come from a foreign key onto the same parent.
+- **The order:** every column that is not derived is drawn, then the derived columns and the
+  `when`s that read or are read by them are computed in dependency order, then the rules are met
+  (a rule draws again the columns it reads that are not derived, and the derived columns follow
+  after each round), and the derived columns are computed once more. What a table holds is
+  therefore final: every derived value is its derivation over the final values of its columns,
+  every `when` follows the final values it names, and every rule holds where it can.
+- **Days:** a table with `incremental` that has a derived column or a window cannot be
+  generated with `--days`: the first day's rows only are covered. Nothing may follow a derived
+  column with `after`, and `validate` reports a derivation loop.
 
 ## DBML is supported input
 

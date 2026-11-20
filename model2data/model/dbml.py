@@ -39,7 +39,7 @@ import re
 import warnings
 from typing import Any, Optional
 
-from model2data.model.document import from_dict, uses_0_5_after
+from model2data.model.document import from_dict, uses_0_5_after, uses_0_7_hint
 from model2data.model.errors import Issue, ModelError
 from model2data.model.types import Model
 
@@ -198,7 +198,7 @@ class _Converter:
                 self.tables[key] = self._table(key, table)
         document["tables"] = self.tables
         # A note hint `when` is spec 0.4.0, an `after` that is a list or names a
-        # parent's column 0.5.0, and `rollup` or `at_least` 0.6.0: the document
+        # parent's column 0.5.0, `rollup` or `at_least` 0.6.0, and `derive` or a date `min`/`max` 0.7.0: the document
         # says so, and any other stays 0.2.0.
         generates = [
             column.get("generate") or {}
@@ -206,7 +206,9 @@ class _Converter:
             for column in (table.get("columns") or {}).values()
             if isinstance(column, dict)
         ]
-        if any("rollup" in generate or "at_least" in generate for generate in generates):
+        if any(uses_0_7_hint(generate) for generate in generates):
+            document["model2data"] = "0.7.0"
+        elif any("rollup" in generate or "at_least" in generate for generate in generates):
             document["model2data"] = "0.6.0"
         elif any(uses_0_5_after(generate.get("after")) for generate in generates):
             document["model2data"] = "0.5.0"

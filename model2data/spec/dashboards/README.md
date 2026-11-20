@@ -38,6 +38,8 @@ pages:
 
 A complete example, which checks clean against the example model and metrics file beside it, is
 [`../examples/coffee_webshop_sales.dashboard.yml`](../examples/coffee_webshop_sales.dashboard.yml).
+The sports league's [`sports_league_standings.dashboard.yml`](../examples/sports_league_standings.dashboard.yml)
+is a second, smaller one.
 
 ## What is normative
 

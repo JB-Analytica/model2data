@@ -362,3 +362,18 @@ def test_a_ref_onto_a_column_that_is_no_key_draws_from_the_parents_values():
         hashes = data["_dlt_loads"]["schema_version_hash"].dropna()
         assert len(hashes)
         assert hashes.isin(data["_dlt_version"]["version_hash"]).all(), seed
+
+
+def test_a_date_window_in_a_note_makes_the_model_spec_0_7_0():
+    dbml = """
+    Table events {
+      id int [pk]
+      happened_on date [note: '{"min": "2026-01-01", "max": "2026-03-31"}']
+    }
+    """
+    model = from_dbml(dbml)
+    assert str(model.version) == "0.7.0"
+    assert model.tables["events"].columns["happened_on"].generate["min"] == "2026-01-01"
+    assert str(from_dbml(dbml.replace('"min": "2026-01-01", ', "")).version) == "0.7.0"
+    plain = from_dbml("Table events {\n  id int [pk]\n  n int [note: '{\"min\": 1}']\n}")
+    assert str(plain.version) == "0.2.0"

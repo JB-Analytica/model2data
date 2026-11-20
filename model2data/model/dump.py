@@ -15,7 +15,8 @@ The style is the reference example's (model2data/spec/examples/): a
   1.1 reader (`no`, `on`, `NO`), and then with double quotes.
 - A string ending in a newline is written as a folded (`>`) block when it is one
   line, and a literal (`|`) block when it is several.
-- A table's `defects` come after its keys, one defect a line as a flow mapping.
+- A table's `combinations` come before its columns, as a flow list.
+- A table's `rules` and `defects` come after its keys, one a line as a flow mapping.
 
 `dump` writes by hand rather than through `yaml.dump`, which can do neither
 the mixed flow/block layout nor the quoting rule.
@@ -86,6 +87,7 @@ def _tables(model: Model) -> list[str]:
                 "incremental",
                 incremental_to_dict(table.incremental) if table.incremental is not None else None,
             ),
+            ("combinations", list(table.combinations) if table.combinations else None),
         ):
             if value is not None:
                 lines += _entry(name, value, 2)
@@ -108,6 +110,10 @@ def _tables(model: Model) -> list[str]:
                     entry["one_to_one"] = True
                 entries.append(entry)
             lines += _block_list(entries, 3, flow_items=False)
+        if table.rules:
+            # One rule a line, each a flow mapping, as the defects are.
+            lines.append(f"{pad}rules:")
+            lines += _block_list(table.rules, 3)
         if table.defects:
             # One defect a line, however short the list: the lines a studio toggles.
             lines.append(f"{pad}defects:")

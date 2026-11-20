@@ -7,6 +7,103 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.23.0] - 2026-11-20
+
+One change alters what an existing model writes: a table with a unique enum column is now capped
+at the enum's member count (listed first under Changed). A model whose unique enums have at
+least as many members as the rows asked for, and that uses nothing else added here, writes the
+same files as 1.22.0 for the same model, seed and `--as-of`. Everything else is opt-in
+vocabulary, model spec 0.7.0 and metrics spec 0.2.0, that a model or metrics file has to ask for.
+
+### Added
+- **A second worked example, a sports league season.** `model2data/spec/examples/sports_league.model2data.yml`,
+  `.metrics.yml` and `sports_league_standings.dashboard.yml`: twelve fictional clubs as a unique
+  enum, `combinations` for every home and away fixture, `rules`, a date window past `as_of`,
+  `derive` (status from the run's day, the winner from the scores), `when`, `after`, `at_least`
+  and a column-to-column metric filter for home wins.
+- **`combinations` on a table (model spec 0.7.0): a row for every combination of its parents'
+  rows.** `combinations: [home_team_id, away_team_id]` with the rule `home_team_id ne
+  away_team_id` makes 16 teams 16 x 16 - 16 = 240 games, each pair once: what "every team plays
+  every other team home and away" needs, and what random draws plus a unique key cannot promise.
+  The rows are the product of the parents' primary-key values in the parents' row order (the first
+  listed column outermost), less the combinations a rule that reads only those columns excludes,
+  evaluated before anything else is generated. Every other column is generated as usual for that
+  row count (`derive`, `when`, date windows and rules all work on it) and a rule never draws a
+  combination column again. The columns are a unique key together, tested by dbt as one, and the
+  composite-key repair leaves the table alone. The row count follows from the parents, so naming
+  the table in `run.rows_per_table` or `--rows-for` is an error and `--rows` does not apply to it;
+  more than 1,000,000 combinations is refused, naming the parents' sizes; a table with
+  `combinations` and `incremental` is refused with `--days`. `validate` reports fewer than two
+  columns, a column the table does not have or that is not a foreign key, a column with a hint,
+  `when`, `derive`, `at_least`, `pk` or `unique`, a table the parents depend on, and a row count
+  in `run.rows_per_table`; a document that uses it says `model2data: 0.7.0`.
+- **`rules` on a table (model spec 0.7.0): comparisons every generated row satisfies.** Each is
+  a comparison between columns of the same row, or against a constant or the run's anchor:
+  `rules: [{home_team_id: {ne: {column: away_team_id}}}, {home_score: {ne: {column: away_score}}}]`.
+  After a table's columns are drawn, a row that breaks a rule has the column that comes later in
+  the table drawn again (a foreign key still names a parent, a column with `when` keeps its
+  nulls), up to 20 rounds from a stream of its own, so no other column or table changes. Keys,
+  rollups, a foreign key with `at_least` and a column a `when` names are never drawn again; a row
+  where a column the rule reads is null is not held to it, as with an SQL check constraint. A rule
+  the values cannot satisfy is listed in the summary (`generate.core.get_unsatisfied_rules()`),
+  not an error. `validate` reports a rule that names a column the table does not have, compares
+  things of different kinds, uses an order operator on text, an enum or a boolean, can never hold
+  by the columns' `min` and `max`, compares a column with itself, or uses `via` (a rule across a
+  foreign key is not supported yet). A table with rules and `incremental` is refused with
+  `--days`: the rules hold for the first day's rows only.
+- **The comparison grammar, as one module.** `model2data.generate.comparison` parses, checks and
+  evaluates `{<column>: {<operator>: <operand>}}`: the operators of a metric's `where` (`eq`,
+  `ne`, `in`, `not_in`, `gt`, `gte`, `lt`, `lte`, `between`, `is_null`) and two new operands,
+  `{column: <name>}` (that column in the same row) and `{run: as_of}` (the run's anchor, for the
+  model only). Metrics filters and table rules read it, so they cannot disagree. The spec README
+  has a "Comparisons" and a "Rules" section.
+- **A metric's filter can compare two columns (metrics spec 0.2.0).** `games.winner_team_id: {eq:
+  {column: games.home_team_id}}` counts the games the home team won. The other column is on the
+  metric's table or one it reaches along exactly one path, of a kind the first can be compared
+  with. It compiles into the known values, the dbt tests, the Ossie export and the Lightdash
+  export (in the metric's `sql`, as a filter list holds values only). A metrics file that uses it
+  says `model2data-metrics: 0.2.0`; one that says 0.1.0 and uses it is an error, and a 0.1.0
+  file reads as before. `metric_values.json` says `0.2.0` only when a metric uses it.
+
+- **`derive`: a column computed from other columns of its row (model spec 0.7.0).** `cases`
+  (`if` is the comparison of a rule, `then` and `else` a literal, `{column: x}` or `{run: as_of}`;
+  the first case that holds gives the value, null when none does and there is no `else`), `copy:
+  column` and `date_of: column`. A derived column draws nothing, so no stream moves. It composes
+  with `when` (which says where it is null), and a foreign key can be derived from another
+  foreign key onto the same parent (the winner of a game is its home or away team). A table is now
+  settled in an order that makes the final rows agree: columns that are not derived are drawn,
+  derived columns and the `when`s they read or that read them are computed in dependency order,
+  the cross-table `after` is held and the rules are met (a rule redraws only columns that are not
+  derived, and the derived columns and `when`s are computed again after each round), and last
+  everything derived is computed once more. A rollup over a derived column adds up its final
+  values. `validate` reports a derived key, a value hint beside `derive`, a loop (a `when` that
+  names a derived column included), a `then` or `else` that is not a value of the column, a
+  column of a kind that cannot go into it, `date_of` on something that is not a timestamp or into
+  something that is not a date, a column that does not exist, a derivation reading a rollup, an
+  `after` naming a derived column and a rule reading only derived columns. A table with a
+  derived column and `incremental` is refused with `--days`.
+- **Windows on dates (model spec 0.7.0): `min` and `max` on a date or timestamp column.** ISO 8601
+  strings that may lie after `as_of`, so a season can run past the run's day:
+  `generate: {min: "2026-10-02", max: "2027-04-30"}`. With one bound the other keeps its
+  default; a date alone as a timestamp's `max` is the end of that day. `growth`, `seasonality`
+  and `business_hours` shape the draw inside the window, and `after` holds: a column follows
+  another up to its own `max`, a child follows a parent's date after `as_of`, and one with no
+  window of its own lands within 30 days after a date after `as_of`. `validate` reports an
+  unparseable date, a `min` after the `max`, a number on a date column, a date on a numeric one
+  and a `max` before the first day of the column it follows. A table with a window and
+  `incremental` is refused with `--days`.
+
+### Changed
+- **A table with a unique enum column holds at most one row per member.** With more rows asked
+  than the enum has members, the table used to repeat members and report the column as left with
+  duplicates; it is now capped at the member count, like a table over a unique reference, and the
+  run says so. This changes the output of a model whose unique enum has fewer members than its
+  table's rows; any other model writes the same files as before.
+- `validate` reads model spec 0.7.0 (0.2 to 0.6 documents as before) and metrics spec 0.2.0
+  (0.1 files as before), and prints the version a metrics file says.
+- A `when` may sit on a foreign key that is derived (it holds another column's value, so a
+  row's parent still does not depend on it); on any other foreign key it is still an error.
+
 ## [1.22.0] - 2026-11-20
 
 Two things change what a run writes, both on purpose and both listed first. A model that has no

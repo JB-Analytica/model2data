@@ -1,4 +1,4 @@
-"""Metrics next to the model: metrics spec 0.1.0, read, checked, resolved, computed and exported.
+"""Metrics next to the model: metrics spec 0.2.0, read, checked, resolved, computed and exported.
 
 A metrics file is `<stem>.metrics.yml` beside `<stem>.model2data.yml`, as
 `model2data/spec/metrics/README.md` and `metrics.schema.json` define it. The

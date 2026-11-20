@@ -168,7 +168,8 @@ def test_the_version_as_a_yaml_number_0_3_is_read():
     # A version it does not name points at the current spec.
     assert schema_url(0.4).endswith("/0.4.0/model.schema.json")
     assert schema_url(0.5).endswith("/0.5.0/model.schema.json")
-    assert schema_url(None).endswith("/0.6.0/model.schema.json")
+    assert schema_url(0.6).endswith("/0.6.0/model.schema.json")
+    assert schema_url(None).endswith("/0.7.0/model.schema.json")
     assert schema_url(0.4).endswith("/0.4.0/model.schema.json")
 
 
