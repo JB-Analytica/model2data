@@ -1,7 +1,7 @@
 # Metrics with known values
 
 What the numbers mean -- revenue, orders, average order value -- goes in a second, optional file
-beside the model, `<stem>.metrics.yml`, defined by the [metrics spec 0.1.0](../model2data/spec/metrics/README.md)
+beside the model, `<stem>.metrics.yml`, defined by the [metrics spec 0.2.0](../model2data/spec/metrics/README.md)
 ([schema](../model2data/spec/metrics/metrics.schema.json)):
 
 ```yaml
@@ -42,6 +42,13 @@ own (`orders_total_amount`), and a fact a row count (`orders_count`); `infer: fa
 off. `format` changes no value: `percent` expects a fraction (0.6 shows as 60%), so a share is
 `web_revenue / revenue`, never `* 100`. The generator never reads the file: the data is the same
 with or without it.
+
+A filter can also compare a column with another column of the same row (metrics spec 0.2.0, a
+file that says `model2data-metrics: 0.2.0`): `games.winner_team_id: {eq: {column:
+games.home_team_id}}` counts the games the home team won. The other column is on the metric's
+table or one it reaches, and the two columns are of one kind (numbers with numbers, dates with
+dates and timestamps). The known values, the dbt tests, the Ossie export and the Lightdash export
+all compute it, the last one in the metric's `sql`.
 
 ```bash
 model2data validate coffee_webshop.metrics.yml          # against coffee_webshop.model2data.yml beside it
@@ -126,8 +133,8 @@ Lightdash's `ai_hint`, `percent` and `currency` its `'0.00%'` and `'#,##0.00'`.
 A filter becomes the metric's `filters` where Lightdash's filter grammar says exactly the same:
 values and lists, `ne` and `not_in` (with `'!null'`, since Lightdash's not-equal lets nulls
 through and model2data's does not), `is_null`, and comparisons and `between` on numbers.
-Anything else, an `any` group or a date comparison, goes into the metric's `sql` as a
-`CASE WHEN`, so the metric still counts exactly the rows its known value counts.
+Anything else, an `any` group, a date comparison or a comparison with another column
+(`{column: ...}`, see below), goes into the metric's `sql` as a `CASE WHEN`, so the metric still counts exactly the rows its known value counts.
 
 What Lightdash has no place for is listed in the summary and at the top of the exported file: an
 enum's members, a table's role and grain, a currency, a metric dated by a column of another table

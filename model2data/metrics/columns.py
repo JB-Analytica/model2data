@@ -10,12 +10,11 @@ reason.
 
 from __future__ import annotations
 
-from typing import Literal, Optional
+from typing import Optional
 
 from model2data.generate import kinds
+from model2data.generate.comparison import ColumnKind, Typed
 from model2data.model.types import Column, Model
-
-ColumnKind = Literal["enum", "boolean", "integer", "decimal", "date", "timestamp", "text"]
 
 
 def column_kind(model: Model, column: Column) -> ColumnKind:
@@ -31,6 +30,19 @@ def column_kind(model: Model, column: Column) -> ColumnKind:
     if temporal is not None:
         return temporal
     return "text"
+
+
+def typed(model: Model, path: str, column: Column) -> Typed:
+    """A column as a side of a comparison: its path, its kind and, for an enum, the enum."""
+    kind = column_kind(model, column)
+    enum = None
+    if kind == "enum":
+        lowered = column.type.strip().lower()
+        enum = next(
+            (name for name in model.enums if name == column.type or name.lower() == lowered),
+            column.type,
+        )
+    return Typed(path, kind, enum)
 
 
 def is_numeric(kind: ColumnKind) -> bool:

@@ -15,6 +15,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, Optional, Union
 
+from model2data.generate.comparison import OPERATORS, ORDER_OPERATORS, operand_columns
+
 if TYPE_CHECKING:
     from model2data.model.errors import Issue
 
@@ -31,21 +33,9 @@ AGGREGATIONS: tuple[str, ...] = (
 # The two that apply to a column of any kind; the rest need a numeric one.
 ANY_KIND_AGGREGATIONS: tuple[str, ...] = ("count", "count_distinct")
 FORMATS: tuple[str, ...] = ("number", "currency", "percent")
-# Each operator of a condition, in the order a condition is written out.
-OPERATORS: tuple[str, ...] = (
-    "eq",
-    "ne",
-    "in",
-    "not_in",
-    "gt",
-    "gte",
-    "lt",
-    "lte",
-    "between",
-    "is_null",
-)
-# The operators that compare by order, which a text, enum or boolean column has none of.
-ORDER_OPERATORS: tuple[str, ...] = ("gt", "gte", "lt", "lte", "between")
+# Each operator of a condition, and the ones that compare by order, are the shared
+# comparison grammar's (model2data.generate.comparison): OPERATORS, ORDER_OPERATORS.
+__all__ = ["OPERATORS", "ORDER_OPERATORS"]
 # A metric's kind, by the one key that says it.
 KIND_KEYS: dict[str, str] = {
     "measure": "simple",
@@ -73,6 +63,18 @@ class Condition:
     # How the file wrote it: a lone value (`eq`), a list (`in`), or operators.
     written: Literal["value", "list", "operators"] = "operators"
     extensions: dict[str, Any] = field(default_factory=dict)
+
+    def paths(self) -> list[str]:
+        """Every column path the condition reads: its own, then the columns its operands
+        name (`{column: games.home_team_id}`), in operator order."""
+        return [
+            self.column,
+            *(
+                path
+                for operator, operand in self.operators.items()
+                for path in operand_columns(operator, operand)
+            ),
+        ]
 
 
 @dataclass

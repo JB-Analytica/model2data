@@ -48,8 +48,8 @@ from typing import Any, Optional, Union
 
 import pandas as pd
 
+from model2data.generate.comparison import column_operand
 from model2data.metrics import expression as expr
-from model2data.metrics.check import SPEC_VERSION
 from model2data.metrics.semantic import ResolvedMetric, SemanticModel
 from model2data.metrics.sql import columns_read, query, quote
 
@@ -79,11 +79,14 @@ class KnownValues:
     values: dict[str, KnownValue] = field(default_factory=dict)
     seed: Optional[int] = None
     as_of: Optional[str] = None
+    # The metrics spec the values are written against: 0.1.0, or 0.2.0 when a metric
+    # compares a column with another one (what that version added).
+    spec: str = "0.1.0"
 
     def to_json(self) -> str:
         """`metric_values.json`: stable text, keys in a fixed order, two-space indent."""
         document: dict[str, Any] = {
-            "model2data-metrics": SPEC_VERSION,
+            "model2data-metrics": self.spec,
             "model": self.model,
         }
         if self.seed is not None or self.as_of is not None:
@@ -438,6 +441,14 @@ def _assemble(
     as_of: Optional[str],
 ) -> KnownValues:
     out = KnownValues(model=semantic.name, seed=seed, as_of=as_of)
+    if any(
+        column_operand(operand) is not None
+        for metric in semantic.metrics.values()
+        if metric.where is not None
+        for condition in metric.where.conditions()
+        for operand in condition.operators.values()
+    ):
+        out.spec = "0.2.0"
     for name, metric in semantic.metrics.items():
         if metric.kind in ("simple", "count"):
             total, months = raw[name]

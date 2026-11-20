@@ -25,7 +25,8 @@ and never parsed, so `eq` and `in` are written as lists. Lightdash's not-equal
 lets nulls through, where model2data's lets them fail, so `ne` and `not_in` add
 `'!null'`. Comparisons on numbers are `'> 5'` and `'between 0 and 50'`.
 Anything else -- an `any` or `all` group, a comparison on a date or timestamp,
-a value the grammar would read as something else -- is written into the
+a comparison with another column of the same row (`{column: ...}`: a filter holds a
+value, never a column), a value the grammar would read as something else -- is written into the
 metric's `sql` as a `CASE WHEN`, which Lightdash ANDs with the filters, so the
 metric still counts exactly what model2data counts.
 
@@ -50,6 +51,7 @@ from typing import Any, Optional, Union
 
 import yaml
 
+from model2data.generate.comparison import column_operand
 from model2data.metrics import expression as expr
 from model2data.metrics.columns import ColumnKind, column_kind, find_column, is_temporal
 from model2data.metrics.graph import Graph
@@ -348,6 +350,8 @@ def _condition_filters(
         if operator == "is_null":
             out.append({key: "null" if operand else "!null"})
             continue
+        if column_operand(operand) is not None:
+            return None  # a filter holds a value, never another column
         if is_temporal(kind):
             return None
         if operator in ("eq", "in"):
