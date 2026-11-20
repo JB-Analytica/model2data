@@ -99,6 +99,13 @@ def _table_def(model: Model, key: str, table: Table) -> TableDef:
     if len(pk_columns) > 1 and pk_key is None:
         composite_keys.append({"columns": pk_columns, "type": "pk"})
     composite_keys += [{"columns": list(k.columns), "type": k.kind} for k in table.keys]
+    if table.combinations and not any(
+        set(key["columns"]) == set(table.combinations) and key["type"] in ("pk", "unique")
+        for key in composite_keys
+    ):
+        # The combination columns are a unique key together: one row per combination, so
+        # the dbt export tests them as one like any composite unique key.
+        composite_keys.append({"columns": list(table.combinations), "type": "unique"})
 
     one_to_one_children = {
         name
@@ -116,6 +123,7 @@ def _table_def(model: Model, key: str, table: Table) -> TableDef:
         composite_keys=composite_keys,
         note=_table_hints(table),
         rules=[dict(rule) for rule in table.rules],
+        combinations=list(table.combinations),
     )
 
 

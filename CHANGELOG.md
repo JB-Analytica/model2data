@@ -11,6 +11,22 @@ Models and metrics files that use none of what is added here read and generate e
 1.22.0: the same model, seed and `--as-of` write the same files.
 
 ### Added
+- **`combinations` on a table (model spec 0.7.0): a row for every combination of its parents'
+  rows.** `combinations: [home_team_id, away_team_id]` with the rule `home_team_id ne
+  away_team_id` makes 16 teams 16 x 16 - 16 = 240 games, each pair once: what "every team plays
+  every other team home and away" needs, and what random draws plus a unique key cannot promise.
+  The rows are the product of the parents' primary-key values in the parents' row order (the first
+  listed column outermost), less the combinations a rule that reads only those columns excludes,
+  evaluated before anything else is generated. Every other column is generated as usual for that
+  row count (`derive`, `when`, date windows and rules all work on it) and a rule never draws a
+  combination column again. The columns are a unique key together, tested by dbt as one, and the
+  composite-key repair leaves the table alone. The row count follows from the parents, so naming
+  the table in `run.rows_per_table` or `--rows-for` is an error and `--rows` does not apply to it;
+  more than 1,000,000 combinations is refused, naming the parents' sizes; a table with
+  `combinations` and `incremental` is refused with `--days`. `validate` reports fewer than two
+  columns, a column the table does not have or that is not a foreign key, a column with a hint,
+  `when`, `derive`, `at_least`, `pk` or `unique`, a table the parents depend on, and a row count
+  in `run.rows_per_table`; a document that uses it says `model2data: 0.7.0`.
 - **`rules` on a table (model spec 0.7.0): comparisons every generated row satisfies.** Each is
   a comparison between columns of the same row, or against a constant or the run's anchor:
   `rules: [{home_team_id: {ne: {column: away_team_id}}}, {home_score: {ne: {column: away_score}}}]`.

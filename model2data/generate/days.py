@@ -225,6 +225,7 @@ def iter_days(
         _check_rollups(tables, refs, incremental)
         _check_rules(tables, incremental)
         _check_derived_and_windows(tables, incremental)
+        _check_combinations(tables, incremental)
 
     frames = generate_data_from_dbml(
         tables,
@@ -315,6 +316,29 @@ def _check_rules(tables: Mapping[str, TableDef], incremental: Mapping[str, Incre
                 f'{key}: "rules" hold for the first day\'s rows, and {key} has `incremental`, '
                 "which draws rows on the days after it without them: generate without days, "
                 "or drop the rules."
+            )
+
+
+def _check_combinations(
+    tables: Mapping[str, TableDef], incremental: Mapping[str, Incremental]
+) -> None:
+    """Refuse days after the first where a combination table moves: its rows are fixed.
+
+    A combination table holds one row for every combination of its parents' rows
+    (generate.combinations); a day that inserts or updates rows of it would draw rows
+    that are not one.
+    """
+    for key, table in tables.items():
+        inc = incremental.get(key)
+        if (
+            table.combinations
+            and inc is not None
+            and ((inc.new_per_day or 0) or (inc.update_rate or 0))
+        ):
+            raise ValueError(
+                f'{key}: "combinations" make one row for every combination of its parents\' '
+                f"rows, and {key} has `incremental`, which draws rows on the days after the "
+                "first: generate without days, or drop one of them."
             )
 
 

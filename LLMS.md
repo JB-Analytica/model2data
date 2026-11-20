@@ -279,6 +279,17 @@ rounds; a foreign key still names a parent; keys, rollups and a column a `when` 
 alone); a row where a column the rule reads is null is not held to it; a rule the values cannot
 meet is listed in the summary. A table with rules and `incremental` cannot run with `--days`.
 
+**A row for every combination (YAML, spec 0.7.0).** A table's `combinations: [home_team_id,
+away_team_id]` makes its rows every combination of the parent rows those foreign keys point at,
+less what its `rules` exclude (16 teams and `home_team_id ne away_team_id` are 240 games). The row
+count follows from the parents (in their row order, the first column outermost), so
+`rows_per_table`, `--rows-for` and `--rows` do not apply to it; more than 1,000,000 combinations is
+refused. A rule on the combination columns alone removes combinations, one on other columns never
+redraws a combination column. The columns are a unique key together (the dbt export tests them as
+one), take at least two foreign keys, and take no hint, `when`, `derive`, `at_least`, `pk` or
+`unique`. Other columns are generated as usual. A table with `combinations` and `incremental`
+cannot run with `--days`.
+
 **Values that follow from other columns (YAML, spec 0.7.0).** A column's `generate: {derive: ...}`
 computes it from the row's other columns and draws nothing: `{date_of: tip_off_at}` (a timestamp's
 date), `{copy: other}`, or `cases: [{if: {home_score: {gt: {column: away_score}}}, then: {column:

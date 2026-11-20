@@ -64,8 +64,8 @@ columns. Add `not_null` to every column that must always have a value.
 - `generate`: `min`, `max`, `distribution`, `null_rate`, `weights`, `true_rate`,
   `distinct`, `skew`, `after`, `business_hours`, `growth`, `seasonality`, `transitions`,
   `when`, `rollup`, `at_least`, `derive`.
-- Table: `columns`, `description`, `color`, `role`, `grain`, `keys`, `foreign_keys`,
-  `incremental`, `rules`, `defects`.
+- Table: `columns`, `description`, `color`, `role`, `grain`, `combinations`, `keys`,
+  `foreign_keys`, `incremental`, `rules`, `defects`.
 - Top level: `model2data` (spec version), `name`, `description`, `enums`, `tables`,
   `relationships`, `groups`, `run`.
 
@@ -176,6 +176,18 @@ key still names a parent), up to 20 rounds; a rule a column's value space cannot
 in the summary. A row where a column the rule reads is null is not held to it. Keys, rollups and
 a column a `when` names are not drawn again. A rule across a foreign key (`via`) is not supported
 yet, and a table with rules and `incremental` cannot run with `--days`.
+
+`combinations` on a table (spec 0.7.0) makes its rows every pairing of its parents' rows, less
+what its rules exclude: `combinations: [home_team_id, away_team_id]` with the rule `{home_team_id:
+{ne: {column: away_team_id}}}` on 16 teams is 16 x 16 - 16 = 240 games, each pair once. Use it when
+every combination must exist (every team home and away, every product in every store) and random
+draws plus a unique key cannot promise it. List two or more foreign keys of the table (not null,
+no hint, `when`, `derive`, `at_least`, `pk` or `unique` on them); the row count follows from the
+parents, so `rows_per_table`, `--rows-for` and `--rows` do not apply to it. The rows come in the
+parents' row order, the first listed column outermost; a rule that reads only those columns removes
+combinations, a rule that reads others redraws the others. The columns are a unique key together
+(dbt tests them as one). Every other column is generated as usual. More than 1,000,000 combinations
+is refused, and a table with `combinations` and `incremental` cannot run with `--days`.
 
 `min` and `max` on a date or timestamp column (spec 0.7.0) are ISO strings that fix the window its
 values fall in, and may lie after the run's `as_of`: `tip_off_at: {type: timestamp, generate: {min:

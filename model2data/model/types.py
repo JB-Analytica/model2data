@@ -129,6 +129,9 @@ class Table:
     # What every generated row must satisfy (spec 0.7.0, "Rules"): each entry a
     # comparison mapping `{column: {operator: operand}}`, kept as the document wrote it.
     rules: list[dict[str, Any]] = field(default_factory=list)
+    # The foreign-key columns whose every combination of parent rows is a row of the
+    # table (spec 0.7.0, "Combination tables"); empty for an ordinary table.
+    combinations: list[str] = field(default_factory=list)
     extensions: dict[str, Any] = field(default_factory=dict)
 
     def primary_key(self) -> list[str]:

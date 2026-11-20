@@ -146,6 +146,7 @@ def _table(table: Mapping) -> Table:
         ],
         defects=[_defect(entry) for entry in table["defects"]] if "defects" in table else None,
         rules=[copy.deepcopy(dict(rule)) for rule in table.get("rules") or []],
+        combinations=list(table.get("combinations") or []),
         extensions=_extensions(table),
     )
 
@@ -306,9 +307,9 @@ def uses_0_6(model: Model) -> bool:
 
 
 def uses_0_7(model: Model) -> bool:
-    """Whether the model uses what spec 0.7.0 added: a table's `rules`, a column's `derive`, or a
-    date window (a `min` or `max` that is a string)."""
-    return any(table.rules for table in model.tables.values()) or any(
+    """Whether the model uses what spec 0.7.0 added: a table's `rules` or `combinations`, a
+    column's `derive`, or a date window (a `min` or `max` that is a string)."""
+    return any(table.rules or table.combinations for table in model.tables.values()) or any(
         uses_0_7_hint(column.generate)
         for table in model.tables.values()
         for column in table.columns.values()
@@ -331,7 +332,7 @@ def document_version(model: Model) -> Any:
     """The version the model's document is written against.
 
     The version the model was read with, unless the model uses what that
-    version does not have: 0.7.0 when it uses `rules`, `derive` or a date `min`/`max` and was read as 0.2-0.6,
+    version does not have: 0.7.0 when it uses `rules`, `combinations`, `derive` or a date `min`/`max` and was read as 0.2-0.6,
     0.6.0 when it uses `rollup` or `at_least` and was read as 0.2-0.5, 0.5.0 when it uses a list or a parent's column in
     `after` and was read as
     0.2-0.4, 0.4.0 when it uses `when` and was read as 0.2 or 0.3, 0.3.0 when it uses `defects` or `incremental.history` and was read as
@@ -366,6 +367,7 @@ def table_to_dict(table: Table) -> dict[str, Any]:
     _put(out, "grain", list(table.grain) if table.grain is not None else None)
     if table.incremental is not None:
         out["incremental"] = incremental_to_dict(table.incremental)
+    _put(out, "combinations", list(table.combinations))
     out["columns"] = {name: column_to_dict(column) for name, column in table.columns.items()}
     _put(out, "keys", [{key.kind: list(key.columns)} for key in table.keys])
     foreign_keys = []

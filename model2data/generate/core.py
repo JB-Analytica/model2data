@@ -10,6 +10,7 @@ from typing import Any, Optional
 import pandas as pd
 from faker import Faker
 
+from model2data.generate.combinations import combination_frame
 from model2data.generate.derive import has_derived, is_derived, settle
 from model2data.generate.faker import (
     AsOf,
@@ -247,13 +248,27 @@ def generate_data_from_dbml(
 
     for table_name in ordered_tables:
         table_def = tables[table_name]
-        row_count = _determine_row_count(table_def.name, base_rows, row_overrides)
-        asked = row_count
-        row_count, cap_reason = _unique_reference_cap(
-            table_def, table_name, fk_lookup, generated, row_count
-        )
-        if cap_reason is not None:
-            _capped_tables.append(f"{table_name}: {row_count} rows, not {asked} ({cap_reason})")
+        combos: Optional[pd.DataFrame] = None
+        if table_def.combinations:
+            # The rows follow from the parents: no count is asked for (spec 0.7.0).
+            if row_overrides and table_name in row_overrides:
+                raise ValueError(
+                    f'{table_name}: "combinations" make its rows, one for every combination of '
+                    f"{', '.join(table_def.combinations)}, so a row count cannot be set for it "
+                    "(`run.rows_per_table`, `--rows-for`)"
+                )
+            combos = combination_frame(
+                table_def, table_name, fk_lookup, generated, run_anchor=_midnight(as_of)
+            )
+            row_count = len(combos)
+        else:
+            row_count = _determine_row_count(table_def.name, base_rows, row_overrides)
+            asked = row_count
+            row_count, cap_reason = _unique_reference_cap(
+                table_def, table_name, fk_lookup, generated, row_count
+            )
+            if cap_reason is not None:
+                _capped_tables.append(f"{table_name}: {row_count} rows, not {asked} ({cap_reason})")
 
         # Give this table its own RNG stream before a single value of it is
         # drawn. One stream for the whole run meant re-rolling a table
@@ -310,6 +325,11 @@ def generate_data_from_dbml(
         # First pass: columns + FKs
         # -----------------------
         for column in table_def.columns:
+            if combos is not None and column.name in combos.columns:
+                # One of the combinations the rows are (generate.combinations): drawn by
+                # nothing, and never drawn again.
+                data[column.name] = combos[column.name].tolist()
+                continue
             if is_derived(column):
                 # Computed from the other columns once they are final: draws nothing.
                 data[column.name] = [None] * row_count
@@ -464,8 +484,8 @@ def generate_data_from_dbml(
     # after them, so they are drawn now, from the rows it ended up holding.
     # ---------------------------------------------------------
     for table_name, column in _deferred_fk_columns(tables, fk_refs, deferred_edges):
-        if is_derived(column):
-            continue  # holds what its derivation said (generate.derive)
+        if is_derived(column) or column.name in tables[table_name].combinations:
+            continue  # holds what its derivation or its combinations said
         table_def = tables[table_name]
         parent_table, parent_column = fk_lookup[(table_name, column.name)]
         if seed is not None:
@@ -689,6 +709,7 @@ def _rule_locked_columns(
     locked.update(
         ref["source_column"] for ref in attribute_refs if ref["source_table"] == table_name
     )
+    locked.update(table_def.combinations)
     return locked
 
 
@@ -796,6 +817,8 @@ def _deduplicate_composite_keys(
         key_columns = key.get("columns") or []
         if not key_columns or any(c not in df.columns for c in key_columns):
             continue
+        if table_def.combinations and key_columns == table_def.combinations:
+            continue  # one row for each combination: already unique
 
         regen_columns = [(c, columns_by_name[c]) for c in key_columns]
 

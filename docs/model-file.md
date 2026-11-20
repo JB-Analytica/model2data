@@ -159,6 +159,45 @@ tables:
 - **Days:** with `--days`, a table with rules and `incremental` is refused: the rules hold for
   the first day's rows only. A rule across a foreign key (`via`) is not supported yet.
 
+## A row for every combination
+
+Random draws and a unique key cannot promise that every team plays every other team at home and
+away. `combinations` (spec 0.7.0) on a table makes its rows one for every combination of the
+parent rows its foreign keys point at, less the combinations its rules exclude:
+
+```yaml
+model2data: 0.7.0
+tables:
+  games:
+    combinations: [home_team_id, away_team_id]
+    rules:
+      - {home_team_id: {ne: {column: away_team_id}}}
+    columns:
+      id: {type: bigint, pk: true}
+      home_team_id: {type: bigint, not_null: true, references: teams.id}
+      away_team_id: {type: bigint, not_null: true, references: teams.id}
+```
+
+With 16 teams that is 16 x 16 - 16 = 240 games. It is as general as it is sporty: every product
+in every store, every employee for every review cycle, every pair of currencies.
+
+- **The rows:** the product of the parents' primary-key values, in the parents' row order with
+  the first listed column outermost. Two or more columns, onto the same parent or different ones.
+- **The row count is not yours to set:** it follows from the parents, so `run.rows_per_table` and
+  `--rows-for` naming the table are errors, and `run.rows` does not apply to it. More than
+  1,000,000 combinations is refused, with the parents' sizes.
+- **Rules:** a rule that reads only the combination columns is applied to the combinations,
+  before anything else is generated, and removes the ones that fail it. A rule that reads other
+  columns works as above, and never draws a combination column again.
+- **The other columns** are generated as usual for that row count: `derive`, `when`, date windows
+  and rules all work on them, as in the league above.
+- **A unique key:** the listed columns are a key together, so the dbt export tests them as one,
+  like any composite unique key. They are never null and take no hint, `when`, `derive`,
+  `at_least`, `pk` or `unique` of their own.
+- **Order and cycles:** the parents are generated first, so a combination over the table itself
+  or over a table that depends on it is an error. Days: with `--days`, a table with
+  `combinations` and `incremental` is refused.
+
 ## Dates that lie ahead, and values that follow from others
 
 By default every date a model draws falls before the run's `as_of`, so a schedule has nothing to

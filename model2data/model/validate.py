@@ -659,8 +659,108 @@ class _Checks:
         self._grain_and_incremental(key, table, columns)
         if "rules" in table:
             self._rules(key, table)
+        if "combinations" in table:
+            self._combinations(key, table, columns)
         if "defects" in table:
             self._defects(key, table, columns, fk_children)
+
+    # -- combinations --------------------------------------------------
+    def _parent_of(self, table_key: str, column: str) -> Optional[str]:
+        """The table a column of `table_key` references with `references`, if it does."""
+        reference = _mapping(self.columns.get(table_key)).get(column, {})
+        reference = _mapping(reference).get("references")
+        to = reference.get("to") if isinstance(reference, Mapping) else reference
+        if isinstance(to, str) and "." in to:
+            return split_column_path(to)[0]
+        return None
+
+    def _depends_on(self, table_key: str, target: str) -> bool:
+        """Whether `table_key` references `target`, directly or through the tables it references."""
+        seen: set = set()
+        pending = [table_key]
+        while pending:
+            current = pending.pop()
+            if current in seen:
+                continue
+            seen.add(current)
+            table = _mapping(self.tables.get(current))
+            parents = [self._parent_of(current, name) for name in self.columns.get(current, {})]
+            parents += [
+                _mapping(foreign_key).get("references")
+                for foreign_key in _list(table.get("foreign_keys"))
+            ]
+            for parent in parents:
+                if parent == target:
+                    return True
+                if isinstance(parent, str):
+                    pending.append(parent)
+        return False
+
+    def _combinations(self, key: str, table: Mapping, columns: dict[str, dict]) -> None:
+        """`combinations` names foreign keys whose parents' rows the table has every pairing of."""
+        base: list[PathPart] = ["tables", key, "combinations"]
+        members = table.get("combinations")
+        if not isinstance(members, list):
+            return  # the schema has said so
+        if members:
+            self._needs_0_7(base, "combinations")
+        rows = _mapping(_mapping(self.document.get("run")).get("rows_per_table"))
+        if key in rows:
+            self.add(
+                ["run", "rows_per_table", key],
+                f"sets the rows of {key}, which `combinations` make: one for every combination "
+                "of its parents' rows, less what its rules exclude",
+            )
+        if len(members) < 2:
+            self.add(
+                base,
+                "lists one column: a table with one row for each row of a parent is that "
+                "parent's one-to-one child, written `unique: true` on a foreign key",
+            )
+        for position, name in enumerate(members):
+            at: list[PathPart] = [*base, position]
+            if not isinstance(name, str):
+                continue
+            if name not in columns:
+                close = difflib.get_close_matches(name, list(columns), n=1)
+                self.add(
+                    at,
+                    f"names {_show(name)}, which is not a column of {key}"
+                    + (f" (did you mean {close[0]}?)" if close else ""),
+                )
+                continue
+            column = columns[name]
+            parent = self._parent_of(key, name)
+            if parent is None:
+                self.add(
+                    at,
+                    f"names {name}, which is not a foreign key: a combination is of the rows a "
+                    "column's `references` points at",
+                )
+                continue
+            if parent == key or self._depends_on(parent, key):
+                self.add(
+                    at,
+                    f"names {name}, which references {parent}, a table that depends on {key}: "
+                    "the parents' rows must exist before the combinations are made",
+                )
+            if column.get("pk") is True or column.get("unique") is True:
+                self.add(
+                    at,
+                    f"names {name}, which is {'pk' if column.get('pk') is True else 'unique'} by "
+                    "itself: a combination column repeats each parent row once per combination",
+                )
+            generate = _mapping(column.get("generate"))
+            for hint in generate:
+                if isinstance(hint, str) and hint.startswith("x-"):
+                    continue
+                self.add(
+                    [*base, position],
+                    f"names {name}, which has `{hint}` in its `generate`: a combination column "
+                    "takes its values from the combinations, so it takes no hint, `when`, "
+                    "`derive` or `at_least`",
+                )
+                break
 
     # -- rules ---------------------------------------------------------
     def _typed(self, key: str, name: str) -> cmp.Typed:
@@ -1053,6 +1153,8 @@ class _Checks:
 
     def table_rows(self, key: str) -> Optional[int]:
         """The rows the document's `run` gives a table, or None when it leaves them to the reader."""
+        if _mapping(self.tables.get(key)).get("combinations"):
+            return None  # the parents' rows make them
         run = _mapping(self.document.get("run"))
         rows = _mapping(run.get("rows_per_table")).get(key, run.get("rows"))
         return rows if isinstance(rows, int) and not isinstance(rows, bool) else None

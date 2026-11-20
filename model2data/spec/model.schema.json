@@ -7,7 +7,7 @@
   "required": ["model2data", "tables"],
   "properties": {
     "model2data": {
-      "description": "The spec version the document is written against, `MAJOR.MINOR` or `MAJOR.MINOR.PATCH`. Write it as `0.7.0`. A 0.2, 0.3, 0.4, 0.5 or 0.6 document is still read, and reads as it did: 0.3.0 only adds `defects` and `incremental.history`, which a 0.2 document cannot use, 0.4.0 only a column's `when`, which a 0.2 or 0.3 document cannot use, 0.5.0 only an `after` that is a list or names a parent's column, which a 0.2, 0.3 or 0.4 document cannot use, 0.6.0 only a column's `rollup` and `at_least`, which a 0.2 to 0.5 document cannot use, and 0.7.0 only a table's `rules`, a column's `derive` and a date or timestamp column's `min` and `max`, which a 0.2 to 0.6 document cannot use. A reader that met the YAML number 0.7 reads it as `0.7`.",
+      "description": "The spec version the document is written against, `MAJOR.MINOR` or `MAJOR.MINOR.PATCH`. Write it as `0.7.0`. A 0.2, 0.3, 0.4, 0.5 or 0.6 document is still read, and reads as it did: 0.3.0 only adds `defects` and `incremental.history`, which a 0.2 document cannot use, 0.4.0 only a column's `when`, which a 0.2 or 0.3 document cannot use, 0.5.0 only an `after` that is a list or names a parent's column, which a 0.2, 0.3 or 0.4 document cannot use, 0.6.0 only a column's `rollup` and `at_least`, which a 0.2 to 0.5 document cannot use, and 0.7.0 only a table's `rules` and `combinations`, a column's `derive` and a date or timestamp column's `min` and `max`, which a 0.2 to 0.6 document cannot use. A reader that met the YAML number 0.7 reads it as `0.7`.",
       "oneOf": [
         { "type": "string", "pattern": "^0\\.[234567](\\.(0|[1-9][0-9]*))?$" },
         { "enum": [0.2, 0.3, 0.4, 0.5, 0.6, 0.7] }
@@ -142,6 +142,14 @@
           "examples": [["order_id", "line_number"]]
         },
         "incremental": { "$ref": "#/$defs/incremental" },
+        "combinations": {
+          "description": "Makes the table one row for every combination of the parent rows its listed foreign keys point at, less the combinations its `rules` exclude: 16 teams and `combinations: [home_team_id, away_team_id]` with a rule that home differs from away are 16 x 16 - 16 = 240 rows. Each member is a column of the table with `references`, at least two of them, possibly onto the same parent. The rows are in the order of the parents' rows, the first listed column outermost. The row count follows from the parents, so `run.rows_per_table` and `--rows-for` may not name the table and `run.rows` does not apply to it. The listed columns together are a unique key (the dbt export tests them as one), are never null, and take no `generate` hint, `derive`, `when`, `rollup` or `at_least`. Every other column is generated as usual. Spec 0.7.0.",
+          "type": "array",
+          "minItems": 2,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/name" },
+          "examples": [["home_team_id", "away_team_id"]]
+        },
         "columns": {
           "description": "The table's columns, keyed by name, in the order they are generated and exported. A column written as a plain string is a column of that type and nothing else: `country: country`.",
           "type": "object",

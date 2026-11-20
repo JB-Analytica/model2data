@@ -113,7 +113,7 @@ uses either says `model2data: 0.6.0`, and either in a document that says an earl
 an error. A writer writes the version the document was read with, and 0.6.0 once it uses either.
 
 0.7.0 adds a table's [`rules`](#rules) and the [comparison grammar](#comparisons) they are
-written in, a column's [`derive`](#derived-columns), and [`min` and `max` on a date or
+written in, a table's [`combinations`](#combination-tables), a column's [`derive`](#derived-columns), and [`min` and `max` on a date or
 timestamp column](#date-windows), and nothing else so far: a 0.2 to 0.6 document is a 0.7.0
 document that uses none of it, and reads as it always read. A document that uses any of them
 says `model2data: 0.7.0`, and any of them in a document that says an earlier version is an
@@ -611,6 +611,49 @@ A rule may read a [derived column](#derived-columns), which it never draws again
 the other column of the rule, or an input of a derivation, and the derived columns are computed
 again after each round. A rule that reads only derived columns is an error.
 
+### Combination tables
+
+`combinations` on a table (spec 0.7.0) makes the table one row for every combination of the
+parent rows its listed foreign keys point at, less the combinations its [`rules`](#rules)
+exclude:
+
+```yaml
+games:
+  combinations: [home_team_id, away_team_id]
+  rules:
+    - {home_team_id: {ne: {column: away_team_id}}}
+  columns:
+    id: {type: bigint, pk: true}
+    home_team_id: {type: bigint, not_null: true, references: teams.id}
+    away_team_id: {type: bigint, not_null: true, references: teams.id}
+```
+
+16 teams give 16 × 16 − 16 = 240 games. This is what "every team plays every other team, home
+and away" needs, and random draws plus a unique key cannot promise it. It is as general as it is
+sporty: every product in every store, every employee for every review cycle, every pair of
+currencies.
+
+- **The columns** are two or more columns of the table, each with `references` (one column alone
+  would be one row per parent row: write that as a one-to-one `unique` foreign key). They may
+  reference the same parent, as above, or different ones. They are never null, so `not_null` is
+  implied, and they take no `generate` hint at all, no `when`, `derive`, `at_least`, `pk` or
+  `unique`: their values are the combinations.
+- **The rows** are the cartesian product of the columns each one references, as the parents
+  finally hold them, in the parents' row order with the first listed column outermost. A rule
+  that reads only combination columns is evaluated on the combinations before anything else is
+  generated, and the combinations that fail it are left out. A rule that reads other columns
+  holds as any rule does, and never draws a combination column again.
+- **The row count follows from the parents.** `run.rows_per_table` naming the table is an error,
+  `run.rows` does not apply to it, and a reader that lets a row count be given on the command line
+  refuses one for it. A product of more than 1,000,000 rows is refused.
+- **The other columns** are generated as usual for that row count: `derive`, `when`, date windows
+  and rules apply to them as to any table.
+- **A unique key:** the listed columns are a key together, so an export that tests keys tests
+  them as one, like a `keys` entry of `unique`.
+- **The parents come first:** a combination over the table itself, or over a table that
+  references it, is an error. With `incremental` a table cannot have combinations if rows are
+  added or updated after the first day: a reader refuses that when days are generated.
+
 ### Modelling
 
 `role` and `grain` on a table and `measure` on a column steer what a consumer derives from the
@@ -801,7 +844,7 @@ reports each failure with the path of the value (`tables.orders.columns.status.g
 13. `defects`, `run.defects` and `incremental.history` only in a document of spec 0.3.0 or
     later, `when` only in a document of spec 0.4.0 or later, a list or a parent's column in
     `after` only in one of 0.5.0 or later, `rollup` and `at_least` only in one of 0.6.0 or
-    later, and `rules`, `derive` and a date `min` or `max` only in one of 0.7.0 or later.
+    later, and `rules`, `combinations`, `derive` and a date `min` or `max` only in one of 0.7.0 or later.
 14. Every defect has exactly one of `count` and `share`, names a column of its table, and gives a
     `type` and `column` no other entry of the table gives. `duplicate_keys` names a primary key
     or a unique column, or its table has a primary key; when `run` gives the table's rows, its
@@ -854,6 +897,10 @@ reports each failure with the path of the value (`tables.orders.columns.status.g
     standing in for a default one where the document gives it). On a numeric column they are
     numbers. `derive`, and a `min` or `max` on a date or timestamp column, only in a document of
     spec 0.7.0 or later.
+22. `combinations` lists two or more columns of its table, each with `references`, none of them
+    `pk` or `unique` on its own, with a `generate` hint, or in a table whose parents depend on
+    it (the table itself included); `run.rows_per_table` does not name the table. Only in a
+    document of spec 0.7.0 or later.
 
 ### Warnings
 
