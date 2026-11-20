@@ -198,6 +198,62 @@ class Model:
     # equal whatever warnings reading them raised.
     warnings: list[Issue] = field(default_factory=list, compare=False, repr=False)
 
+    def is_key_column(self, table: str, column: str) -> bool:
+        """A column the generator reads as one row per value: a one-column key, or `id`.
+
+        That is the table's single-column primary key, a single-column unique key
+        (`unique: true` or `keys: [{unique: [c]}]`), or a column named `id`.
+        """
+        if column.lower() == "id":
+            return True
+        found = self.tables.get(table)
+        if found is None:
+            return False
+        if found.primary_key() == [column]:
+            return True
+        if any(key.columns == [column] for key in found.keys if key.kind in ("pk", "unique")):
+            return True
+        own = found.columns.get(column)
+        return own is not None and own.unique
+
+    def copies(self, table: str, column: str) -> bool:
+        """Whether `table.column`'s `references` is a copied value, not a join.
+
+        A reference onto a plain column of a parent (`order_items.unit_price`
+        references `products.price`), next to a reference onto a key of that same
+        parent (`order_items.product_id` references `products.id`), is generated
+        as a copy of the row's own parent's value, so it relates no rows: the key
+        reference does. True when the referenced column is not a one-column key
+        of the parent and another column of `table`, or one of its
+        `foreign_keys`, points at a key of the same parent. False for a column
+        with no reference, or a reference onto a key, or onto a plain column
+        with no key reference beside it (its values are drawn from the parent's,
+        so it is a foreign key like any other).
+        """
+        own = self.tables[table].columns[column].references
+        if own is None or own.table not in self.tables:
+            return False
+        parent = own.table
+        if self.is_key_column(parent, own.column):
+            return False
+        source = self.tables[table]
+        for name, other in source.columns.items():
+            if (
+                name != column
+                and other.references is not None
+                and other.references.table == parent
+                and self.is_key_column(parent, other.references.column)
+            ):
+                return True
+        return any(
+            fk.references == parent
+            and any(
+                name != column and self.is_key_column(parent, to)
+                for name, to in zip(fk.columns, fk.to_columns, strict=False)
+            )
+            for fk in source.foreign_keys
+        )
+
     def enum_for(self, type_name: str) -> Optional[Enum]:
         """The enum a column type names, matched case-insensitively; None if it names none."""
         found = self.enums.get(type_name)
