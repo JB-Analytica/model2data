@@ -880,3 +880,10 @@ def test_the_parent_check_passes_rows_pointing_at_no_parent():
     customers = seeded["customers"].copy()
     customers["id"] = [str(10_000 + n) for n in range(len(customers))]
     assert not fails(test, {**seeded, "customers": customers})
+
+
+def test_a_parent_dated_after_a_window_that_ends_sooner_gives_a_child_on_its_day():
+    column = ColumnDef("closed_on", "date", note={"min": "2026-01-01", "max": "2026-01-31"})
+    window = _Window("date", column, AS_OF, None)
+    assert window.draw(datetime(2026, 3, 5)) == datetime(2026, 3, 5)
+    assert datetime(2026, 1, 1) <= window.draw(datetime(2026, 1, 10)) <= datetime(2026, 1, 31)

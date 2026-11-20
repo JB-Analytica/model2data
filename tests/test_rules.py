@@ -375,3 +375,121 @@ def test_the_cli_prints_the_rules_it_could_not_meet(tmp_path):
     assert result.exit_code == 0, result.output
     assert "Rules some rows still break" in result.output
     assert "t: rule 1 (a ne {column: b}): 5 row(s)" in result.output
+
+
+# ---------------------------------------------------------------------------
+# Edges: kinds, nulls, extensions, and what the schema leaves to the check
+# ---------------------------------------------------------------------------
+def _with_columns(rules: Any, **columns: Any) -> dict[str, Any]:
+    document = _games(rules)
+    document["tables"]["games"]["columns"].update(columns)
+    return document
+
+
+def test_a_rule_holds_on_a_boolean_and_on_a_decimal_column():
+    document = _with_columns(
+        [{"paid": {"eq": True}}, {"price": {"gte": 5}}],
+        paid="boolean",
+        price={"type": "decimal(10, 2)", "generate": {"min": 0, "max": 10}},
+    )
+    assert [i for i in check(document) if i.is_error] == []
+    games = _generate(document)["games"]
+    paid, price = games["paid"].dropna(), games["price"].dropna()  # a null is exempt
+    assert len(paid) > 100 and paid.astype(bool).all()
+    assert len(price) > 100 and (price.astype(float) >= 5).all()
+
+
+def test_a_rule_with_only_an_extension_asks_nothing_of_the_rows():
+    plain = _generate(_games(rules=None))["games"]
+    extended = _generate(_games([{"x-note": "free"}]))["games"]
+    pd.testing.assert_frame_equal(plain, extended)
+
+
+@pytest.mark.parametrize("is_null", [True, False])
+def test_a_rule_can_ask_for_a_value_or_for_none(is_null):
+    document = _games([{"away_score": {"is_null": is_null}}])
+    away = _generate(document)["games"]["away_score"]
+    assert away.isna().all() if is_null else away.notna().all()
+    assert get_unsatisfied_rules() == []
+
+
+def test_a_rule_on_a_foreign_key_whose_parent_comes_later_is_reported_not_forced():
+    document = {
+        "model2data": "0.7.0",
+        "name": "loop",
+        "tables": {
+            "a": {
+                "rules": [{"b_id": {"is_null": False}}],
+                "columns": {
+                    "id": {"type": "bigint", "pk": True},
+                    "b_id": {"type": "bigint", "references": "b.id"},
+                },
+            },
+            "b": {
+                "columns": {
+                    "id": {"type": "bigint", "pk": True},
+                    "a_id": {"type": "bigint", "not_null": True, "references": "a.id"},
+                }
+            },
+        },
+    }
+    inputs = to_engine(from_dict(document))
+    frames = generate_data_from_dbml(inputs.tables, inputs.refs, base_rows=6, seed=1, as_of=AS_OF)
+    assert len(frames["a"]) == 6
+    assert any(m.startswith("a: rule 1 (b_id is_null false)") for m in get_unsatisfied_rules())
+
+
+@pytest.mark.parametrize(
+    "rule, message",
+    [
+        ({"home_score": {"between": [10, 20]}}, "the comparison's range is 10 to 20"),
+        ({"home_score": {"lt": 0}}, "the comparison's value is 0"),
+        ({"home_score": {"lte": -1}}, "the comparison's value is -1"),
+        ({"home_score": {"eq": 9}}, "the comparison's value is 9"),
+        ({"home_score": {"eq": {"column": "away_score"}}}, None),
+        ({"home_score": {"lt": {"column": "away_score"}}}, None),
+    ],
+)
+def test_a_numeric_rule_the_hints_make_impossible_names_the_other_side(rule, message):
+    document = _games([rule])
+    if message is None:
+        columns = document["tables"]["games"]["columns"]
+        columns["home_score"]["generate"] = {"min": 5, "max": 9}
+        columns["away_score"]["generate"] = {"min": 0, "max": 4}
+        message = "away_score is generated between 0 and 4"
+    errors = [i for i in check(document) if i.is_error]
+    assert any("can never hold" in i.message and message in i.message for i in errors), errors
+
+
+def test_a_rule_naming_a_rollup_as_its_other_side_cannot_read_it():
+    document = _with_columns(
+        [{"home_score": {"gte": {"column": "goals"}}}],
+        goals={"type": "integer", "generate": {"rollup": {"of": "events", "count": True}}},
+    )
+    document["tables"]["events"] = {
+        "columns": {
+            "id": {"type": "bigint", "pk": True},
+            "game_id": {"type": "bigint", "references": "games.id"},
+        }
+    }
+    errors = [i for i in check(document) if i.is_error]
+    assert any(
+        i.path == "tables.games.rules.0.home_score.gte.column"
+        and "goals is a rollup" in i.message
+        and "a rule cannot read it" in i.message
+        for i in errors
+    ), errors
+
+
+def test_a_rule_that_is_a_bare_value_is_an_equality():
+    document = _games([{"home_score": 3}])
+    assert [i for i in check(document) if i.is_error] == []
+    spelled_out = _games([{"home_score": {"eq": 3}}])
+    pd.testing.assert_frame_equal(_generate(document)["games"], _generate(spelled_out)["games"])
+    errors = [i for i in check(_games([{"home_score": 99}])) if i.is_error]
+    assert any("can never hold" in i.message for i in errors), errors
+
+
+def test_a_rules_list_that_is_not_a_list_is_left_to_the_schema():
+    errors = [i for i in check(_games("nope")) if i.is_error]
+    assert errors and all(i.path == "tables.games.rules" for i in errors)

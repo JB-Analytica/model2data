@@ -195,3 +195,25 @@ def test_all_hold_and_label():
     assert cmp.label(Comparison("a", "ne", {"column": "b"})) == "a ne {column: b}"
     assert cmp.label(Comparison("d", "lte", {"run": "as_of"})) == "d lte {run: as_of}"
     assert cmp.label(Comparison("a", "in", [1, 2])) == "a in [1, 2]"
+
+
+def test_describe_names_what_an_operand_is():
+    assert cmp.describe(True) == "a boolean"
+    assert cmp.describe([1, 2]) == "a list"
+    assert cmp.describe({"a": 1}) == "a mapping"
+    assert cmp.describe(object()).startswith("<object object")
+
+
+def test_is_reference_is_a_column_or_a_run_value():
+    assert cmp.is_reference({"column": "a"})
+    assert cmp.is_reference({"run": "as_of"})
+    assert not cmp.is_reference({"column": "a", "via": "b"})
+    assert not cmp.is_reference(3)
+
+
+def test_a_list_holds_literals_only():
+    problems = cmp.operand_problems("in", [1, ["x"], {"column": "a"}])
+    assert [(p.path, p.message.split(":")[0]) for p in problems] == [
+        ((1,), "must be a value, not a list"),
+        ((2,), "a list of values holds literals only, not a mapping"),
+    ]

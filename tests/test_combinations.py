@@ -451,3 +451,84 @@ def test_validate_leaves_the_defect_count_of_a_combination_table_alone():
     document["model2data"] = "0.7.0"
     document["tables"]["stock"]["defects"] = [{"type": "duplicate_keys", "count": 50}]
     assert _errors(document) == []
+
+
+# ---------------------------------------------------------------------------
+# The edges the validation leaves to the engine, and to the schema
+# ---------------------------------------------------------------------------
+def _stock_engine(**generated: pd.DataFrame):
+    from model2data.generate.combinations import combination_frame
+
+    table = to_engine(from_dict(_stores())).tables["stock"]
+    lookup = {("stock", "store_id"): ("stores", "id"), ("stock", "product_id"): ("products", "id")}
+
+    def make(table=table, lookup=lookup):
+        return combination_frame(
+            table, "stock", lookup, generated, run_anchor=datetime(2026, 11, 20)
+        )
+
+    return table, lookup, make
+
+
+def test_the_engine_refuses_a_combination_column_that_is_not_a_foreign_key():
+    table, lookup, make = _stock_engine(stores=pd.DataFrame({"id": [1]}))
+    lookup.pop(("stock", "product_id"))
+    with pytest.raises(ValueError, match=r"stock\.product_id: `combinations` names a column"):
+        make(table, lookup)
+
+
+def test_the_engine_refuses_parents_that_are_not_generated_first():
+    _, _, make = _stock_engine(stores=pd.DataFrame({"id": [1, 2]}))
+    with pytest.raises(ValueError, match=r"needs the rows of products, which are not generated"):
+        make()
+
+
+def test_the_engine_refuses_combinations_that_leave_no_row():
+    _, _, make = _stock_engine(
+        stores=pd.DataFrame({"id": [1, 2]}), products=pd.DataFrame({"id": []})
+    )
+    with pytest.raises(ValueError, match="no combination of store_id, product_id is left"):
+        make()
+
+
+def _chain() -> dict[str, Any]:
+    """stock -> stores -> regions -> countries, and stores -> countries too (a diamond)."""
+    document = _stores()
+    tables = document["tables"]
+    tables["countries"] = {"columns": {"id": {"type": "integer", "pk": True}}}
+    tables["regions"] = {
+        "columns": {
+            "id": {"type": "integer", "pk": True},
+            "country_id": {"type": "integer", "references": "countries.id"},
+        }
+    }
+    tables["stores"]["columns"]["region_id"] = {"type": "integer", "references": "regions.id"}
+    tables["stores"]["columns"]["country_id"] = {"type": "integer", "references": "countries.id"}
+    return document
+
+
+def test_parents_that_share_an_ancestor_are_not_a_cycle():
+    assert _errors(_chain()) == []
+
+
+def test_a_parent_that_depends_on_the_table_through_another_is_a_cycle():
+    document = _chain()
+    document["tables"]["countries"]["columns"]["stock_id"] = {
+        "type": "integer",
+        "references": "stock.id",
+    }
+    assert any("a table that depends on stock" in message for message in _errors(document))
+
+
+def test_a_malformed_combinations_is_left_to_the_schema_and_does_not_crash():
+    for value in ("store_id", {"store_id": 1}):
+        assert _with("stock", lambda t, d, v=value: t.update(combinations=v))
+    messages = _with("stock", lambda t, d: t.update(combinations=[7, "product_id"]))
+    assert messages and not any("not a column" in message for message in messages)
+
+
+def test_an_extension_in_the_generate_of_a_combination_column_is_not_a_hint():
+    def extend(table, document):
+        table["columns"]["store_id"]["generate"] = {"x-note": "free"}
+
+    assert _with("stock", extend) == []

@@ -2062,8 +2062,7 @@ class _Checks:
         a `max` of its own."""
         column = self.columns[key][name]
         kind = kinds.temporal_kind(str(column.get("type")))
-        if kind is None:
-            return None, None, False
+        assert kind is not None  # `after` is checked only on a temporal column and a parent's
         generate = _mapping(column.get("generate"))
         low, high = windows.bounds(generate, kind)
         if self.anchor is not None:

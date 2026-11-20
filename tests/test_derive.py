@@ -8,11 +8,13 @@ from typing import Any
 import pandas as pd
 import pytest
 
+from model2data.generate import derive, windows
 from model2data.generate.core import generate_data_from_dbml, get_unsatisfied_rules
 from model2data.generate.days import generate_days
 from model2data.model import dump, from_dict, load, to_engine
 from model2data.model.document import document_version, to_dict
 from model2data.model.validate import check
+from model2data.parse.dbml import ColumnDef, TableDef
 
 AS_OF = date(2026, 11, 20)
 ANCHOR = datetime(2026, 11, 20)
@@ -534,3 +536,242 @@ def test_the_windowed_model_generates_the_same_bytes_twice_and_other_seeds_diffe
     one = _dated({"min": "2026-12-01", "max": "2027-03-31"}, rows=50)
     two = _dated({"min": "2026-12-01", "max": "2027-03-31"}, rows=50)
     assert one.equals(two)
+
+
+# ---------------------------------------------------------------------------
+# What a derivation may be, checked one by one
+# ---------------------------------------------------------------------------
+def _derived(name: str, kind: str, derive: Any, **column: Any):
+    def change(document):
+        _columns(document)[name] = {"type": kind, "generate": {"derive": derive}, **column}
+
+    return change
+
+
+def test_an_enum_goes_only_into_a_column_of_its_own_type_or_into_text():
+    def another_enum(document):
+        document["enums"]["tier"] = ["gold"]
+        _columns(document)["tier"] = {"type": "tier"}
+
+    def copy_into(name, kind, source):
+        def change(document):
+            another_enum(document)
+            _derived(name, kind, {"copy": source})(document)
+
+        return change
+
+    messages = _changed(copy_into("x", "tier", "status"))
+    assert _has(messages, "columns.x.generate.derive.copy", "an enum goes only into a column")
+    assert _changed(copy_into("x", "text", "status")) == []
+    assert _changed(copy_into("x", "decimal(10, 2)", "home_score")) == []  # whole into decimal
+    messages = _changed(copy_into("x", "date", "tip_off_at"))
+    assert _has(messages, "columns.x.generate.derive.copy", "`date_of` takes its date")
+
+
+def test_a_derive_that_is_not_the_shape_the_schema_wants_does_not_stop_the_other_checks():
+    messages = _changed(
+        lambda d: _columns(d)["status"]["generate"]["derive"].update(
+            cases=["nope", {"if": {"tip_off_at": {"lte": {"run": "as_of"}}}, "then": "final"}]
+        )
+    )
+    assert messages and all("games.columns.status" in m for m in messages)
+    messages = _changed(lambda d: _columns(d)["status"]["generate"].update(derive="final"))
+    assert messages and all("status" in m for m in messages)
+
+
+def test_else_belongs_to_cases_and_a_derivation_cannot_name_itself():
+    messages = _changed(_derived("x", "integer", {"copy": "home_score", "else": 1}))
+    assert _has(messages, "columns.x.generate.derive.else", "belongs to `cases`")
+    messages = _changed(_derived("x", "integer", {"copy": "x"}))
+    assert _has(messages, "columns.x.generate.derive.copy", "cannot be derived from itself")
+    messages = _changed(_derived("x", "integer", {"copy": 5}))
+    assert messages and not _has(messages, "columns.x", "cannot be derived from itself")
+    messages = _changed(_derived("x", "date", {"date_of": 5}))
+    assert messages and not _has(messages, "columns.x", "takes a timestamp column")
+
+
+def test_a_then_may_be_the_run_anchor_and_nothing_else_of_the_run():
+    def then(value, kind="timestamp", **column):
+        return _derived(
+            "x", kind, {"cases": [{"if": {"home_score": {"gt": 1}}, "then": value}]}, **column
+        )
+
+    assert _changed(then({"run": "as_of"})) == []
+    assert _has(_changed(then({"run": "now"})), "cases.0.then", "is not a value of the run")
+    messages = _changed(then({"run": "as_of"}, kind="integer"))
+    assert _has(messages, "cases.0.then", "{run: as_of} is a timestamp")
+    messages = _changed(then(None, not_null=True))
+    assert _has(messages, "cases.0.then", "is null, and x is not_null")
+    assert _changed(then(None)) == []
+    assert _changed(then({"a": 1, "b": 2}))  # a mapping that is no operand is the schema's
+
+
+@pytest.mark.parametrize(
+    ("window", "text"),
+    [
+        ({"min": 5}, "not the number 5"),
+        ({"min": [1]}, None),
+        ({"max": "next week"}, "is not an ISO 8601 date or timestamp"),
+        ({"min": "2027-01-01", "max": "2026-01-01"}, "is after max"),
+    ],
+)
+def test_a_window_that_is_not_two_dates_in_order_is_an_error(window, text):
+    messages = _changed(lambda d: _columns(d)["tip_off_at"].update(generate=window))
+    if text is None:
+        assert messages  # the schema refuses it
+    else:
+        assert _has(messages, "tip_off_at.generate", text), messages
+
+
+def test_a_rule_that_reads_a_derived_column_and_an_extension_is_still_read():
+    def rule(document):
+        document["tables"]["games"]["rules"].append(
+            {"game_date": {"gte": "2026-10-01"}, "nope": {"eq": 1}, "x-owner": "someone"}
+        )
+
+    messages = _changed(rule)
+    assert _has(messages, "rules.2.game_date", "reads only derived columns")
+    assert _has(messages, "rules.2.nope", "not a column of games")
+
+
+# ---------------------------------------------------------------------------
+# The engine reads a table of its own, whatever the validation says
+# ---------------------------------------------------------------------------
+def _engine(*columns: ColumnDef, **table: Any) -> dict[str, TableDef]:
+    return {"t": TableDef(name="t", columns=[ColumnDef("id", "int", {"pk"}), *columns], **table)}
+
+
+def _refused(tables: dict[str, TableDef], pattern: str) -> None:
+    with pytest.raises(ValueError, match=pattern):
+        generate_data_from_dbml(tables, [], base_rows=5, seed=1, as_of=AS_OF)
+
+
+def _note(derive: Any, kind: str = "int", settings: set | None = None, **more: Any) -> ColumnDef:
+    return ColumnDef("c", kind, settings or set(), note={"derive": derive, **more})
+
+
+@pytest.mark.parametrize(
+    ("column", "pattern"),
+    [
+        (_note("a"), "must be an object"),
+        (_note({}), "needs exactly one of"),
+        (_note({"copy": "a", "date_of": "a"}), "needs exactly one of"),
+        (_note({"copy": "a"}, settings={"unique"}), "cannot sit on a primary key"),
+        (_note({"copy": "a"}, min=1), 'cannot also have "min"'),
+        (_note({"cases": []}), "non-empty list"),
+        (_note({"cases": [{"if": [], "then": 1}]}), "entries need an `if`"),
+        (_note({"cases": [{"if": {"a": 1}}]}), "entries need an `if`"),
+        (_note({"cases": [{"if": {"a": {"gt": [1]}}, "then": 1}]}), '"derive" `if`:'),
+        (_note({"copy": 3}), "must name a column"),
+        (_note({"copy": "nope"}), "which is not a column of t"),
+        (_note({"copy": "c"}), "reads the column itself"),
+    ],
+)
+def test_the_engine_refuses_a_malformed_derive(column, pattern):
+    _refused(_engine(ColumnDef("a", "int"), column), pattern)
+
+
+def test_the_engine_refuses_derived_columns_that_read_each_other():
+    columns = (
+        ColumnDef("a", "int", note={"derive": {"copy": "b"}}),
+        ColumnDef("b", "int", note={"derive": {"copy": "a"}}),
+    )
+    _refused(_engine(*columns), "reads itself through other derived columns: a -> b -> a")
+
+
+def test_a_derivation_that_is_not_readable_reads_nothing():
+    assert derive.derivation_reads({"cases": [1]}) == []
+    assert derive.derivation_reads({"copy": "a"}) == ["a"]
+    assert repr(derive.NOTHING) == "<null>"
+
+
+def test_a_value_is_stored_as_the_column_it_goes_into_stores_it():
+    as_target = derive._as_target
+    assert as_target(None, "date") is None and as_target(float("nan"), "text") is None
+    assert as_target(datetime(2026, 1, 2, 3, 4, 5), "timestamp") == "2026-01-02 03:04:05"
+    assert as_target(date(2026, 1, 2), "timestamp") == "2026-01-02 00:00:00"
+    assert as_target("2026-01-02", "timestamp") == "2026-01-02 00:00:00"
+    assert as_target("2026-01-02 03:04:05", "timestamp") == "2026-01-02 03:04:05"
+    assert as_target(7, "timestamp") == 7
+    assert as_target(datetime(2026, 1, 2, 3), "date") == date(2026, 1, 2)
+    assert as_target(date(2026, 1, 2), "date") == date(2026, 1, 2)
+    assert as_target("2026-01-02", "date") == date(2026, 1, 2)
+    assert as_target(7, "date") == 7
+    assert as_target(5, "enum") == "5"
+
+
+def test_the_run_anchor_is_the_only_value_of_the_run():
+    assert derive._run_value("as_of", ANCHOR) == ANCHOR
+    with pytest.raises(ValueError, match="is not a value of the run: only `as_of` is"):
+        derive._run_value("now", ANCHOR)
+    frame = pd.DataFrame({"a": [1, 2, 3]})
+    rows = pd.Series([True, False, True]).to_numpy()
+    stored = derive._values(frame, {"run": "as_of"}, rows, "timestamp", ANCHOR)
+    assert stored == ["2026-11-20 00:00:00"] * 2
+
+
+def test_a_table_with_nothing_derived_is_left_as_it_is():
+    frame = pd.DataFrame({"a": [1, 2]})
+    table = TableDef(name="t", columns=[ColumnDef("a", "int")])
+    derive.settle(
+        frame, table, run_anchor=ANCHOR, cap=ANCHOR, seed_for=lambda name: None, as_of=AS_OF
+    )
+    assert frame["a"].tolist() == [1, 2]
+
+
+def test_a_date_default_window_on_the_leap_day_goes_back_to_the_28th():
+    start, end = windows.default_window("date", date(2028, 2, 29))
+    assert (start, end) == (datetime(2026, 2, 28), datetime(2028, 2, 29))
+    start, _ = windows.default_window("date", date(2026, 3, 1))
+    assert start == datetime(2024, 3, 1)
+
+
+@pytest.mark.parametrize(
+    ("note", "pattern"),
+    [
+        ({"min": "5"}, r't\.c: "min" must be a number on a numeric column'),
+        ({"max": "high"}, r't\.c: "max" must be a number on a numeric column'),
+    ],
+)
+def test_a_numeric_bound_written_as_text_is_refused_by_the_engine(note, pattern):
+    _refused(_engine(ColumnDef("c", "int", note=note)), pattern)
+
+
+@pytest.mark.parametrize(
+    ("note", "pattern"),
+    [
+        ({"min": "soon"}, r't\.c: "min" must be an ISO 8601 date or timestamp string on a date'),
+        ({"min": "2027-01-01", "max": "2026-01-01"}, r'"min" .* is after "max"'),
+    ],
+)
+def test_a_window_that_is_not_two_dates_in_order_is_refused_by_the_engine(note, pattern):
+    _refused(_engine(ColumnDef("c", "date", note=note)), pattern)
+
+
+def test_a_derived_foreign_key_on_a_broken_cycle_edge_is_left_to_its_derivation():
+    document = {
+        "model2data": "0.7.0",
+        "name": "loop",
+        "tables": {
+            "a": {
+                "columns": {
+                    "id": {"type": "bigint", "pk": True},
+                    "b_id": {"type": "bigint", "references": "b.id"},
+                    "b2_id": {
+                        "type": "bigint",
+                        "references": "b.id",
+                        "generate": {"derive": {"copy": "b_id"}},
+                    },
+                }
+            },
+            "b": {
+                "columns": {
+                    "id": {"type": "bigint", "pk": True},
+                    "a_id": {"type": "bigint", "not_null": True, "references": "a.id"},
+                }
+            },
+        },
+    }
+    inputs = to_engine(from_dict(document))
+    frames = generate_data_from_dbml(inputs.tables, inputs.refs, base_rows=6, seed=1, as_of=AS_OF)
+    assert len(frames["a"]) == 6 and frames["a"]["b_id"].notna().any()
