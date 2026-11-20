@@ -38,8 +38,8 @@ files as 1.21.2 for the same model, seed and `--as-of`.
 - **Aliases:** `full_name` and `person_name` are `name`, `company_name` is `company`, and give the
   same values, including the person coherence within a row.
 - **`validate` warns about a type that is not an SQL type, an enum of the model or a generator**
-  (aliases and any Faker provider with no arguments included): `'club_name' is not a generator or
-  an SQL type; it will generate generic text. Did you mean 'color_name' or 'user_name'?` It is a
+  (aliases and any Faker provider with no arguments included): `'compny' is not a generator or an
+  SQL type; it will generate generic text. Did you mean 'company' or 'company_name'?` It is a
   warning; the document still conforms. The suggestion is the nearest catalogue names, and is left
   out when none is close.
 
