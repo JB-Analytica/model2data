@@ -52,13 +52,16 @@ dbt package, so `dbt build` still works offline):
 | `generate: {distinct: n}` | `model2data_max_distinct`: at most `n` distinct values | none |
 | `generate: {when}` | `model2data_when`: null exactly where the condition does not hold (with `null_rate`, only there; its null share is then tested among the matching rows) | none |
 | `grain` on a table | `model2data_unique_combination` | none |
+| `generate: {days}` | `model2data_weekdays`: every value falls on a listed weekday | none |
+| `generate: {times}` | `model2data_times_of_day`: every value's time of day is a listed time or inside a listed range | none |
 | `generate: {after: table.column}` (a parent's column, see [When things happen](time-shapes.md)) | `model2data_not_before_parent`, one per parent column, in `macros/model2data_parent_tests.sql`: no row dated before the parent row it joins to | none |
 | an enum-typed column | `accepted_values` (always written) | none |
 | `generate: {rollup}` (see [The model file](model-file.md#totals-that-match-their-lines)) | `model2data_rollup` (always written, severity error), in `macros/model2data_rollup_tests.sql`: the column equals the aggregate of its child rows (0 or null with none) | a sum: half a unit of its last decimal place |
 
 `true_rate`, `weights`, `skew`, `distribution` and the temporal shape hints (`business_hours`,
 `growth`, `seasonality`) describe a statistical shape rather than a constraint a row can break, so
-they write no test. `--hint-tests {error,warn,off}` sets these tests' severity (default `warn`:
+they write no test. `days` and `times` are constraints, and their tests check the weekdays and
+times, not the weights. `--hint-tests {error,warn,off}` sets these tests' severity (default `warn`:
 they describe intent and should not break a first `dbt build` on real data); the structural tests
 (`not_null`, `unique`, `relationships`) are unaffected. A model with no such hints generates the
 same YAML as before. To call the mapping from Python, `model2data.dbt.hint_tests.hint_tests_for(model)`

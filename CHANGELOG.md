@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.24.0] - 2026-11-21
+
+A model that uses neither `days` nor `times` writes the same files as 1.23.0 for the same model,
+seed and `--as-of`. The sports league example uses both, so what it generates changes.
+
+### Added
+- **`days` and `times` on a date or timestamp column (model spec 0.8.0): the weekdays and clock
+  times its values fall on.** A fixture's kick-off no longer lands at 03:00 on a Tuesday:
+  `days: {fri: 1, sat: 3, sun: 3}` and `times: {"16:00": 1, "18:30": 1, "20:45": 2}` put every
+  game on a Friday, Saturday or Sunday at one of three kick-off times, the weekend and the late
+  slot busiest; a shop open six days from nine to six is `days: [mon, tue, wed, thu, fri, sat]`
+  and `times: ["09:00-18:00"]`. `days` is a list of weekdays (equal weights) or a mapping of
+  weekday to a positive weight; a day of the window on another weekday is never drawn, and
+  `growth` and `seasonality` still multiply into a listed day's weight. `times` (timestamps only)
+  is a list or mapping of entries, each an exact clock time (`"20:45"`, `"20:45:30"`), which the
+  value takes exactly, or a range (`"09:00-18:00"`, start included, end excluded, `"24:00"` at
+  the latest), in which it falls evenly to the second; an entry is drawn by weight, then the
+  moment within it. The hints hold everywhere the column is drawn: in the run's window and a
+  column's own `min`/`max` window (on its first and last day only the times inside it count), on
+  a column that follows another with `after` (in the same table or a parent's, landing on an
+  allowed moment after what it follows; with no such moment before its upper bound it lands on
+  what it follows, as any column does in a window with no room), on a value filled under `when`,
+  and on a value a table's `rules` draw again. `days` replaces the run's `business_hours`
+  weekend thinning for the column and `times` its working hours, so under a business-hours run a
+  column with only `days` keeps the working hours. `validate` and the generator report a
+  weekday that does not exist, a time that is not `HH:MM`/`HH:MM:SS` or a range, a range that
+  ends at or before it starts, a weight that is not a positive number, a duplicated entry,
+  `times` on a date column, either on a key, unique or foreign-key column, either beside the
+  column's own `business_hours: true`, and a window (`min` and `max`, or one of them with the
+  run's `as_of`) with no allowed moment in it; a window that depends on a run's day not in the
+  document is checked when generating, with an error naming the column. Both are refused beside
+  `derive` and `rollup`, and on a table with `incremental` when generating with `--days`. A
+  document that uses either says `model2data: 0.8.0`; `convert` writes 0.8.0 for a DBML model
+  with either in a note. Models declaring 0.2 to 0.7 read and generate as before.
+- **dbt tests for them.** `days` writes `model2data_weekdays` (the value's ISO weekday is one of
+  those listed) and `times` writes `model2data_times_of_day` (the value's time of day is one of
+  the exact times or inside one of the ranges), both hard constraints without tolerance, in plain
+  SQL that runs on DuckDB and Postgres, in `macros/model2data_clock_tests.sql`, written only for a
+  model that has one. Weights are not tested.
+
+### Changed
+- **The sports league example kicks off on Friday to Sunday, at 16:00, 18:30 or 20:45.** Its
+  `tip_off_at` has `days` and `times`, and the document says `model2data: 0.8.0`.
+- **Model spec 0.8.0.** The schema's `$id` is `.../spec/0.8.0/model.schema.json`; it reads 0.2
+  to 0.8 documents.
+
 ## [1.23.0] - 2026-11-20
 
 One change alters what an existing model writes: a table with a unique enum column is now capped

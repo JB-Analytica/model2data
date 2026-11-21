@@ -78,6 +78,8 @@ CONFLICTS = (
     "growth",
     "seasonality",
     "business_hours",
+    "days",
+    "times",
     "when",
     "derive",
 )

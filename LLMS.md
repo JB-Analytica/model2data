@@ -23,7 +23,7 @@ install. If the person you're helping wants to *look at* or share the model rath
 its generation, point them there; the DBML guidance below applies to both.
 
 > **Two input formats.** Since 1.8, model2data reads a model as one YAML document,
-> `<name>.model2data.yml` ([spec 0.7.0](model2data/spec/README.md), with a JSON Schema at
+> `<name>.model2data.yml` ([spec 0.8.0](model2data/spec/README.md), with a JSON Schema at
 > `model2data/spec/model.schema.json` and a complete example at
 > `model2data/spec/examples/coffee_webshop.model2data.yml`, and `sports_league.model2data.yml` for
 > derived columns, rules, date windows and combinations), and DBML as supported input that it
@@ -301,6 +301,12 @@ columns, even after a rule redrew one of them. Not a key, no `min`/`max`/`weight
 `min` and `max` on a date or timestamp column (ISO strings, spec 0.7.0) fix its window and may lie
 after `as_of`: `generate: {min: "2026-10-02", max: "2027-04-30"}`; `growth`, `seasonality`,
 `business_hours` and `after` act inside it. Neither works on a table with `incremental` and `--days`.
+`days` and `times` on a date or timestamp column (spec 0.8.0) fix the weekdays and clock times its
+values fall on: `generate: {days: {fri: 1, sat: 3, sun: 3}, times: {"16:00": 1, "20:45": 2}}`, or
+`days: [mon, tue, wed, thu, fri, sat]` with `times: ["09:00-18:00"]` (a range, end excluded). A list
+weighs entries equally; `times` is for timestamps only. They hold with windows, `after`, `when`
+and rules, replace the run's `business_hours` for that column, and are refused beside the column's
+own `business_hours: true`, on keys, beside `derive`/`rollup`, and with `incremental` and `--days`.
 
 **Use composite keys for join/bridge tables and multi-column uniqueness**, via an `indexes { }`
 block:

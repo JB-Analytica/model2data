@@ -71,7 +71,10 @@ def generate_dbt_yml(
     if hinted:
         names = {test.test for tests in hinted.values() for test in tests}
         write_hint_macros(
-            dest, when="model2data_when" in names, parents="model2data_not_before_parent" in names
+            dest,
+            when="model2data_when" in names,
+            parents="model2data_not_before_parent" in names,
+            clock=bool(names & {"model2data_weekdays", "model2data_times_of_day"}),
         )
     if any(_history_entries(table) for table in tables.values()):
         write_history_macros(dest)

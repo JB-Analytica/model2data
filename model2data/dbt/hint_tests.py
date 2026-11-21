@@ -16,6 +16,8 @@ What becomes a test, and what does not:
 | `generate.null_rate`      | `model2data_max_null_share`            | yes       |
 | `generate.distinct: n`    | `model2data_max_distinct`              | none      |
 | `generate.when`           | `model2data_when`                      | none      |
+| `generate.days`           | `model2data_weekdays`                  | none      |
+| `generate.times`          | `model2data_times_of_day`              | none      |
 | table `grain`             | `model2data_unique_combination`        | none      |
 
 An `after` listing several columns writes one test for each. A parent's column
@@ -30,12 +32,15 @@ hold a value, and its `model2data_when` test lets those rows be null.
 Enum columns keep the `accepted_values` test `generate_dbt_yml` always wrote.
 `true_rate`, `weights`, `skew`, `distribution` and the temporal shape hints
 (`business_hours`, `growth`, `seasonality`) describe a statistical shape, not a
-constraint a row can break, so they produce no test.
+constraint a row can break, so they produce no test. `days` and `times` are
+constraints (a value falls on a listed weekday, at a listed time): their tests
+check that, and not their weights.
 
 The generic tests live in `macros/model2data_hint_tests.sql` of the generated
 project (see `write_hint_macros`), and the `when` ones in
 `macros/model2data_when_tests.sql` and the parent one in
-`macros/model2data_parent_tests.sql`, each written only for a model that has
+`macros/model2data_parent_tests.sql`, and the `days` and `times` ones in
+`macros/model2data_clock_tests.sql`, each written only for a model that has
 one, so a project without either is what it was: plain SQL, no dbt package.
 """
 
@@ -47,7 +52,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Optional, Union
 
-from model2data.generate import kinds
+from model2data.generate import clock, kinds
 from model2data.generate.core import parent_rules_for
 from model2data.generate.parents import ParentRule
 from model2data.generate.timeline import same_row_after
@@ -65,6 +70,8 @@ WHEN_MACROS_FILE = "model2data_when_tests.sql"
 _WHEN_MACROS_SOURCE = Path(__file__).parent / "templates" / "hint_macros" / WHEN_MACROS_FILE
 PARENT_MACROS_FILE = "model2data_parent_tests.sql"
 _PARENT_MACROS_SOURCE = Path(__file__).parent / "templates" / "hint_macros" / PARENT_MACROS_FILE
+CLOCK_MACROS_FILE = "model2data_clock_tests.sql"
+_CLOCK_MACROS_SOURCE = Path(__file__).parent / "templates" / "hint_macros" / CLOCK_MACROS_FILE
 
 
 @dataclass(frozen=True)
@@ -224,7 +231,45 @@ def _column_tests(
                 table, column.name, "model2data_max_distinct", {"max_count": distinct}, "distinct"
             )
         )
+
+    tests.extend(_clock_tests(table, column, note))
     return tests
+
+
+def _clock_tests(table: str, column: ColumnDef, note: Mapping[str, Any]) -> list[HintTest]:
+    """`model2data_weekdays` for `days`, `model2data_times_of_day` for `times`.
+
+    The weekdays in calendar order; the times as `HH:MM:SS` or `HH:MM:SS-HH:MM:SS`, each
+    once. A hint that does not parse writes no test (validation reports it).
+    """
+    kind = kinds.temporal_kind(column.data_type)
+    tests: list[HintTest] = []
+    if kind is None:
+        return tests
+    try:
+        days = clock.parse_days(note["days"]) if "days" in note else None
+        slots = clock.parse_times(note["times"]) if "times" in note else None
+    except ValueError:
+        return tests
+    if days is not None:
+        names = [name for name, weight in zip(clock.WEEKDAYS, days, strict=True) if weight > 0]
+        tests.append(HintTest(table, column.name, "model2data_weekdays", {"days": names}, "days"))
+    if slots is not None and kind == "timestamp":
+        entries = list(dict.fromkeys(_clock_entry(start, end) for start, end, _ in slots))
+        tests.append(
+            HintTest(table, column.name, "model2data_times_of_day", {"times": entries}, "times")
+        )
+    return tests
+
+
+def _clock_entry(start: int, end: int) -> str:
+    """A slot as the test reads it: one time, or a range with its end excluded."""
+
+    def shown(seconds: int) -> str:
+        hour, rest = divmod(seconds, 3600)
+        return f"{hour:02d}:{rest // 60:02d}:{rest % 60:02d}"
+
+    return shown(start) if end - start == 1 else f"{shown(start)}-{shown(end)}"
 
 
 def _parent_tests(table: str, rule: ParentRule) -> list[HintTest]:
@@ -262,14 +307,17 @@ def _when_conditions(when: Any, kinds_of: dict[str, ColumnDef]) -> Optional[dict
     }
 
 
-def write_hint_macros(dest: Path, *, when: bool = False, parents: bool = False) -> Path:
+def write_hint_macros(
+    dest: Path, *, when: bool = False, parents: bool = False, clock: bool = False
+) -> Path:
     """Write the generic tests into `dest/macros/`, and return the file's path.
 
     A project whose YAML holds `hint_tests_for` tests needs this file next to
     it; `generate_dbt_yml` writes it itself when it emits any. With `when`, the
     file of the `when` tests is written beside it (`WHEN_MACROS_FILE`), which a
     project holding a `model2data_when` test needs too; with `parents`, the
-    file of `model2data_not_before_parent` (`PARENT_MACROS_FILE`).
+    file of `model2data_not_before_parent` (`PARENT_MACROS_FILE`); with `clock`, the file of
+    `model2data_weekdays` and `model2data_times_of_day` (`CLOCK_MACROS_FILE`).
     """
     macros = dest / "macros"
     macros.mkdir(parents=True, exist_ok=True)
@@ -279,4 +327,6 @@ def write_hint_macros(dest: Path, *, when: bool = False, parents: bool = False) 
         (macros / WHEN_MACROS_FILE).write_text(_WHEN_MACROS_SOURCE.read_text())
     if parents:
         (macros / PARENT_MACROS_FILE).write_text(_PARENT_MACROS_SOURCE.read_text())
+    if clock:
+        (macros / CLOCK_MACROS_FILE).write_text(_CLOCK_MACROS_SOURCE.read_text())
     return target

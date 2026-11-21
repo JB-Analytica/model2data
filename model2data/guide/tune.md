@@ -5,7 +5,7 @@
 | Command | Does | Exit |
 |---|---|---|
 | `model2data --file M` | same as `model2data generate --file M` | see below |
-| `model2data validate M...` | check models against spec 0.7.0, `*.metrics.yml` files against the metrics spec and their model (`--model M`, else the model beside it with the same stem), and `*.dashboard.yml` files as `dashboard check` does | 0 conforms (warnings allowed), 1 any error |
+| `model2data validate M...` | check models against spec 0.8.0, `*.metrics.yml` files against the metrics spec and their model (`--model M`, else the model beside it with the same stem), and `*.dashboard.yml` files as `dashboard check` does | 0 conforms (warnings allowed), 1 any error |
 | `model2data convert M` | print M as `.model2data.yml`; `-o FILE` writes it, `--force` overwrites | 0 ok, 1 unreadable model or output exists |
 | `model2data metrics list -f M [--metrics F]` | every metric: the file's, then the inferred ones | 0, 1 on a model or metrics error |
 | `model2data metrics export -f M [--metrics F] --to ossie\|lightdash` | the model and its metrics as Apache Ossie 0.1.1, or as Lightdash meta in one dbt properties file for the staging models; `-o FILE` writes it, `--force` overwrites | 0, 1 on an error or an existing output, 2 on another `--to` |
@@ -62,8 +62,8 @@ columns. Add `not_null` to every column that must always have a value.
 - Column: `type`, `pk`, `unique`, `not_null`, `increment`, `default`, `description`,
   `references`, `measure`, `generate`.
 - `generate`: `min`, `max`, `distribution`, `null_rate`, `weights`, `true_rate`,
-  `distinct`, `skew`, `after`, `business_hours`, `growth`, `seasonality`, `transitions`,
-  `when`, `rollup`, `at_least`, `derive`.
+  `distinct`, `skew`, `after`, `business_hours`, `days`, `times`, `growth`, `seasonality`,
+  `transitions`, `when`, `rollup`, `at_least`, `derive`.
 - Table: `columns`, `description`, `color`, `role`, `grain`, `combinations`, `keys`,
   `foreign_keys`, `incremental`, `rules`, `defects`.
 - Top level: `model2data` (spec version), `name`, `description`, `enums`, `tables`,
@@ -72,7 +72,7 @@ columns. Add `not_null` to every column that must always have a value.
 Each key in use (this model validates):
 
 ```yaml
-model2data: 0.7.0
+model2data: 0.8.0
 name: saas
 enums:
   plan_tier: [free, pro, enterprise]
@@ -166,7 +166,7 @@ no account without an invoice). Pair it with a rollup so no total is 0 by accide
 rows than N × parents the summary lists the shortfall; raise the table's rows. Not on a unique
 foreign key.
 
-`rules` on a table (spec 0.7.0, which the model then names) lists comparisons every row
+`rules` on a table lists comparisons every row
 satisfies, between columns of the same row: `rules: [{home_team_id: {ne: {column: away_team_id}}},
 {home_score: {ne: {column: away_score}}}]`. Operators: `eq`, `ne`, `in`, `not_in`, `gt`, `gte`, `lt`,
 `lte`, `between`, `is_null`; the right-hand side is a literal, `{column: other_column}` or
@@ -177,7 +177,7 @@ in the summary. A row where a column the rule reads is null is not held to it. K
 a column a `when` names are not drawn again. A rule across a foreign key (`via`) is not supported
 yet, and a table with rules and `incremental` cannot run with `--days`.
 
-`combinations` on a table (spec 0.7.0) makes its rows every pairing of its parents' rows, less
+`combinations` on a table makes its rows every pairing of its parents' rows, less
 what its rules exclude: `combinations: [home_team_id, away_team_id]` with the rule `{home_team_id:
 {ne: {column: away_team_id}}}` on 16 teams is 16 x 16 - 16 = 240 games, each pair once. Use it when
 every combination must exist (every team home and away, every product in every store) and random
@@ -189,14 +189,24 @@ combinations, a rule that reads others redraws the others. The columns are a uni
 (dbt tests them as one). Every other column is generated as usual. More than 1,000,000 combinations
 is refused, and a table with `combinations` and `incremental` cannot run with `--days`.
 
-`min` and `max` on a date or timestamp column (spec 0.7.0) are ISO strings that fix the window its
+`min` and `max` on a date or timestamp column are ISO strings that fix the window its
 values fall in, and may lie after the run's `as_of`: `tip_off_at: {type: timestamp, generate: {min:
 "2026-10-02", max: "2027-04-30"}}` schedules a season past today. A date alone as a timestamp's
 `max` is the end of that day; with one bound alone the other keeps its default (up to `as_of`).
 `growth`, `seasonality` and `business_hours` shape the draw inside the window, and `after` still
 holds. A table with a window and `incremental` cannot run with `--days`.
 
-`derive` (spec 0.7.0) makes a column a consequence of others of its row, drawing nothing:
+`days` and `times` on a date or timestamp column (spec 0.8.0) fix the weekdays and clock times its
+values fall on: `kickoff_at: {type: timestamp, generate: {days: {fri: 1, sat: 3, sun: 3}, times:
+{"16:00": 1, "18:30": 1, "20:45": 2}}}`, or `days: [mon, tue, wed, thu, fri, sat]` with `times:
+["09:00-18:00"]` for a shop's opening hours. A list weighs every entry the same, a mapping gives
+weights; a time is exact (`"20:45"`) or a range (start included, end excluded, not past
+midnight). `times` is for timestamps only. They hold with a window, `after`, `when` and rules,
+replace the run's `business_hours` for the column, and cannot sit beside the column's own
+`business_hours: true`, on a key, beside `derive` or `rollup`, or on a table with `incremental`
+run with `--days`. dbt tests `model2data_weekdays` and `model2data_times_of_day` check them.
+
+`derive` makes a column a consequence of others of its row, drawing nothing:
 `game_date: {type: date, generate: {derive: {date_of: tip_off_at}}}`, `copy: other_column`, or
 `cases`, the first `{if: <comparison>, then: <value>}` that holds on the row giving the value and
 `else` the value when none does (null when left out); a value is a literal, `{column: x}` or

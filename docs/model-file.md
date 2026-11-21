@@ -1,7 +1,7 @@
 # The model file
 
 A model is one YAML document, `<name>.model2data.yml` — or the same document as JSON. Its
-format is [spec 0.7.0](../model2data/spec/README.md), with a JSON Schema
+format is [spec 0.8.0](../model2data/spec/README.md), with a JSON Schema
 ([`model.schema.json`](../model2data/spec/model.schema.json)) your editor can autocomplete and check
 against:
 
@@ -52,8 +52,8 @@ A column's `type` is an SQL type, an enum of the model, or a generator (`email`,
 `ean13`, ...). `generate` holds its hints, each a typed value the schema documents. `run` saves
 the generation settings with the model; every CLI option overrides the one it names. The
 [reference example](../model2data/spec/examples/coffee_webshop.model2data.yml) is a complete model, and the
-[sports league](../model2data/spec/examples/sports_league.model2data.yml) shows what 0.7.0 adds
-(derived columns, rules, date windows, combinations). Every schema in [`examples/`](../examples/) comes as one.
+[sports league](../model2data/spec/examples/sports_league.model2data.yml) shows what 0.7.0 and 0.8.0 add
+(derived columns, rules, date windows, combinations, kick-off days and times). Every schema in [`examples/`](../examples/) comes as one.
 
 Check a model without generating anything — every issue is printed with its path in the document:
 
@@ -267,6 +267,50 @@ have none.
 - **Days:** a table with `incremental` that has a derived column or a window cannot be
   generated with `--days`: the first day's rows only are covered. Nothing may follow a derived
   column with `after`, and `validate` reports a derivation loop.
+
+## Weekdays and clock times
+
+A timestamp is drawn evenly across the 24 hours (or in office hours with `business_hours`), so a
+fixture can kick off at 03:00 on a Tuesday. `days` and `times` (spec 0.8.0) say when a column's
+values fall:
+
+```yaml
+model2data: 0.8.0
+tables:
+  fixtures:
+    columns:
+      id: {type: bigint, pk: true}
+      kickoff_at:
+        type: timestamp
+        not_null: true
+        generate:
+          min: "2026-08-15"
+          max: "2027-05-15"
+          days: {fri: 1, sat: 3, sun: 3}                # weighted weekdays
+          times: {"16:00": 1, "18:30": 1, "20:45": 2}   # weighted exact clock times
+  orders:
+    columns:
+      id: {type: bigint, pk: true}
+      placed_at:
+        type: timestamp
+        generate:
+          days: [mon, tue, wed, thu, fri, sat]          # open six days a week
+          times: ["09:00-18:00"]                        # a range: even within it
+```
+
+- **`days`:** a list of weekdays (`mon` to `sun`, equal weights) or a mapping of weekday to a
+  positive weight. Other weekdays are never drawn; `growth` and `seasonality` still weigh the
+  listed ones. On date and timestamp columns.
+- **`times`:** a list or a mapping of entry to weight; an entry is an exact time (`"20:45"`,
+  `"20:45:30"`), which the value takes exactly, or a range (`"09:00-18:00"`, start included, end
+  excluded, `"24:00"` at the latest, never past midnight). On timestamp columns.
+- **With other hints:** they hold in the run's window and a column's own `min`/`max`, after what
+  a column follows (`after`), on rows a `when` fills, and on values a rule draws again. `days`
+  replaces the weekend thinning of the run's `business_hours` for the column and `times` its
+  working hours; beside the column's own `business_hours: true` either is an error, and so is
+  either on a key, unique or foreign-key column, beside `derive` or `rollup`, or on a table with
+  `incremental` generated with `--days`. `validate` reports a window with no allowed moment.
+- **dbt:** `days` writes a `model2data_weekdays` test and `times` a `model2data_times_of_day` test.
 
 ## DBML is supported input
 

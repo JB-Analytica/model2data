@@ -56,6 +56,7 @@ import numpy as np
 import pandas as pd
 
 from model2data.generate import kinds, windows
+from model2data.generate.clock import Calendar
 from model2data.generate.faker import _DATE_WINDOW_YEARS, _column_time_profile, _years_before
 from model2data.generate.options import UNIFORM, TimeProfile
 from model2data.generate.relationships import _key_kind
@@ -67,6 +68,7 @@ from model2data.generate.timeline import (
     _resolve_anchor,
     _window_days,
     column_business_hours,
+    column_clock,
     parent_after,
 )
 from model2data.parse.dbml import ColumnDef, TableDef
@@ -383,9 +385,29 @@ class _Window:
         self.weights = weights
         # A timestamp's window ends at midnight of the anchor, a date's on the anchor.
         self.cap = cap
+        # A column with `days` or `times` draws on its clock (generate.clock) instead.
+        clock = column_clock(column, time_profile)
+        self.calendar = None
+        if clock is not None:
+            shape = TimeProfile(growth=profile.growth, seasonality=profile.seasonality)
+            opening = (
+                windows.window(column.note, kind, anchor)[0]
+                if windows.has_window(column.note)
+                else datetime(start.year, start.month, start.day)
+            )
+            close = cap if kind == "timestamp" else datetime(end.year, end.month, end.day)
+            self.calendar = Calendar(
+                clock,
+                kind,
+                opening,
+                close,
+                lambda day: _day_weight(day, start, end, shape),
+            )
 
     def draw(self, lower: datetime) -> datetime:
         """A moment on or after `lower` in the window, in the column's shape."""
+        if self.calendar is not None:
+            return self.calendar.draw_after(lower)
         if self.kind == "date":
             return self._date(lower)
         return self._timestamp(lower)

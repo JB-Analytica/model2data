@@ -3,7 +3,7 @@
 A note has always been either plain text (a comment, ignored by generation)
 or a JSON object read for `min`/`max`. This module documents the rest of that
 object's vocabulary -- `null_rate`, `weights`, `true_rate`, `distinct`, `skew`,
-`after`, `business_hours`, `growth`, `seasonality`, `distribution` and its
+`after`, `business_hours`, `days`, `times`, `growth`, `seasonality`, `distribution` and its
 parameters -- and checks it once, before a single row is generated, so a
 typo'd enum value or a hint on the wrong kind of column fails with a message
 naming the table and column rather than surfacing as a wrong-looking dataset
@@ -19,6 +19,8 @@ or a downstream dbt test failure.
 | `skew`      | foreign-key columns                            | overrides the run-level `skew` for this column |
 | `after`     | date/timestamp columns                         | another date/timestamp column of the row, a parent's `<table>.<column>` (see generate.parents), or a list of them |
 | `business_hours` | date/timestamp columns                    | overrides the run-level `TimeProfile.business_hours` for this column |
+| `days`      | date/timestamp columns that are no key, unique or FK | weekdays drawn: a list, or weekday -> weight (see generate.clock) |
+| `times`     | timestamp columns that are no key, unique or FK | clock times drawn: `"HH:MM"`, `"HH:MM:SS"` or `"HH:MM-HH:MM"`, a list or entry -> weight |
 | `growth`    | date/timestamp columns                         | overrides the run-level `TimeProfile.growth` for this column |
 | `seasonality` | date/timestamp columns                       | overrides the run-level `TimeProfile.seasonality` for this column |
 | `distribution` | numeric columns                             | draw shape: `uniform` (default), `normal`, `lognormal`, `exponential` |
@@ -35,7 +37,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from model2data.generate import derive, kinds, rollups, windows
+from model2data.generate import clock, derive, kinds, rollups, windows
 from model2data.generate.parents import parent_link
 from model2data.generate.relationships import build_fk_lookup, classify_refs
 from model2data.generate.timeline import parent_after
@@ -98,6 +100,7 @@ def validate_hints(tables: Mapping[str, TableDef], refs: list[dict]) -> None:
             raise ValueError(f"{table_name}.{column.name}: {message}")
         for column in table_def.columns:
             _check_window(f"{table_name}.{column.name}", column)
+            _check_clock_window(f"{table_name}.{column.name}", column)
 
     for problem in rollups.problems(tables, refs):
         if not problem.warning:
@@ -212,6 +215,29 @@ def _validate_column_hints(
             raise ValueError(f'{label}: "business_hours" only applies to date/timestamp columns.')
         _check_bool(label, "business_hours", note["business_hours"])
 
+    for hint in ("days", "times"):
+        if hint not in note:
+            continue
+        if not is_temporal:
+            raise ValueError(f'{label}: "{hint}" only applies to date/timestamp columns.')
+        if hint == "times" and kinds.temporal_kind(base_type) != "timestamp":
+            raise ValueError(
+                f'{label}: "times" only applies to timestamp columns: a date has no time of day.'
+            )
+        if is_fk or is_pk or is_unique:
+            raise ValueError(
+                f'{label}: "{hint}" cannot be used on a key, unique or foreign-key column.'
+            )
+        if note.get("business_hours") is True:
+            raise ValueError(
+                f'{label}: "{hint}" and "business_hours" both decide when the column\'s values '
+                f'fall: drop "business_hours".'
+            )
+        try:
+            clock.parse_days(note[hint]) if hint == "days" else clock.parse_times(note[hint])
+        except ValueError as error:
+            raise ValueError(f'{label}: "{hint}" {error}.') from None
+
     if "growth" in note:
         if not is_temporal:
             raise ValueError(f'{label}: "growth" only applies to date/timestamp columns.')
@@ -281,6 +307,22 @@ def _check_window(label: str, column: ColumnDef) -> None:
     low, high = windows.bounds(note, kind)
     if low is not None and high is not None and low > high:
         raise ValueError(f'{label}: "min" {note["min"]!r} is after "max" {note["max"]!r}.')
+
+
+def _check_clock_window(label: str, column: ColumnDef) -> None:
+    """A column with `days` or `times` and both `min` and `max` has a moment that fits them."""
+    note = column.note if isinstance(column.note, dict) else {}
+    kind = kinds.temporal_kind(column.data_type)
+    if kind is None or not all(isinstance(note.get(bound), str) for bound in ("min", "max")):
+        return
+    found = clock.clock_of(note, False)
+    if found is None:
+        return
+    start, end = windows.bounds(note, kind)
+    assert start is not None and end is not None
+    calendar = clock.Calendar(found, kind, start, end, lambda day: 1.0)
+    if calendar.empty:
+        raise ValueError(f"{label}: {calendar.describe()}.")
 
 
 def _check_fraction(label: str, key: str, value: object) -> None:
