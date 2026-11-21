@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [1.24.0] - 2026-11-20
+## [1.24.0] - 2026-11-21
 
 A model that uses neither `days` nor `times` writes the same files as 1.23.0 for the same model,
 seed and `--as-of`. The sports league example uses both, so what it generates changes.
