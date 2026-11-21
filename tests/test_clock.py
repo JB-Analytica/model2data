@@ -7,7 +7,8 @@ import re
 import shutil
 import subprocess
 from collections import Counter
-from datetime import date, datetime
+from dataclasses import replace
+from datetime import date, datetime, timedelta
 from typing import Any
 
 import pandas as pd
@@ -463,6 +464,17 @@ def test_place_after_on_the_clock_and_its_fallbacks():
     assert timeline.place_after(lower, "date", datetime(2026, 8, 13), False, sunday) == lower
 
 
+def test_a_gap_that_ends_past_the_days_last_time_tries_again(monkeypatch):
+    # A Saturday at 21:00, after the 20:45 kick-off: a gap that stays on that day has no
+    # time left, so the next gap is drawn, a week on.
+    gaps = iter([timedelta(0), timedelta(days=7)])
+    monkeypatch.setattr(timeline, "gap", lambda kind: next(gaps))
+    saturday = _clock(["sat"], ["20:45"])
+    lower = datetime(2026, 8, 15, 21)
+    moment = timeline.place_after(lower, "timestamp", datetime(2026, 9, 30), False, saturday)
+    assert moment == datetime(2026, 8, 22, 20, 45)
+
+
 def test_clocked_values_take_growth_and_seasonality_but_not_business_hours():
     random.seed(4)
     moments = timeline.clocked_values(
@@ -566,6 +578,8 @@ def test_a_document_that_uses_them_is_written_as_0_8_and_round_trips():
     again = load(dump(model))
     assert again == model
     assert again.tables["fixtures"].columns["kickoff_at"].generate["times"] == SLOTS
+    # A model read as an earlier version (from DBML, say) is written as 0.8.0 once it uses them.
+    assert document_version(replace(model, version="0.7.0")) == "0.8.0"
 
 
 def test_dbml_with_them_converts_to_a_0_8_document():
