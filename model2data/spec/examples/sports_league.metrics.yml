@@ -16,7 +16,7 @@ metrics:
     count: games
     where:
       games.status: final
-      games.winner_team_id: {eq: {column: games.home_team_id}}   # the winner is the home club
+      games.winner_team_id: {eq: {column: games.home_team_id}}   # the winner is the home club (a draw has none)
     time: games.tip_off_at
 
   home_win_rate:
@@ -25,18 +25,18 @@ metrics:
     format: percent
 
   home_points:
-    label: Home points
+    label: Home goals
     measure: games.home_score
     agg: sum
     time: games.tip_off_at
 
   away_points:
-    label: Away points
+    label: Away goals
     measure: games.away_score
     agg: sum
     time: games.tip_off_at
 
   points_per_game:
-    label: Points per game
-    description: Both sides' points together, averaged over the games played.
+    label: Goals per game
+    description: Both sides' goals together, averaged over the games played.
     expression: (home_points + away_points) / games_played

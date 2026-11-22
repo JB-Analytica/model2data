@@ -1,7 +1,7 @@
 # The model file
 
 A model is one YAML document, `<name>.model2data.yml` — or the same document as JSON. Its
-format is [spec 0.8.0](../model2data/spec/README.md), with a JSON Schema
+format is [spec 0.9.0](../model2data/spec/README.md), with a JSON Schema
 ([`model.schema.json`](../model2data/spec/model.schema.json)) your editor can autocomplete and check
 against:
 
@@ -52,8 +52,9 @@ A column's `type` is an SQL type, an enum of the model, or a generator (`email`,
 `ean13`, ...). `generate` holds its hints, each a typed value the schema documents. `run` saves
 the generation settings with the model; every CLI option overrides the one it names. The
 [reference example](../model2data/spec/examples/coffee_webshop.model2data.yml) is a complete model, and the
-[sports league](../model2data/spec/examples/sports_league.model2data.yml) shows what 0.7.0 and 0.8.0 add
-(derived columns, rules, date windows, combinations, kick-off days and times). Every schema in [`examples/`](../examples/) comes as one.
+[sports league](../model2data/spec/examples/sports_league.model2data.yml) shows what 0.7.0, 0.8.0 and 0.9.0 add
+(derived columns, rules, date windows, combinations, kick-off days and times, Poisson goals,
+squads of 18 to 25). Every schema in [`examples/`](../examples/) comes as one.
 
 Check a model without generating anything — every issue is printed with its path in the document:
 
@@ -115,6 +116,14 @@ tables:
   and draws the rest as usual. Too few rows is not an error: the summary lists `order_items: 100
   rows cover 100 of 250 orders; at_least 1 on order_id needs 250`. A row so placed keeps its
   parent; an `after` on the parent's date moves the row's date instead.
+- **`at_most: N`** (spec 0.9.0) caps every parent at N rows: a value is drawn as usual, and a
+  parent already holding N is drawn again among the parents with room. `{at_least: 18, at_most:
+  25}` on `players.club_id` gives every club a squad of 18 to 25. More rows than N × parents is
+  an error, from `validate` when `run` gives both tables' rows, from the generator otherwise
+  (`--rows` included): rows are never dropped. A rule draws such a column again among the
+  parents with room; `after` and a composite key's repair leave its rows' parents alone. Not with
+  `incremental` under `--days`. The dbt project tests it with `model2data_max_rows_per_value`
+  when hint tests are on.
 
 The generated dbt project tests every rollup with `model2data_rollup` (see
 [The generated dbt project](dbt-project.md)).
@@ -154,7 +163,7 @@ tables:
 - **Nulls:** a row where a column the rule reads is null is not held to it, as with an SQL
   check constraint.
 - **Not forced:** a key, a rollup, a foreign key with `at_least` and a column a `when` names are
-  never drawn again; a rule the values cannot satisfy (two columns that can each hold one value
+  never drawn again (a foreign key with `at_most` is, among the parents with room); a rule the values cannot satisfy (two columns that can each hold one value
   and must differ) is listed in the summary with its number of rows, not an error. `validate`
   names a rule that can never hold (`gt` between columns whose `min` and `max` leave no room).
 - **Days:** with `--days`, a table with rules and `incremental` is refused: the rules hold for

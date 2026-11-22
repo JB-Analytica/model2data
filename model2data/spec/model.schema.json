@@ -1,18 +1,18 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://www.jbanalytica.com/model2data/spec/0.8.0/model.schema.json",
+  "$id": "https://www.jbanalytica.com/model2data/spec/0.9.0/model.schema.json",
   "title": "model2data model",
   "description": "A data model: its tables, their columns and keys, the relationships between them, the enums a column can be typed as, and how each column's values are generated. Written as YAML (the `.model2data.yml` file) or as JSON; both are the same document. This schema is normative together with model2data/spec/README.md, which defines the YAML profile a reader must apply and the checks that depend on more than one part of the document.",
   "type": "object",
   "required": ["model2data", "tables"],
   "properties": {
     "model2data": {
-      "description": "The spec version the document is written against, `MAJOR.MINOR` or `MAJOR.MINOR.PATCH`. Write it as `0.8.0`. A 0.2, 0.3, 0.4, 0.5, 0.6 or 0.7 document is still read, and reads as it did: 0.3.0 only adds `defects` and `incremental.history`, which a 0.2 document cannot use, 0.4.0 only a column's `when`, which a 0.2 or 0.3 document cannot use, 0.5.0 only an `after` that is a list or names a parent's column, which a 0.2, 0.3 or 0.4 document cannot use, 0.6.0 only a column's `rollup` and `at_least`, which a 0.2 to 0.5 document cannot use, 0.7.0 only a table's `rules` and `combinations`, a column's `derive` and a date or timestamp column's `min` and `max`, which a 0.2 to 0.6 document cannot use, and 0.8.0 only a date or timestamp column's `days` and `times`, which a 0.2 to 0.7 document cannot use. A reader that met the YAML number 0.8 reads it as `0.8`.",
+      "description": "The spec version the document is written against, `MAJOR.MINOR` or `MAJOR.MINOR.PATCH`. Write it as `0.9.0`. A 0.2, 0.3, 0.4, 0.5, 0.6, 0.7 or 0.8 document is still read, and reads as it did: 0.3.0 only adds `defects` and `incremental.history`, which a 0.2 document cannot use, 0.4.0 only a column's `when`, which a 0.2 or 0.3 document cannot use, 0.5.0 only an `after` that is a list or names a parent's column, which a 0.2, 0.3 or 0.4 document cannot use, 0.6.0 only a column's `rollup` and `at_least`, which a 0.2 to 0.5 document cannot use, 0.7.0 only a table's `rules` and `combinations`, a column's `derive` and a date or timestamp column's `min` and `max`, which a 0.2 to 0.6 document cannot use, 0.8.0 only a date or timestamp column's `days` and `times`, which a 0.2 to 0.7 document cannot use, and 0.9.0 only a `distribution` of kind `poisson` and a foreign key's `at_most`, which a 0.2 to 0.8 document cannot use. A reader that met the YAML number 0.9 reads it as `0.9`.",
       "oneOf": [
-        { "type": "string", "pattern": "^0\\.[2345678](\\.(0|[1-9][0-9]*))?$" },
-        { "enum": [0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8] }
+        { "type": "string", "pattern": "^0\\.[23456789](\\.(0|[1-9][0-9]*))?$" },
+        { "enum": [0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9] }
       ],
-      "examples": ["0.8.0"]
+      "examples": ["0.9.0"]
     },
     "name": {
       "description": "The model's name. Names the generated dbt project, normalised to `[a-z0-9_]`. Defaults to the file's name without `.model2data.yml`.",
@@ -507,7 +507,7 @@
     },
 
     "distributionKind": {
-      "enum": ["uniform", "normal", "lognormal", "exponential"]
+      "enum": ["uniform", "normal", "lognormal", "exponential", "poisson"]
     },
 
     "generate": {
@@ -525,7 +525,7 @@
           "x-model2data-applies-to": ["numeric", "temporal"]
         },
         "distribution": {
-          "description": "The shape numeric values are drawn from: a kind alone (`lognormal`), whose parameters are then derived from the range, or the kind with its parameters. A parameter left out is derived from the range (explicit `min`/`max`, else the column's default range): normal `mean` is its midpoint and `stddev` a sixth of its width; lognormal `median` is its midpoint and `spread` 0.5; exponential `mean` is its midpoint. Only an explicit `min`/`max` clips the draws.",
+          "description": "The shape numeric values are drawn from: a kind alone (`lognormal`), whose parameters are then derived from the range, or the kind with its parameters. A parameter left out is derived from the range (explicit `min`/`max`, else the column's default range): normal `mean` is its midpoint and `stddev` a sixth of its width; lognormal `median` is its midpoint and `spread` 0.5; exponential `mean` is its midpoint; poisson `mean` is its midpoint. Only an explicit `min`/`max` clips the draws. `poisson` (spec 0.9.0) draws whole numbers, counts such as goals in a match or tickets in an hour: on an integer column only, its variance equal to its `mean`.",
           "x-model2data-applies-to": ["numeric"],
           "oneOf": [
             { "$ref": "#/$defs/distributionKind" },
@@ -578,11 +578,26 @@
                     }
                   },
                   "additionalProperties": false
+                },
+                {
+                  "properties": {
+                    "kind": { "const": "poisson" },
+                    "mean": {
+                      "description": "The average count (λ), also its variance: a positive, finite number. Spec 0.9.0.",
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    }
+                  },
+                  "additionalProperties": false
                 }
               ]
             }
           ],
-          "examples": ["lognormal", { "kind": "lognormal", "median": 120, "spread": 0.7 }]
+          "examples": [
+            "lognormal",
+            { "kind": "lognormal", "median": 120, "spread": 0.7 },
+            { "kind": "poisson", "mean": 1.5 }
+          ]
         },
         "null_rate": {
           "description": "The fraction of rows generated null (or the column's `default`, when it has one): exactly ⌊n × null_rate⌋ of n rows. Replaces the default rate, which is min(0.2, 1 − n / (n + 50)).",
@@ -707,7 +722,7 @@
           "examples": [{ "status": ["done"] }, { "status": ["shipped", "delivered"] }]
         },
         "derive": {
-          "description": "The column is computed from other columns of its row, drawing nothing (no random draw is made for it). One of: `cases`, a list of `{if, then}` in order, the first whose `if` holds giving the value, and `else` the value when none does (null when left out); `copy`, another column's value; `date_of`, the date part of a timestamp column. An `if` is a comparison (see \"Comparisons\" in README.md) whose entries must all hold; `then` and `else` are a literal valid for the column, `{column: <name>}` (the row's value of that column) or `{run: as_of}` (the run's anchor timestamp). The value of a column read is its final one: a rule or a `when` may have changed it. With a `when` on the column, `when` says where it is null and `derive` what it holds elsewhere. The column is no key, unique or rollup, and has no other hint that decides a value (`min`, `max`, `distribution`, `weights`, `null_rate`, `distinct`, `true_rate`, `skew`, `after`, `growth`, `seasonality`, `business_hours`, `days`, `times`, `transitions`, `at_least`); a foreign key may be derived only from another foreign key onto the same parent. A column that derives from itself, directly or through other derived columns or a `when`, is an error, and so is one that reads a rollup, or one that another column of the row follows with `after`. Spec 0.7.0.",
+          "description": "The column is computed from other columns of its row, drawing nothing (no random draw is made for it). One of: `cases`, a list of `{if, then}` in order, the first whose `if` holds giving the value, and `else` the value when none does (null when left out); `copy`, another column's value; `date_of`, the date part of a timestamp column. An `if` is a comparison (see \"Comparisons\" in README.md) whose entries must all hold; `then` and `else` are a literal valid for the column, `{column: <name>}` (the row's value of that column) or `{run: as_of}` (the run's anchor timestamp). The value of a column read is its final one: a rule or a `when` may have changed it. With a `when` on the column, `when` says where it is null and `derive` what it holds elsewhere. The column is no key, unique or rollup, and has no other hint that decides a value (`min`, `max`, `distribution`, `weights`, `null_rate`, `distinct`, `true_rate`, `skew`, `after`, `growth`, `seasonality`, `business_hours`, `days`, `times`, `transitions`, `at_least`, `at_most`); a foreign key may be derived only from another foreign key onto the same parent. A column that derives from itself, directly or through other derived columns or a `when`, is an error, and so is one that reads a rollup, or one that another column of the row follows with `after`. Spec 0.7.0.",
           "type": "object",
           "minProperties": 1,
           "properties": {
@@ -783,6 +798,13 @@
           "minimum": 1,
           "x-model2data-applies-to": ["foreign-key"],
           "examples": [1]
+        },
+        "at_most": {
+          "description": "No parent row gets more than this many rows of this table. Each value is drawn as the column draws without the hint (its `skew`, its null rate; a null is no child), and a parent that already holds N rows is not drawn again: the value is drawn among the parents with room, from the same stream. With `at_least`, which must not exceed it, every parent gets between the two. More rows with a parent than N × parents is an error (a validation error when `run` gives both tables' rows and the column references a key, a generation error otherwise); rows are never dropped. A rule that draws the column again draws among the parents with room; an `after` naming the parent's date moves the row's date rather than giving it another parent. Not on a unique foreign key (a one-to-one), and not on a table with `incremental` when days are generated. Spec 0.9.0.",
+          "type": "integer",
+          "minimum": 1,
+          "x-model2data-applies-to": ["foreign-key"],
+          "examples": [25]
         }
       },
       "patternProperties": { "^x-": true },

@@ -170,7 +170,8 @@ def test_the_version_as_a_yaml_number_0_3_is_read():
     assert schema_url(0.5).endswith("/0.5.0/model.schema.json")
     assert schema_url(0.6).endswith("/0.6.0/model.schema.json")
     assert schema_url(0.7).endswith("/0.7.0/model.schema.json")
-    assert schema_url(None).endswith("/0.8.0/model.schema.json")
+    assert schema_url(0.8).endswith("/0.8.0/model.schema.json")
+    assert schema_url(None).endswith("/0.9.0/model.schema.json")
     assert schema_url(0.4).endswith("/0.4.0/model.schema.json")
 
 

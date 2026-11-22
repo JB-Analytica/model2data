@@ -64,3 +64,19 @@ takes `mean` (the average). Any left unset default to the midpoint of the column
 `normal` centred near an edge redraws a bounded number of times before clamping, so it never
 loops forever and never crosses the bound. Leaving `distribution` out, or setting it to
 `uniform`, is exactly today's behaviour.
+
+## Counts
+
+Goals in a match, orders in a day, tickets in an hour: a count is a small whole number most of
+the time, now and then a larger one, never negative. `poisson` (spec 0.9.0, integer columns only)
+draws it, around its `mean`, which is also its variance:
+
+```yaml
+home_goals: {type: int, generate: {distribution: {kind: poisson, mean: 1.5}, max: 9}}
+away_goals: {type: int, generate: {distribution: {kind: poisson, mean: 1.2}, max: 9}}
+```
+
+That is about 2.7 goals a game, and a draw in about one game in four. `mean` left out is the midpoint of the column's range, like the
+other kinds, so `distribution: poisson` alone on a column with `min: 0, max: 10` averages 5.
+`min`/`max` clip as above. The draw is exact for any mean (multiplied uniforms below a mean of
+10, transformed rejection from there), from the same seeded stream as every other value.

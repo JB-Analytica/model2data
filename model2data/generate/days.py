@@ -345,13 +345,13 @@ def _check_combinations(
 def _check_derived_and_windows(
     tables: Mapping[str, TableDef], incremental: Mapping[str, Incremental]
 ) -> None:
-    """Refuse days after the first where a table with `derive`, a date window, `days` or
-    `times` moves.
+    """Refuse days after the first where a table with `derive`, a date window, `days`,
+    `times` or `at_most` moves.
 
     A derived column is computed for the first day's rows (see generate.derive), and a
     window (`min`/`max` on a date or timestamp) or `days`/`times` (generate.clock) places
-    the first day's values: a day that inserts rows of such a table draws them on the day,
-    without any of them.
+    the first day's values, and `at_most` counts the first day's children: a day that
+    inserts rows of such a table draws them on the day, without any of them.
     """
     for key, table in tables.items():
         inc = incremental.get(key)
@@ -370,6 +370,12 @@ def _check_derived_and_windows(
                     f'{key}.{column.name}: "min"/"max" place the first day\'s dates, and {key} '
                     "has `incremental`, whose rows fall on the days after it: generate without "
                     "days, or drop the window."
+                )
+            if "at_most" in note:
+                raise ValueError(
+                    f'{key}.{column.name}: "at_most" holds for the first day\'s rows, and {key} '
+                    "has `incremental`, which draws rows on the days after it without it: "
+                    'generate without days, or drop "at_most".'
                 )
             for hint in ("days", "times"):
                 if hint in note:

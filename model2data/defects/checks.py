@@ -14,6 +14,9 @@ SQL reads:
   and `model2data_max_distinct`: as their macros in
   `dbt/templates/hint_macros/model2data_hint_tests.sql`, nulls skipped where the
   SQL skips them.
+- `model2data_max_rows_per_value`: as its macro in
+  `dbt/templates/hint_macros/model2data_children_tests.sql`: a non-null value
+  held by more rows than `max_count`.
 - `model2data_not_before_parent`: as its macro in
   `dbt/templates/hint_macros/model2data_parent_tests.sql`: a row dated before
   the earliest parent row its foreign key matches, by day with `granularity: day`.
@@ -39,6 +42,7 @@ from __future__ import annotations
 
 import io
 import re
+from collections import Counter
 from collections.abc import Iterable, Mapping
 from datetime import date
 from typing import Any, Callable, Optional
@@ -433,6 +437,13 @@ def _max_distinct(test: DbtTest, frame: pd.DataFrame, seeded: Mapping, cache: Co
     return len(cache.number_set(frame, str(test.column))) > test.arguments["max_count"]
 
 
+def _max_rows_per_value(
+    test: DbtTest, frame: pd.DataFrame, seeded: Mapping, cache: Columns
+) -> bool:
+    counts = Counter(cache.present_numbers(frame, str(test.column)))
+    return any(count > test.arguments["max_count"] for count in counts.values())
+
+
 def _unique_combination(
     test: DbtTest, frame: pd.DataFrame, seeded: Mapping, cache: Columns
 ) -> bool:
@@ -532,6 +543,7 @@ _CHECKS: dict[str, Callable[[DbtTest, pd.DataFrame, Mapping, Columns], bool]] = 
     "model2data_not_before_parent": _not_before_parent,
     "model2data_max_null_share": _max_null_share,
     "model2data_max_distinct": _max_distinct,
+    "model2data_max_rows_per_value": _max_rows_per_value,
     "model2data_when": _when,
     "model2data_when_max_null_share": _when_max_null_share,
     "model2data_unique_combination": _unique_combination,

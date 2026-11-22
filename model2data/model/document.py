@@ -48,13 +48,14 @@ def from_dict(data: Mapping[str, Any]) -> Model:
 
 
 def _rollup_issues(model: Model) -> list[Issue]:
-    """What is wrong with the model's `rollup` and `at_least`, checked as the engine reads them.
+    """What is wrong with the model's `rollup`, `at_least` and `at_most`, checked as the engine
+    reads them.
 
     They depend on the foreign keys as the generator classifies them, so they are
     checked on the conforming model (see generate.rollups), each at its hint's path.
     """
     if not any(
-        "rollup" in column.generate or "at_least" in column.generate
+        "rollup" in column.generate or "at_least" in column.generate or "at_most" in column.generate
         for table in model.tables.values()
         for column in table.columns.values()
     ):
@@ -337,6 +338,23 @@ def uses_0_8_hint(generate: Mapping[str, Any]) -> bool:
     return "days" in generate or "times" in generate
 
 
+def uses_0_9(model: Model) -> bool:
+    """Whether the model uses what spec 0.9.0 added: a `distribution` of kind `poisson`, or a
+    foreign key's `at_most`."""
+    return any(
+        uses_0_9_hint(column.generate)
+        for table in model.tables.values()
+        for column in table.columns.values()
+    )
+
+
+def uses_0_9_hint(generate: Mapping[str, Any]) -> bool:
+    """Whether a column's `generate` has `at_most` or a `poisson` distribution (spec 0.9.0)."""
+    distribution = generate.get("distribution")
+    kind = distribution.get("kind") if isinstance(distribution, Mapping) else distribution
+    return "at_most" in generate or kind == "poisson"
+
+
 def uses_0_5_after(after: Any) -> bool:
     """Whether an `after` is in a form spec 0.5.0 added: a list, or `<table>.<column>`."""
     return isinstance(after, list) or (isinstance(after, str) and "." in after)
@@ -346,7 +364,8 @@ def document_version(model: Model) -> Any:
     """The version the model's document is written against.
 
     The version the model was read with, unless the model uses what that
-    version does not have: 0.8.0 when it uses `days` or `times` and was read as 0.2-0.7,
+    version does not have: 0.9.0 when it uses a `poisson` distribution or `at_most` and was read
+    as 0.2-0.8, 0.8.0 when it uses `days` or `times` and was read as 0.2-0.7,
     0.7.0 when it uses `rules`, `combinations`, `derive` or a date `min`/`max` and was read as 0.2-0.6,
     0.6.0 when it uses `rollup` or `at_least` and was read as 0.2-0.5, 0.5.0 when it uses a list or a parent's column in
     `after` and was read as
@@ -355,6 +374,16 @@ def document_version(model: Model) -> Any:
     """
     version = model.version
     minor = str(version).split(".")[:2]
+    if uses_0_9(model) and minor in (
+        ["0", "2"],
+        ["0", "3"],
+        ["0", "4"],
+        ["0", "5"],
+        ["0", "6"],
+        ["0", "7"],
+        ["0", "8"],
+    ):
+        return "0.9.0"
     if uses_0_8(model) and minor in (
         ["0", "2"],
         ["0", "3"],

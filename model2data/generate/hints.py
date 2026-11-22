@@ -23,18 +23,20 @@ or a downstream dbt test failure.
 | `times`     | timestamp columns that are no key, unique or FK | clock times drawn: `"HH:MM"`, `"HH:MM:SS"` or `"HH:MM-HH:MM"`, a list or entry -> weight |
 | `growth`    | date/timestamp columns                         | overrides the run-level `TimeProfile.growth` for this column |
 | `seasonality` | date/timestamp columns                       | overrides the run-level `TimeProfile.seasonality` for this column |
-| `distribution` | numeric columns                             | draw shape: `uniform` (default), `normal`, `lognormal`, `exponential` |
-| `mean`      | numeric columns, with `distribution: normal` or `exponential` | normal: the centre; exponential: the average (scale) |
+| `distribution` | numeric columns                             | draw shape: `uniform` (default), `normal`, `lognormal`, `exponential`; `poisson` on integer columns |
+| `mean`      | numeric columns, with `distribution: normal`, `exponential` or `poisson` | normal: the centre; exponential: the average (scale); poisson: the average count, positive |
 | `stddev`    | numeric columns, with `distribution: normal`   | normal: the spread |
 | `median`    | numeric columns, with `distribution: lognormal`| lognormal: the typical value, `exp(mu)`   |
 | `spread`    | numeric columns, with `distribution: lognormal`| lognormal: sigma of the underlying normal (0.3 mild, 1.0 heavy tail) |
 | `when`      | nullable columns that are no key, unique or FK | other column -> values: null on the rows that don't match (see generate.when) |
 | `rollup`    | numeric, date or timestamp columns that are no key or FK | an aggregate of the child rows (see generate.rollups) |
 | `at_least`  | foreign-key columns that are not unique        | every parent gets at least this many rows (see generate.rollups) |
+| `at_most`   | foreign-key columns that are not unique        | no parent gets more than this many rows (see generate.rollups) |
 """
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 
 from model2data.generate import clock, derive, kinds, rollups, windows
@@ -135,14 +137,14 @@ def _is_numeric_type(base: str) -> bool:
 
 
 # Distributions a numeric column's `distribution` hint may name.
-_DISTRIBUTIONS = ("uniform", "normal", "lognormal", "exponential")
+_DISTRIBUTIONS = ("uniform", "normal", "lognormal", "exponential", "poisson")
 
 # Which distribution(s) each shape parameter is meaningful under -- checked
 # against the note's own `distribution` (default "uniform" when absent), so
 # a `stddev` with no `distribution` key is rejected the same as one paired
 # with the wrong distribution.
 _PARAM_DISTRIBUTIONS: dict[str, tuple[str, ...]] = {
-    "mean": ("normal", "exponential"),
+    "mean": ("normal", "exponential", "poisson"),
     "stddev": ("normal",),
     "median": ("lognormal",),
     "spread": ("lognormal",),
@@ -264,6 +266,11 @@ def _validate_column_hints(
             raise ValueError(
                 f'{label}: "distribution" must be one of {allowed} (got {note["distribution"]!r}).'
             )
+        if note["distribution"] == "poisson" and not kinds.is_integer_type(column.data_type):
+            raise ValueError(
+                f'{label}: "distribution" poisson draws whole numbers, so it applies to an '
+                f"integer column only ({column.data_type} is not one)."
+            )
 
     # mean/stddev/median/spread only make sense alongside the distribution
     # they shape, so each is checked against the note's own `distribution`
@@ -276,7 +283,9 @@ def _validate_column_hints(
         if note.get("distribution") not in required_distributions:
             options = " or ".join(f'"{d}"' for d in required_distributions)
             raise ValueError(f'{label}: "{param_key}" only applies with "distribution": {options}.')
-        if param_key == "mean":
+        if param_key == "mean" and note.get("distribution") == "poisson":
+            _check_positive_finite(label, param_key, note[param_key])
+        elif param_key == "mean":
             _check_number(label, param_key, note[param_key])
         else:
             _check_positive_number(label, param_key, note[param_key])
@@ -343,6 +352,18 @@ def _check_number(label: str, key: str, value: object) -> None:
 def _check_positive_number(label: str, key: str, value: object) -> None:
     if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
         raise ValueError(f'{label}: "{key}" must be a number greater than 0 (got {value!r}).')
+
+
+def _check_positive_finite(label: str, key: str, value: object) -> None:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+        or value <= 0
+    ):
+        raise ValueError(
+            f'{label}: "{key}" must be a finite number greater than 0 (got {value!r}).'
+        )
 
 
 def _check_bool(label: str, key: str, value: object) -> None:

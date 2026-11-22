@@ -8,6 +8,7 @@ import unicodedata
 import uuid
 from bisect import bisect_right
 from collections import OrderedDict
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
 from itertools import accumulate
@@ -777,6 +778,8 @@ def generate_column_values(
     time_profile: Optional[TimeProfile] = None,
     skew: float = 0.0,
     lone_country: bool = False,
+    at_most: int = 0,
+    held: Optional[Mapping[Any, int]] = None,
 ) -> list:
     """
     Generate synthetic values for a single column.
@@ -809,6 +812,11 @@ def generate_column_values(
     generate.core._deduplicate_composite_keys's caller), where no single
     column setting says so but SQL primary-key semantics forbid nulls in any
     of its columns regardless.
+
+    `at_most` (a foreign key's `at_most`, 0 for none) caps the rows any one parent
+    value gets, counting the `held` rows it has already (the rows an `at_least` gave
+    it, or the rows a rule leaves alone): see `_capped_parent_values`. With 0, the
+    column draws exactly as it did before the hint existed.
     """
     # Qualify the label so two same-named columns in different tables
     # (an `id` on each of two tables) stay distinguishable in the report.
@@ -842,6 +850,18 @@ def generate_column_values(
         if not force_not_null and "not null" not in column.settings and "pk" not in column.settings:
             _null_out(values, _null_fraction_for(column, row_count), column.default, row_count)
         return values
+
+    if at_most and fk_series is not None and bool(fk_series.notna().any()):
+        return _at_most_column(
+            column,
+            row_count,
+            fk_series,
+            force_not_null=force_not_null,
+            skew=skew,
+            at_most=at_most,
+            held=held or {},
+            label=unique_label,
+        )
 
     if column.enum_values:
         note = column.note or {}
@@ -907,25 +927,7 @@ def generate_column_values(
             # Unchanged from every release before skew existed.
             values = [random.choice(fk_values) for _ in range(row_count)]
         else:
-            # Distinct parents, in their original order, shuffled so *which*
-            # ones end up popular is randomized under the seed rather than
-            # always being the first ones inserted.
-            seen: set = set()
-            parents = []
-            for value in fk_values:
-                if value not in seen:
-                    seen.add(value)
-                    parents.append(value)
-            random.shuffle(parents)
-
-            # Geometric decay by rank: w_i = exp(-lam * i / n), lam = 8 *
-            # skew**2. At skew 0.8 (lam=5.12) the top 20% of parents hold
-            # roughly 65-75% of the children; at skew 1.0 (lam=8) they hold
-            # roughly 80%; at skew 0 every parent is equally likely, handled
-            # above. Both ranges are pinned in tests/test_shaping.py.
-            n = len(parents)
-            lam = 8 * effective_skew**2
-            weights = [math.exp(-lam * i / n) for i in range(n)]
+            parents, weights = _skewed_parents(fk_values, effective_skew)
             values = random.choices(parents, weights=weights, k=row_count)
 
     # -----------------------------------------------------
@@ -1174,7 +1176,7 @@ def _distribution_params(
             "median": note.get("median", midpoint),
             "spread": note.get("spread", 0.5),
         }
-    # exponential: hints.py has already rejected anything else reaching here.
+    # exponential and poisson: hints.py has already rejected anything else reaching here.
     return {"mean": note.get("mean", midpoint)}
 
 
@@ -1184,7 +1186,55 @@ def _draw_distribution_value(distribution: str, params: dict) -> float:
         return random.gauss(params["mean"], params["stddev"])
     if distribution == "lognormal":
         return random.lognormvariate(math.log(params["median"]), params["spread"])
+    if distribution == "poisson":
+        return poisson_draw(params["mean"])
     return random.expovariate(1 / params["mean"])  # exponential
+
+
+# Below this mean a Poisson draw multiplies uniforms (Knuth); from it on it uses
+# transformed rejection (PTRS), whose cost does not grow with the mean.
+_POISSON_KNUTH_BELOW = 10.0
+
+
+def poisson_draw(mean: float) -> int:
+    """One draw from a Poisson distribution of `mean` (> 0), from the `random` stream.
+
+    Exact for every mean. Below `_POISSON_KNUTH_BELOW`, Knuth's method: multiply
+    uniforms until the product drops below exp(-mean); the number of factors less
+    one is the draw (on average mean + 1 uniforms). From it on, Hörmann's
+    transformed rejection with squeeze (PTRS, "The transformed rejection method for
+    generating Poisson random variables", 1993): two uniforms per try and about 1.1
+    tries per draw whatever the mean, where Knuth's product would underflow.
+    """
+    if mean < _POISSON_KNUTH_BELOW:
+        limit = math.exp(-mean)
+        count = 0
+        product = random.random()
+        while product > limit:
+            count += 1
+            product *= random.random()
+        return count
+    root = math.sqrt(mean)
+    log_mean = math.log(mean)
+    b = 0.931 + 2.53 * root
+    a = -0.059 + 0.02483 * b
+    inverse_alpha = 1.1239 + 1.1328 / (b - 3.4)
+    v_r = 0.9277 - 3.6224 / (b - 2)
+    while True:
+        u = random.random() - 0.5
+        v = 1.0 - random.random()  # (0, 1]: its log is finite
+        u_s = 0.5 - abs(u)
+        if u_s < 0.013 and v > u_s:
+            continue  # also every u_s of 0, which the next line would divide by
+        k = math.floor((2 * a / u_s + b) * u + mean + 0.43)
+        if u_s >= 0.07 and v <= v_r:
+            return k
+        if k < 0:
+            continue
+        if math.log(v) + math.log(inverse_alpha) - math.log(a / (u_s * u_s) + b) <= (
+            -mean + k * log_mean - math.lgamma(k + 1)
+        ):
+            return k
 
 
 def _clipped_distribution_draw(
@@ -1215,6 +1265,140 @@ def _clipped_distribution_draw(
     if clip_max is not None and value > clip_max:
         value = clip_max
     return value
+
+
+def _skewed_parents(fk_values: list, skew: float) -> tuple[list, list[float]]:
+    """The distinct parents, shuffled, and their weights under `skew` (above 0).
+
+    Distinct parents, in their original order, shuffled so *which* ones end up
+    popular is randomized under the seed rather than always being the first ones
+    inserted. Geometric decay by rank: w_i = exp(-lam * i / n), lam = 8 * skew**2.
+    At skew 0.8 (lam=5.12) the top 20% of parents hold roughly 65-75% of the
+    children; at skew 1.0 (lam=8) they hold roughly 80%. Both ranges are pinned in
+    tests/test_shaping.py.
+    """
+    parents = list(dict.fromkeys(fk_values))
+    random.shuffle(parents)
+    n = len(parents)
+    lam = 8 * skew**2
+    return parents, [math.exp(-lam * i / n) for i in range(n)]
+
+
+# How many draws a full parent is turned down before the parents left with room
+# are gathered again (see `_capped_parent_values`).
+_AT_MOST_REJECTIONS = 8
+
+
+def _at_most_column(
+    column: ColumnDef,
+    row_count: int,
+    fk_series: pd.Series,
+    *,
+    force_not_null: bool,
+    skew: float,
+    at_most: int,
+    held: Mapping[Any, int],
+    label: str,
+) -> list:
+    """A foreign key's values with no parent holding more than `at_most` rows.
+
+    The null rows are chosen first (the same count the null pass gives the
+    column), since a null is no child, then the other rows are drawn by
+    `_capped_parent_values`. A column `default` stands in for null as it does in
+    the null pass, and counts as a child of that value.
+    """
+    fk_values = [value for value in fk_series.tolist() if not pd.isna(value)]
+    note = column.note or {}
+    effective_skew = note.get("skew")
+    if effective_skew is None:
+        effective_skew = skew
+    nullable = (
+        not force_not_null and "not null" not in column.settings and "pk" not in column.settings
+    )
+    empty: set[int] = set()
+    if nullable:
+        count = int(row_count * _null_fraction_for(column, row_count) + 1e-9)
+        if count:
+            empty = set(random.sample(range(row_count), k=count))
+    counts = dict(held)
+    if empty and column.default is not None:
+        counts[column.default] = counts.get(column.default, 0) + len(empty)
+    drawn = iter(
+        _capped_parent_values(
+            fk_values, row_count - len(empty), effective_skew, at_most, counts, label
+        )
+    )
+    return [column.default if row in empty else next(drawn) for row in range(row_count)]
+
+
+def _capped_parent_values(
+    fk_values: list,
+    count: int,
+    skew: float,
+    at_most: int,
+    counts: dict,
+    label: str,
+) -> list:
+    """`count` parent values, drawn as the column draws them, none past `at_most`.
+
+    Each value is drawn as without the hint (every parent row equally likely, or
+    weighted by `skew`); a parent that already holds `at_most` rows (`counts`, which
+    this updates) is not taken, and the value is drawn again, from the same stream,
+    among the parents with room: the column's own weights, restricted to them. After
+    `_AT_MOST_REJECTIONS` refusals in a row the parents still with room are gathered,
+    so the draw stays quick when most parents are full. More rows than the parents
+    have room for is an error, never a silent cap.
+    """
+    if skew == 0.0:
+        pool: list = list(fk_values)
+        weights: Optional[list[float]] = None
+    else:
+        pool, weights = _skewed_parents(fk_values, skew)
+    parents = list(dict.fromkeys(fk_values))
+    room = sum(max(0, at_most - counts.get(parent, 0)) for parent in parents)
+    if count > room:
+        given = sum(min(counts.get(parent, 0), at_most) for parent in parents)
+        raise ValueError(
+            f'{label}: "at_most" {at_most} lets its {len(parents)} parent value(s) hold '
+            f"{at_most * len(parents)} row(s)"
+            + (f", {given} of them already given," if given else "")
+            + f" and {count} more need a parent: lower the table's rows or raise "
+            '"at_most".'
+        )
+
+    def table(values: list, weighed: Optional[list[float]]) -> tuple[list, Optional[list]]:
+        return values, list(accumulate(weighed)) if weighed is not None else None
+
+    candidates, cumulative = table(pool, weights)
+
+    def pick() -> Any:
+        if cumulative is None:
+            return random.choice(candidates)
+        return random.choices(candidates, cum_weights=cumulative, k=1)[0]
+
+    out = []
+    for _ in range(count):
+        for _attempt in range(_AT_MOST_REJECTIONS):
+            value = pick()
+            if counts.get(value, 0) < at_most:
+                break
+        else:
+            open_rows = [
+                index for index, value in enumerate(candidates) if counts.get(value, 0) < at_most
+            ]
+            candidates, cumulative = table(
+                [candidates[index] for index in open_rows],
+                None if cumulative is None else [_weight(cumulative, index) for index in open_rows],
+            )
+            value = pick()
+        counts[value] = counts.get(value, 0) + 1
+        out.append(value)
+    return out
+
+
+def _weight(cumulative: list[float], index: int) -> float:
+    """The weight at `index` of a cumulative weight list."""
+    return cumulative[index] - (cumulative[index - 1] if index else 0.0)
 
 
 def _null_fraction_for(column: ColumnDef, row_count: int) -> float:
