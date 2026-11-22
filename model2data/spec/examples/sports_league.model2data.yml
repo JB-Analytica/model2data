@@ -1,5 +1,5 @@
-# yaml-language-server: $schema=https://www.jbanalytica.com/model2data/spec/0.8.0/model.schema.json
-model2data: 0.8.0
+# yaml-language-server: $schema=https://www.jbanalytica.com/model2data/spec/0.9.0/model.schema.json
+model2data: 0.9.0
 name: sports_league
 description: >
   One season of a twelve-club league: the clubs, their players and every game, each club playing
@@ -27,7 +27,7 @@ tables:
         type: bigint
         not_null: true
         references: clubs.id
-        generate: {at_least: 18}          # every club has a squad of at least 18
+        generate: {at_least: 18, at_most: 25}   # every club has a squad of 18 to 25
       first_name: {type: first_name, not_null: true}   # people come from the run's locale
       last_name: {type: last_name, not_null: true}
       position:
@@ -41,7 +41,6 @@ tables:
     combinations: [home_team_id, away_team_id]
     rules:
       - {home_team_id: {ne: {column: away_team_id}}}   # a club never plays itself
-      - {home_score: {ne: {column: away_score}}}       # no draws
     columns:
       id: {type: bigint, pk: true}
       home_team_id: {type: bigint, references: clubs.id}
@@ -67,18 +66,25 @@ tables:
               - if: {tip_off_at: {lte: {run: as_of}}}
                 then: final
             else: scheduled
-      home_score: {type: int, generate: {min: 0, max: 5, when: {status: [final]}}}   # played games only
-      away_score: {type: int, generate: {min: 0, max: 5, when: {status: [final]}}}
+      # Goals are counts, so Poisson: 1.5 at home and 1.2 away is about 2.7 a game and a
+      # draw in about one game in four. Played games only.
+      home_score:
+        type: int
+        generate: {distribution: {kind: poisson, mean: 1.5}, max: 9, when: {status: [final]}}
+      away_score:
+        type: int
+        generate: {distribution: {kind: poisson, mean: 1.2}, max: 9, when: {status: [final]}}
       winner_team_id:
         type: bigint
         references: clubs.id
         generate:
           when: {status: [final]}
-          derive:                         # the winner is always one of the two clubs
+          derive:                         # the side with more goals; a draw has no winner
             cases:
               - if: {home_score: {gt: {column: away_score}}}
                 then: {column: home_team_id}
-            else: {column: away_team_id}
+              - if: {away_score: {gt: {column: home_score}}}
+                then: {column: away_team_id}
       result_posted_at:
         type: timestamp
         generate: {after: tip_off_at, when: {status: [final]}}   # a result follows its game
@@ -87,4 +93,4 @@ run:
   seed: 42
   as_of: "2026-12-01"
   locale: nl_BE
-  rows_per_table: {clubs: 12, players: 300}
+  rows_per_table: {clubs: 12, players: 260}

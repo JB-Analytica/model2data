@@ -1,4 +1,4 @@
-"""Does a document conform to spec 0.8.0 (or 0.2.x-0.7.x): the schema, then the checks beyond it.
+"""Does a document conform to spec 0.9.0 (or 0.2.x-0.8.x): the schema, then the checks beyond it.
 
 `check(document)` returns every issue it finds, each with the document path of
 the value at fault and a severity; it never stops at the first. The schema is
@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import difflib
 import json
+import math
 import re
 from collections.abc import Mapping
 from datetime import date
@@ -32,16 +33,17 @@ from model2data.generate.derive import CONFLICTS as DERIVE_CONFLICTS
 from model2data.generate.timeline import creation_column_name
 from model2data.model.errors import Issue, PathPart, Suggestion, format_path
 
-SPEC_VERSION = "0.8.0"
+SPEC_VERSION = "0.9.0"
 # The columns `incremental.history` adds to `<table>_history`.
 HISTORY_COLUMNS = ("valid_from", "valid_to", "is_current")
 # The minor versions this reader implements. 0.3.0 only adds `defects` and
 # `incremental.history`, 0.4.0 only `when`, 0.5.0 only a list or a parent's
 # `<table>.<column>` in `after`, 0.6.0 only `rollup` and `at_least`, 0.7.0 only a table's
 # `rules` and `combinations`, a column's `derive` and a date window, 0.8.0 only a column's
-# `days` and `times`, so an older
+# `days` and `times`, 0.9.0 only a `distribution` of kind `poisson` and a foreign key's
+# `at_most`, so an older
 # document reads exactly as it did; it just cannot use them.
-READS = ("0.2", "0.3", "0.4", "0.5", "0.6", "0.7", "0.8")
+READS = ("0.2", "0.3", "0.4", "0.5", "0.6", "0.7", "0.8", "0.9")
 _URL = "https://www.jbanalytica.com/model2data/spec/{}/model.schema.json"
 SCHEMA_URL = _URL.format(SPEC_VERSION)
 
@@ -49,7 +51,7 @@ SCHEMA_URL = _URL.format(SPEC_VERSION)
 def schema_url(version: Any) -> str:
     """The schema URL a document of `version` points editors at: 0.2.0's for a 0.2 one,
     0.3.0's for a 0.3 one, 0.4.0's for a 0.4 one, 0.5.0's for a 0.5 one, 0.6.0's for a 0.6 one,
-    0.7.0's for a 0.7 one, the current one otherwise."""
+    0.7.0's for a 0.7 one, 0.8.0's for a 0.8 one, the current one otherwise."""
     older = {
         "0.2": "0.2.0",
         "0.3": "0.3.0",
@@ -57,6 +59,7 @@ def schema_url(version: Any) -> str:
         "0.5": "0.5.0",
         "0.6": "0.6.0",
         "0.7": "0.7.0",
+        "0.8": "0.8.0",
     }.get(_minor(version) or "")
     return _URL.format(older) if older else SCHEMA_URL
 
@@ -71,6 +74,7 @@ def _minor(version: Any) -> Optional[str]:
             0.6: "0.6",
             0.7: "0.7",
             0.8: "0.8",
+            0.9: "0.9",
         }.get(version)
     if isinstance(version, str):
         return ".".join(version.split(".")[:2])
@@ -79,7 +83,7 @@ def _minor(version: Any) -> Optional[str]:
 
 @lru_cache(maxsize=1)
 def schema() -> dict[str, Any]:
-    """The packaged, normative JSON Schema of spec 0.8.0, which also reads 0.2-0.7 documents."""
+    """The packaged, normative JSON Schema of spec 0.9.0, which also reads 0.2-0.8 documents."""
     text = resources.files("model2data").joinpath("spec/model.schema.json").read_text("utf-8")
     return json.loads(text)
 
@@ -123,7 +127,7 @@ def _version_issues(document: Mapping) -> list[Issue]:
     version = document.get("model2data")
     if version is None:
         return []  # reported by the schema as missing
-    if version in (0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8) and not isinstance(version, bool):
+    if version in (0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9) and not isinstance(version, bool):
         return []
     if isinstance(version, str):
         parts = version.split(".")
@@ -134,7 +138,7 @@ def _version_issues(document: Mapping) -> list[Issue]:
                 Issue(
                     "model2data",
                     f"the document is written against spec {version}, and this reader "
-                    f"implements spec {SPEC_VERSION} (0.2.x to 0.8.x). "
+                    f"implements spec {SPEC_VERSION} (0.2.x to 0.9.x). "
                     + (
                         "Convert a 0.1 model, which is DBML, with `model2data convert`."
                         if parts[:2] == ["0", "1"]
@@ -1177,6 +1181,17 @@ class _Checks:
         )
         return True
 
+    def _needs_0_9(self, path: list[PathPart], what: str) -> bool:
+        """Report what 0.9.0 added (`what`) in a 0.2-0.8 document; True when it was reported."""
+        if self.minor not in ("0.2", "0.3", "0.4", "0.5", "0.6", "0.7", "0.8"):
+            return False
+        self.add(
+            path,
+            f"`{what}` is spec 0.9.0, and the document is written against {self.minor}: "
+            "write `model2data: 0.9.0`",
+        )
+        return True
+
     def table_rows(self, key: str) -> Optional[int]:
         """The rows the document's `run` gives a table, or None when it leaves them to the reader."""
         if _mapping(self.tables.get(key)).get("combinations"):
@@ -1608,6 +1623,14 @@ class _Checks:
         for hint in ("rollup", "at_least"):
             if hint in generate:
                 self._needs_0_6([*gen_path, hint], hint)
+        if "at_most" in generate:
+            self._needs_0_9([*gen_path, "at_most"], "at_most")
+            if is_fk:
+                self._at_most(
+                    key, name, generate, [*gen_path, "at_most"], nullable=kind_of["nullable"]
+                )
+        if numeric:
+            self._poisson(name, generate, [*gen_path, "distribution"], type_text, integer)
 
         when = generate.get("when")
         if (
@@ -2085,6 +2108,73 @@ class _Checks:
                     f"min {parsed['min']!r} is after max {parsed['max']!r}",
                 )
 
+    def _poisson(
+        self, name: str, generate: Mapping, path: list[PathPart], type_text: str, integer: bool
+    ) -> None:
+        """A `distribution` of kind `poisson` (spec 0.9.0): whole numbers, on an integer
+        column only, around a finite mean. The schema checks the rest of its form."""
+        distribution = generate.get("distribution")
+        kind = distribution.get("kind") if isinstance(distribution, Mapping) else distribution
+        if kind != "poisson":
+            return
+        self._needs_0_9(path, "distribution: poisson")
+        if not integer:
+            self.add(
+                path,
+                f"poisson draws whole numbers, so it applies to an integer column only: {name} "
+                f"is {type_text}",
+            )
+        mean = distribution.get("mean") if isinstance(distribution, Mapping) else None
+        if isinstance(mean, float) and not math.isfinite(mean):
+            self.add([*path, "mean"], f"must be a finite number, not {mean}")
+
+    def _at_most(
+        self, key: str, name: str, generate: Mapping, path: list[PathPart], *, nullable: bool
+    ) -> None:
+        """A foreign key's `at_most` (spec 0.9.0): not below its `at_least`, and room for the
+        table's rows when the document gives both tables' rows and the parent's column is a key.
+        The child rows counted are the ones with a parent: a nullable column's nulls, which the
+        document fixes by its null rate, are no child."""
+        at_most = generate.get("at_most")
+        if isinstance(at_most, bool) or not isinstance(at_most, int) or at_most < 1:
+            return  # the schema has said so
+        at_least = generate.get("at_least")
+        if isinstance(at_least, bool) or not isinstance(at_least, int) or at_least < 1:
+            at_least = 0
+        if at_least > at_most:
+            self.add(
+                path,
+                f"{at_most} is below `at_least` {at_least}: no parent can have at least that "
+                "many rows and at most this many",
+            )
+            return
+        rows = self.table_rows(key)
+        target = self._ref_target(key, name)
+        if rows is None or target is None:
+            return
+        parent, _, parent_column = target.rpartition(".")
+        parent_rows = self.table_rows(parent)
+        if parent_rows is None or {parent_column} not in self.key_sets(parent):
+            return  # how many parents there are is the run's to say
+
+        def nulls(count: int) -> int:
+            if not nullable:
+                return 0
+            rate = generate.get("null_rate")
+            if isinstance(rate, bool) or not isinstance(rate, (int, float)):
+                rate = max(0.0, min(0.2, 50 / (count + 50)))
+            return int(count * rate + 1e-9)
+
+        covered = min(at_least * parent_rows, rows)
+        children = rows - nulls(rows - covered)
+        capacity = at_most * parent_rows
+        if children > capacity:
+            self.add(
+                path,
+                f"{at_most} lets the {parent_rows} {parent} rows hold {capacity} {key} rows, and "
+                f"{key} has {children} with a {name}: lower its rows or raise `at_most`",
+            )
+
     def _clock(
         self, name: str, generate: Mapping, path: list[PathPart], type_text: str, *, keyed: bool
     ) -> None:
@@ -2353,7 +2443,9 @@ class _Checks:
                         suggestion=Suggestion(
                             format_path(path),
                             value,
-                            None if self.minor in (None, "0.5", "0.6", "0.7", "0.8") else "0.5.0",
+                            None
+                            if self.minor in (None, "0.5", "0.6", "0.7", "0.8", "0.9")
+                            else "0.5.0",
                         ),
                     )
                 )

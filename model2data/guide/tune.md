@@ -5,7 +5,7 @@
 | Command | Does | Exit |
 |---|---|---|
 | `model2data --file M` | same as `model2data generate --file M` | see below |
-| `model2data validate M...` | check models against spec 0.8.0, `*.metrics.yml` files against the metrics spec and their model (`--model M`, else the model beside it with the same stem), and `*.dashboard.yml` files as `dashboard check` does | 0 conforms (warnings allowed), 1 any error |
+| `model2data validate M...` | check models against spec 0.9.0, `*.metrics.yml` files against the metrics spec and their model (`--model M`, else the model beside it with the same stem), and `*.dashboard.yml` files as `dashboard check` does | 0 conforms (warnings allowed), 1 any error |
 | `model2data convert M` | print M as `.model2data.yml`; `-o FILE` writes it, `--force` overwrites | 0 ok, 1 unreadable model or output exists |
 | `model2data metrics list -f M [--metrics F]` | every metric: the file's, then the inferred ones | 0, 1 on a model or metrics error |
 | `model2data metrics export -f M [--metrics F] --to ossie\|lightdash` | the model and its metrics as Apache Ossie 0.1.1, or as Lightdash meta in one dbt properties file for the staging models; `-o FILE` writes it, `--force` overwrites | 0, 1 on an error or an existing output, 2 on another `--to` |
@@ -63,7 +63,7 @@ columns. Add `not_null` to every column that must always have a value.
   `references`, `measure`, `generate`.
 - `generate`: `min`, `max`, `distribution`, `null_rate`, `weights`, `true_rate`,
   `distinct`, `skew`, `after`, `business_hours`, `days`, `times`, `growth`, `seasonality`,
-  `transitions`, `when`, `rollup`, `at_least`, `derive`.
+  `transitions`, `when`, `rollup`, `at_least`, `at_most`, `derive`.
 - Table: `columns`, `description`, `color`, `role`, `grain`, `combinations`, `keys`,
   `foreign_keys`, `incremental`, `rules`, `defects`.
 - Top level: `model2data` (spec version), `name`, `description`, `enums`, `tables`,
@@ -72,7 +72,7 @@ columns. Add `not_null` to every column that must always have a value.
 Each key in use (this model validates):
 
 ```yaml
-model2data: 0.8.0
+model2data: 0.9.0
 name: saas
 enums:
   plan_tier: [free, pro, enterprise]
@@ -86,6 +86,7 @@ tables:
       is_verified: {type: boolean, generate: {true_rate: 0.8}}
       region: {type: city, generate: {distinct: 4}}
       created_at: {type: timestamp, not_null: true}
+      support_tickets: {type: integer, generate: {distribution: {kind: poisson, mean: 2}}}
       billed_total:
         type: numeric(12,2)
         not_null: true
@@ -93,7 +94,11 @@ tables:
   invoices:
     columns:
       id: {type: bigint, pk: true}
-      account_id: {type: bigint, not_null: true, references: accounts.id, generate: {at_least: 1}}
+      account_id:
+        type: bigint
+        not_null: true
+        references: accounts.id
+        generate: {at_least: 1, at_most: 12}
       amount: {type: "numeric(10,2)", not_null: true, generate: {min: 10, max: 900}}
   subscriptions:
     incremental: {new_per_day: 5, update_rate: 0.1, changes: [status], updated_at: updated_at}
@@ -164,7 +169,14 @@ the dbt test `model2data_rollup`, always at severity error. A rollup over a tabl
 `at_least: N` on a foreign key gives every parent at least N child rows (`account_id` above:
 no account without an invoice). Pair it with a rollup so no total is 0 by accident. With fewer
 rows than N × parents the summary lists the shortfall; raise the table's rows. Not on a unique
-foreign key.
+foreign key. `at_most: N` (spec 0.9.0) caps every parent at N child rows (`account_id` above: 1 to
+12 invoices an account): a parent at N is not drawn again. More rows than N × parents is an
+error, never a cap: lower the rows or raise N. Not below `at_least`, not on a unique foreign
+key, not with `incremental` and `--days`. It writes the dbt test `model2data_max_rows_per_value`.
+
+`distribution: {kind: poisson, mean: 2}` (spec 0.9.0, integer columns only) draws counts:
+`support_tickets` above, goals in a match, orders a day. `mean` is also the variance; left out,
+the midpoint of the column's range. `min`/`max` clip it.
 
 `rules` on a table lists comparisons every row
 satisfies, between columns of the same row: `rules: [{home_team_id: {ne: {column: away_team_id}}},
@@ -196,7 +208,7 @@ values fall in, and may lie after the run's `as_of`: `tip_off_at: {type: timesta
 `growth`, `seasonality` and `business_hours` shape the draw inside the window, and `after` still
 holds. A table with a window and `incremental` cannot run with `--days`.
 
-`days` and `times` on a date or timestamp column (spec 0.8.0) fix the weekdays and clock times its
+`days` and `times` on a date or timestamp column (added in spec version 0.8.0) fix the weekdays and clock times its
 values fall on: `kickoff_at: {type: timestamp, generate: {days: {fri: 1, sat: 3, sun: 3}, times:
 {"16:00": 1, "18:30": 1, "20:45": 2}}}`, or `days: [mon, tue, wed, thu, fri, sat]` with `times:
 ["09:00-18:00"]` for a shop's opening hours. A list weighs every entry the same, a mapping gives

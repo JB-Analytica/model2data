@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.25.0] - 2026-11-22
+
+A model that uses neither a `poisson` distribution nor `at_most` writes the same files as 1.24.0
+for the same model, seed and `--as-of`. The sports league example uses both, so what it
+generates changes.
+
+### Added
+- **`distribution: poisson` on an integer column (model spec 0.9.0): counts.** Goals in a match,
+  orders in a day, tickets in an hour are small whole numbers, now and then a larger one, never
+  negative; `home_goals: {type: int, generate: {distribution: {kind: poisson, mean: 1.5}, max:
+  9}}` with away goals at a mean of 1.2 gives about 2.7 goals a game and a draw in about one
+  game in four. Written as `distribution: poisson` or `{kind: poisson, mean: ...}`; `mean` is the
+  average and the variance, a positive finite number, and left out is the midpoint of the
+  column's range (its `min`/`max`, else 0 to 100) as for the other kinds. `min`/`max` clip as for
+  the others: a draw outside them is drawn again up to 20 times, then set to the bound. The draw
+  is exact for any mean, from the column's own seeded stream: Knuth's multiplication of uniforms
+  below a mean of 10, Hörmann's transformed rejection (PTRS) from there. `validate` and the
+  generator report it on a column that is not an integer one, and a mean that is not finite. No
+  dbt test: a distribution is a shape, not a constraint.
+- **`at_most: N` on a foreign key (model spec 0.9.0): no parent gets more than N child rows.**
+  Each value is drawn as the column draws it without the hint (its `skew`, its null rate; a null
+  is no child), and a parent that already holds N rows is not drawn: the value is drawn again
+  among the parents with room, from the same stream. Beside `at_least`, whose rows count toward
+  N, every parent gets a count in the range: `{at_least: 18, at_most: 25}` is a squad of 18 to 25
+  players. More rows with a parent than N × parents is an error, never a silent cap: `validate`
+  reports it when `run` gives both tables' rows and the column references the parent's key (a
+  nullable column counting the rows its null rate leaves), and the generator otherwise, naming the
+  table, the column, the rows and the room (`--rows` and `--rows-for` included). A table's
+  `rules` that draw the column again draw among the parents with room; a cross-table `after`
+  moves a row's date rather than giving it another parent, and a composite key's repair keeps the
+  column and draws the key's other columns again, as for the rows `at_least` gives. `validate`
+  and the generator report `at_most` on a column that is not a foreign key, on a unique foreign
+  key, below the column's `at_least`, beside `derive`, and, with `--days`, on a table with
+  `incremental`. With hint tests on, dbt gets `model2data_max_rows_per_value` (no parent value
+  held by more than N rows), in `macros/model2data_children_tests.sql`, written only for a model
+  that uses it, and the defects report checks it too.
+
+### Changed
+- **The sports league example scores like football.** Home and away goals are Poisson at means
+  of 1.5 and 1.2, capped at 9; the rule against draws is gone, and a draw has no winner. Every
+  club's squad is 18 to 25 players (`at_least: 18, at_most: 25`), 260 players in all; the
+  document says `model2data: 0.9.0`, and its metrics and dashboard say goals rather than points.
+- **Model spec 0.9.0.** The schema's `$id` is `.../spec/0.9.0/model.schema.json`; it reads 0.2
+  to 0.9 documents. A `poisson` distribution or `at_most` in a 0.2 to 0.8 document is an error.
+
 ## [1.24.0] - 2026-11-21
 
 A model that uses neither `days` nor `times` writes the same files as 1.23.0 for the same model,

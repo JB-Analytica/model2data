@@ -1,4 +1,4 @@
-# The model2data model — spec 0.8.0
+# The model2data model — spec 0.9.0
 
 A model2data model is one document: the tables of a data model, their columns and keys, the
 relationships between them, the enums a column can be typed as, and how every column's values
@@ -83,7 +83,7 @@ The spec is versioned on its own, apart from the engine and the studio, with
 [semantic versioning](https://semver.org). The version is in the schema's `$id`:
 
 ```
-https://www.jbanalytica.com/model2data/spec/0.8.0/model.schema.json
+https://www.jbanalytica.com/model2data/spec/0.9.0/model.schema.json
 ```
 
 A patch release changes wording only. A minor release adds something optional. A major release
@@ -125,10 +125,16 @@ error. A writer writes the version the document was read with, and 0.7.0 once it
 metrics spec's `{column: ...}` operand, which uses the same grammar, is metrics spec 0.2.0.
 
 0.8.0 adds a date or timestamp column's [`days` and `times`](#weekdays-and-clock-times), and
-nothing else so far: a 0.2 to 0.7 document is a 0.8.0 document that uses neither, and reads as
+nothing else: a 0.2 to 0.7 document is a 0.8.0 document that uses neither, and reads as
 it always read. A document that uses either says `model2data: 0.8.0`, and either in a document
 that says an earlier version is an error. A writer writes the version the document was read
 with, and 0.8.0 once it uses one.
+
+0.9.0 adds a [`poisson` distribution](#counts) on an integer column and a foreign key's
+[`at_most`](#rollups), and nothing else so far: a 0.2 to 0.8 document is a 0.9.0 document that
+uses neither, and reads as it always read. A document that uses either says
+`model2data: 0.9.0`, and either in a document that says an earlier version is an error. A writer
+writes the version the document was read with, and 0.9.0 once it uses one.
 
 0.2.0 replaced 0.1.0, which carried hints as JSON inside DBML notes. See
 [From 0.1](#from-01).
@@ -437,6 +443,29 @@ orders:
   with `incremental` that inserts or updates rows after the first day is refused when days are
   generated if a column has either, as for a date window.
 
+#### Counts
+
+A count (goals in a match, orders in a day, tickets in an hour) is a whole number that is
+usually small, sometimes larger, and never negative: neither even across a range nor a bell
+curve. `distribution: poisson` (spec 0.9.0) draws it:
+
+```yaml
+games:
+  columns:
+    home_goals: {type: int, generate: {distribution: {kind: poisson, mean: 1.5}, max: 9}}
+    away_goals: {type: int, generate: {distribution: {kind: poisson, mean: 1.2}, max: 9}}
+```
+
+- **`mean`** is the average count, and the variance too: a positive, finite number. Left out
+  (`distribution: poisson`), it is the midpoint of the column's range, as for the other kinds:
+  of an explicit `min` and `max`, else of the default 0 to 100. Above, the two sides score about
+  2.7 goals a game between them, and about one game in four is a draw.
+- **`min` and `max` clip** as for the other kinds: a draw outside them is drawn again, up to 20
+  times, and then set to the bound. Without them nothing is clipped.
+- **On an integer column only**: a decimal one is an error.
+- **The algorithm** is the engine's, from the column's stream like every other draw; it is exact
+  for any mean.
+
 ### Derived columns
 
 `derive` (spec 0.7.0) makes a column the value of an expression over other columns of its row,
@@ -492,8 +521,8 @@ that column) or `{run: as_of}` (the run's anchor, into a date or timestamp colum
   names a row of the parent. A literal cannot be a foreign key's value.
 - **Not a key, and no other value hint.** A column that is `pk`, `unique` or in a key, or has
   `min`, `max`, `distribution`, `weights`, `null_rate`, `distinct`, `true_rate`, `skew`, `after`,
-  `growth`, `seasonality`, `business_hours`, `days`, `times`, `transitions`, `rollup` or
-  `at_least`, cannot be derived. Its type is its type: a generator type is ignored, as nothing
+  `growth`, `seasonality`, `business_hours`, `days`, `times`, `transitions`, `rollup`,
+  `at_least` or `at_most`, cannot be derived. Its type is its type: a generator type is ignored, as nothing
   is drawn.
 - **Kinds.** A value goes into a column of its own kind: a number into a number (an integer into a
   decimal), an enum into a column of the same enum (or of text), a date into a date, a timestamp
@@ -533,7 +562,7 @@ derived column adds up its final values.
 
 `rollup` (spec 0.6.0) makes a parent's column the aggregate of its child rows, so a total
 matches its lines; `at_least` (spec 0.6.0) on a child's foreign key gives every parent row at
-least that many child rows.
+least that many child rows, and `at_most` (spec 0.9.0) gives none more than that many.
 
 ```yaml
 orders:
@@ -576,6 +605,34 @@ points at the row:
 does without it. With fewer rows than N × parents, as many parents as the rows allow are covered
 and the reader says so; it is not an error. A row so given its parent keeps it: where a date of
 the row must not fall before the parent's (`after`), the date moves instead.
+
+`at_most: N` caps the rows any parent gets:
+
+```yaml
+players:
+  columns:
+    club_id:
+      type: bigint
+      not_null: true
+      references: clubs.id
+      generate: {at_least: 18, at_most: 25}   # every squad has 18 to 25 players
+```
+
+- Each value is drawn as the column draws it without the hint (its `skew`, its null rate), and a
+  parent that already holds N rows is not drawn: the value is drawn again among the parents with
+  room, from the same stream. A null is no child.
+- With `at_least`, which must not be above it, the rows `at_least` gives a parent count toward
+  N, so every parent gets between the two.
+- **More rows than the parents have room for is an error**, never a cap: the rows with a parent
+  must not exceed N × parents. The reader reports it when `run` gives both tables' rows and the
+  foreign key references the parent's key (a nullable column counts its non-null rows, which its
+  null rate fixes); the generator reports it otherwise, a row count the command line asks for
+  included.
+- A rule that draws the column again draws among the parents with room. Like a row `at_least`
+  gives a parent, a row keeps its parent where `after` names the parent's date (the date moves
+  instead) and where a composite key repairs a duplicate (its other columns are drawn again).
+- Not on a unique foreign key, and not on a table with `incremental` when days are generated:
+  the days after the first would draw children without it.
 
 ### Comparisons
 
@@ -647,7 +704,7 @@ drawn again, until the rule holds:
   columns the rule reads (above, `away_team_id` and `away_score`; the earlier column keeps what
   it drew). A column that cannot be drawn again without breaking something else is passed over
   for the next one: a key (`pk`, `unique`, a column of a `keys` entry), a rollup, a foreign key
-  with `at_least`, a column another column's `when` names, and a column copied from a parent
+  with `at_least` (one with `at_most` is drawn again among the parents with room), a column another column's `when` names, and a column copied from a parent
   through a reference. A rule with none left is not forced (see below).
 - **A value drawn again** is drawn as the column is drawn without the rule: by its type, its
   `min`, `max`, `distribution` and `weights`, and a foreign key from the rows of its parent, so
@@ -909,7 +966,9 @@ reports each failure with the path of the value (`tables.orders.columns.status.g
 13. `defects`, `run.defects` and `incremental.history` only in a document of spec 0.3.0 or
     later, `when` only in a document of spec 0.4.0 or later, a list or a parent's column in
     `after` only in one of 0.5.0 or later, `rollup` and `at_least` only in one of 0.6.0 or
-    later, and `rules`, `combinations`, `derive` and a date `min` or `max` only in one of 0.7.0 or later.
+    later, `rules`, `combinations`, `derive` and a date `min` or `max` only in one of 0.7.0 or
+    later, `days` and `times` only in one of 0.8.0 or later, and a `poisson` distribution and
+    `at_most` only in one of 0.9.0 or later.
 14. Every defect has exactly one of `count` and `share`, names a column of its table, and gives a
     `type` and `column` no other entry of the table gives. `duplicate_keys` names a primary key
     or a unique column, or its table has a primary key; when `run` gives the table's rows, its
@@ -971,6 +1030,13 @@ reports each failure with the path of the value (`tables.orders.columns.status.g
     starts; and a column with a window that the document fixes (`min` and `max`, or one of them
     with `run.as_of`) has at least one moment on its `days` and `times` in it. Only in a
     document of spec 0.8.0 or later.
+24. A `poisson` distribution is on an integer column, its `mean` finite. `at_most` is on a
+    foreign key that is not unique, `pk` or a one-column key, is not below the column's
+    `at_least`, and leaves room for the table's rows: where `run` gives the rows of the table and
+    of the parent, and the column references the parent's primary key or a unique column, the
+    rows with a value (all of them for a `not_null` column; for a nullable one, the rows its null
+    rate leaves, counted as the generator does) are at most `at_most` × the parent's rows. Only in
+    a document of spec 0.9.0 or later.
 
 ### Warnings
 

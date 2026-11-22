@@ -23,10 +23,10 @@ install. If the person you're helping wants to *look at* or share the model rath
 its generation, point them there; the DBML guidance below applies to both.
 
 > **Two input formats.** Since 1.8, model2data reads a model as one YAML document,
-> `<name>.model2data.yml` ([spec 0.8.0](model2data/spec/README.md), with a JSON Schema at
+> `<name>.model2data.yml` ([spec 0.9.0](model2data/spec/README.md), with a JSON Schema at
 > `model2data/spec/model.schema.json` and a complete example at
 > `model2data/spec/examples/coffee_webshop.model2data.yml`, and `sports_league.model2data.yml` for
-> derived columns, rules, date windows and combinations), and DBML as supported input that it
+> derived columns, rules, date windows, combinations, Poisson goals and `at_most`), and DBML as supported input that it
 > converts to the same model. The DBML guidance below still holds; if you write the YAML form
 > instead, check it with `model2data validate <name>.model2data.yml`, which prints every issue
 > with its path, and `model2data convert <name>.dbml` shows the YAML any DBML file becomes.
@@ -144,10 +144,12 @@ created_at timestamp [note: '{"seasonality": 0.6}']        ' per-column override
 total_amount numeric [note: '{"distribution": "normal", "mean": 100, "stddev": 20}']  ' shape a numeric column's spread
 total_amount numeric [note: '{"distribution": "lognormal", "median": 80, "spread": 0.6}']  ' long right tail (spread: 0.3 mild, 1.0 heavy)
 total_amount numeric [note: '{"distribution": "exponential", "mean": 30}']  ' most values small, a long tail of large ones
+home_goals int [note: '{"distribution": "poisson", "mean": 1.5, "max": 9}']  ' a count: whole numbers around the mean
 ```
 `distribution` (numeric columns only) is `"uniform"` (default, unchanged), `"normal"`, `"lognormal"`,
-or `"exponential"`. `mean`/`stddev` go with `normal`, `median`/`spread` with `lognormal`, `mean` with
-`exponential` again; any left unset default to the midpoint of the column's `min`/`max` (or the
+`"exponential"`, or `"poisson"` (integer columns only, spec 0.9.0: counts such as goals, orders a
+day, tickets an hour; its `mean` is also its variance). `mean`/`stddev` go with `normal`,
+`median`/`spread` with `lognormal`, `mean` with `exponential` and `poisson`; any left unset default to the midpoint of the column's `min`/`max` (or the
 range's own defaults, 0-100 for integers and 0-10,000 for decimals). `min`/`max` still clip the result.
 A hint on the wrong kind of column (`weights` on a non-enum, `distinct` on a primary key, ...) is
 a schema error, reported before generation starts. (JSON and plain text are mutually exclusive per
@@ -269,7 +271,12 @@ The rolled-up column takes no other value hint, is no key or foreign key, and no
 of a decimal column a decimal one. Each rollup writes the dbt test `model2data_rollup` (always
 on). `at_least: N` needs N × parents rows in the child table; with fewer, the summary lists the
 shortfall. In YAML both are spec 0.6.0 (`model2data: 0.6.0`). A rollup over a table with
-`incremental` cannot be generated with `--days`.
+`incremental` cannot be generated with `--days`. `at_most: N` (spec 0.9.0) caps every parent at
+N children: `{"at_least": 18, "at_most": 25}` on `players.club_id` gives squads of 18 to 25. A
+parent already at N is not drawn again; more rows than N × parents is an error (from `validate`
+when `run` gives both tables' rows, else at generation), never a silent cap. `at_least` must not
+exceed it; not on a unique foreign key, nor with `incremental` and `--days`. With hint tests on,
+dbt gets `model2data_max_rows_per_value`.
 
 **Rows that must obey a rule (YAML, spec 0.7.0).** A table's `rules` lists comparisons every
 row satisfies, between columns of the same row: `rules: [{home_team_id: {ne: {column:

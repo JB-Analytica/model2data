@@ -44,7 +44,7 @@ def _run(**run) -> dict:
         pytest.param(
             _column({"type": "integer", "generate": {"distribution": {"kind": "zipf"}}}),
             "tables.t.columns.x.generate.distribution.kind: must be one of "
-            '"uniform", "normal", "lognormal", "exponential", not "zipf"',
+            '"uniform", "normal", "lognormal", "exponential", "poisson", not "zipf"',
             id="distribution-kind",
         ),
         pytest.param(
@@ -98,10 +98,10 @@ def test_a_key_with_both_pk_and_unique_says_to_write_two_keys():
 
 
 def test_a_newer_spec_says_to_upgrade():
-    issues = _issues({"model2data": "0.9.0", "tables": {"t": {"columns": COLUMNS}}})
+    issues = _issues({"model2data": "0.10.0", "tables": {"t": {"columns": COLUMNS}}})
     assert issues == [
-        "model2data: the document is written against spec 0.9.0, and this reader implements "
-        "spec 0.8.0 (0.2.x to 0.8.x). Upgrade model2data to read it."
+        "model2data: the document is written against spec 0.10.0, and this reader implements "
+        "spec 0.9.0 (0.2.x to 0.9.x). Upgrade model2data to read it."
     ]
 
 
@@ -229,7 +229,7 @@ TWO = {"a": "integer", "b": "integer"}
         ),
         pytest.param(
             {"model2data": "abc", "tables": {"t": {"columns": COLUMNS}}},
-            'model2data: must match the pattern ^0\\.[2345678](\\.(0|[1-9][0-9]*))?$ (got "abc")',
+            'model2data: must match the pattern ^0\\.[23456789](\\.(0|[1-9][0-9]*))?$ (got "abc")',
             id="version-pattern",
         ),
         pytest.param(

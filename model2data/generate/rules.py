@@ -19,7 +19,8 @@ within a retry budget.
 - **A redrawn value** is drawn as the column is drawn without the rule: its
   type's generator, its `min`, `max`, `distribution`, `weights`, and, for a
   foreign key, a value from the parent's rows, so it still names a parent that
-  exists. It is never null, and only the rows that broke the rule are touched,
+  exists (with `at_most`, one of the parents with room beside the rows the rule
+  leaves alone, see generate.rollups). It is never null, and only the rows that broke the rule are touched,
   so a column's `when` (null on the rows it does not match) keeps its nulls.
 - **A null operand** exempts the row, as an SQL check constraint does: a
   comparison with a null is unknown, not false, so a rule on a nullable column does not
@@ -37,6 +38,7 @@ table with them changes only in the rows they redraw.
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Callable, Mapping
 from datetime import datetime
 from typing import Optional
@@ -188,6 +190,13 @@ def _candidates(
     return out
 
 
+def _at_most(column: ColumnDef) -> int:
+    """The column's `at_most`, 0 when it has none (generate.rollups reads it the same way;
+    this module cannot import it, which imports this one through generate.derive)."""
+    value = (column.note or {}).get("at_most")
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
 def _redraw(
     df: pd.DataFrame,
     column: ColumnDef,
@@ -204,6 +213,12 @@ def _redraw(
     if comparison.operator == "is_null" and comparison.operand is True:
         values: list = [None] * len(rows)
     else:
+        at_most = _at_most(column)
+        held: Optional[Counter] = None
+        if at_most and pool is not None:
+            # The parents of the rows left alone count toward `at_most`; a null is no child.
+            others = df[column.name].drop(df.index[rows])
+            held = Counter(value for value in others.tolist() if not pd.isna(value))
         values = generate_column_values(
             column,
             row_count=len(rows),
@@ -213,6 +228,8 @@ def _redraw(
             as_of=as_of,
             time_profile=time_profile,
             skew=skew,
+            at_most=at_most,
+            held=held,
         )
     series = df[column.name].astype(object).copy()
     series.iloc[rows] = pd.Series(values, dtype=object).to_numpy()

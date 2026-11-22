@@ -83,6 +83,7 @@ CONFLICTS = (
     "transitions",
     "rollup",
     "at_least",
+    "at_most",
 )
 FORMS = ("cases", "copy", "date_of")
 _TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"

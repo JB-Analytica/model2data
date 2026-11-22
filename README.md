@@ -227,8 +227,8 @@ the same model2data version. `--table-seed orders=7` re-rolls one table and leav
 → [When things happen](docs/time-shapes.md)
 
 **How the data is spread.** `--skew` lets a few customers place most orders; `weights`,
-`true_rate`, `null_rate`, `distinct` and normal, lognormal or exponential `distribution`s shape a
-column. → [How the data is spread](docs/distributions.md)
+`true_rate`, `null_rate`, `distinct` and normal, lognormal, exponential or poisson
+`distribution`s shape a column; `at_least` and `at_most` bound how many children a parent has. → [How the data is spread](docs/distributions.md)
 
 **Defects on purpose.** `--defects training` or `messy`, or a table's own list: duplicate keys,
 orphans, nulls, invalid values, messy text, late-arriving rows. `EXPECTED_FAILURES.md` says what

@@ -1,4 +1,4 @@
-"""A parent's column computed from its child rows (`rollup`), and parents that all have children (`at_least`).
+"""A parent's column computed from its child rows (`rollup`), and how many children a parent has (`at_least`, `at_most`).
 
 `rollup` sits on a parent's column and names a child table and one aggregate
 over the child rows whose foreign key points at the row:
@@ -40,12 +40,24 @@ child rows. How (`cover_parents`), from the table's own stream:
    later in generation moves a coverage row to another parent or nulls it: a
    cross-table `after` moves such a row's date instead, and a composite key's
    repair redraws its other columns.
+
+`at_most: N` (spec 0.9.0) sits on a child's foreign key too: no parent row gets
+more than N child rows. Each value is drawn as the column draws it (its skew, its
+null rate; a null is no child), and a parent that already holds N is not taken:
+the value is drawn again among the parents with room, from the same stream (see
+`generate.faker._capped_parent_values`). With `at_least`, the coverage rows count
+toward N, so the two give each parent between `at_least` and `at_most` rows. More
+rows with a parent than N x parents is an error, never a silent cap. A rule that
+draws the column again draws among the parents with room; a cross-table `after`
+moves the row's date rather than taking another parent, and a composite key's
+repair keeps the column and redraws the key's other ones, as for `at_least`.
 """
 
 from __future__ import annotations
 
 import random
 import re
+from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Optional
@@ -138,6 +150,13 @@ def at_least_of(column: ColumnDef) -> int:
     return value if isinstance(value, int) and not isinstance(value, bool) else 0
 
 
+def at_most_of(column: ColumnDef) -> int:
+    """The column's `at_most`, 0 when it has none."""
+    note = column.note if isinstance(column.note, dict) else {}
+    value = note.get("at_most")
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
 def column_scale(column: ColumnDef) -> int:
     """The decimal places a column's values have: 0 for an integer, the declared scale, else 2."""
     if kinds.is_integer_type(column.data_type):
@@ -164,7 +183,8 @@ def _aggregate_columns(spec: Mapping) -> tuple[Optional[str], list]:
 # Checking
 # ---------------------------------------------------------
 def problems(tables: Mapping[str, TableDef], refs: list[dict]) -> list[Problem]:
-    """Everything wrong with the model's `rollup` and `at_least` hints, errors and warnings."""
+    """Everything wrong with the model's `rollup`, `at_least` and `at_most` hints, errors and
+    warnings."""
     fk_refs, _ = classify_refs(dict(tables), refs)
     fk_lookup = build_fk_lookup(fk_refs)
     found: list[Problem] = []
@@ -172,8 +192,13 @@ def problems(tables: Mapping[str, TableDef], refs: list[dict]) -> list[Problem]:
     for table_name, table_def in tables.items():
         for column in table_def.columns:
             note = column.note if isinstance(column.note, dict) else {}
-            if "at_least" in note:
-                found.extend(_at_least_problems(table_name, table_def, column, fk_lookup))
+            counted = [
+                problem
+                for hint in ("at_least", "at_most")
+                if hint in note
+                for problem in _count_problems(table_name, table_def, column, fk_lookup, hint)
+            ]
+            found.extend(counted or _range_problems(table_name, column))
             if "rollup" in note:
                 rollup, issues = _rollup_problems(tables, fk_refs, fk_lookup, table_name, column)
                 found.extend(issues)
@@ -185,30 +210,48 @@ def problems(tables: Mapping[str, TableDef], refs: list[dict]) -> list[Problem]:
     return found
 
 
-def _at_least_problems(
+def _count_problems(
     table_name: str,
     table_def: TableDef,
     column: ColumnDef,
     fk_lookup: Mapping[tuple[str, str], tuple[str, str]],
+    hint: str,
 ) -> list[Problem]:
-    value = (column.note or {})["at_least"]
+    """What is wrong with a foreign key's `at_least` or `at_most` (`hint`) by itself."""
+    value = (column.note or {})[hint]
 
     def problem(message: str) -> list[Problem]:
-        return [Problem(table_name, column.name, "at_least", message)]
+        return [Problem(table_name, column.name, hint, message)]
 
     if (table_name, column.name) not in fk_lookup:
-        return problem('"at_least" only applies to foreign-key columns.')
+        return problem(f'"{hint}" only applies to foreign-key columns.')
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-        return problem(f'"at_least" must be a whole number of 1 or more (got {value!r}).')
+        return problem(f'"{hint}" must be a whole number of 1 or more (got {value!r}).')
     if (
         "unique" in column.settings
         or "pk" in column.settings
         or _single_unique_key(table_def, column.name)
     ):
         return problem(
-            '"at_least" cannot sit on a unique foreign key: a one-to-one takes each parent at '
+            f'"{hint}" cannot sit on a unique foreign key: a one-to-one takes each parent at '
             "most once, so no parent can be given several rows."
         )
+    return []
+
+
+def _range_problems(table_name: str, column: ColumnDef) -> list[Problem]:
+    """`at_least` above `at_most` on the same foreign key leaves no count a parent can have."""
+    at_least, at_most = at_least_of(column), at_most_of(column)
+    if at_least and at_most and at_least > at_most:
+        return [
+            Problem(
+                table_name,
+                column.name,
+                "at_most",
+                f'"at_most" {at_most} is below "at_least" {at_least}: no parent can have at '
+                "least that many rows and at most this many.",
+            )
+        ]
     return []
 
 
@@ -677,11 +720,15 @@ def cover_parents(
     fk_series: pd.Series,
     row_count: int,
     at_least: int,
+    *,
+    capped: bool = False,
 ) -> tuple[list, Coverage]:
     """`row_count` foreign-key values, every parent at least `at_least` times (as rows allow).
 
-    `values_for(n)` draws `n` values the way the column draws without the hint.
-    All draws come from the `random` stream the caller has seeded.
+    `values_for(n)` draws `n` values the way the column draws without the hint;
+    with `capped` (the column has `at_most` too), `values_for(n, held)` draws them
+    counting `held`, the rows the coverage gave each parent. All draws come from the
+    `random` stream the caller has seeded.
     """
     parents = list(dict.fromkeys(value for value in fk_series.tolist() if not _missing(value)))
     needed = at_least * len(parents)
@@ -689,7 +736,11 @@ def cover_parents(
     order = list(parents)
     random.shuffle(order)
     coverage = [parent for parent in order for _ in range(at_least)][:cover]
-    rest = list(values_for(row_count - cover))
+    rest = list(
+        values_for(row_count - cover, Counter(coverage))
+        if capped
+        else values_for(row_count - cover)
+    )
     random.shuffle(coverage)
     positions = sorted(random.sample(range(row_count), cover))
     values: list = [None] * row_count

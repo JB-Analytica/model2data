@@ -23,7 +23,7 @@ pages:
         place: {x: 4, y: 1, w: 4, h: 2}
       - id: points-per-game
         kind: kpi
-        title: Points per game
+        title: Goals per game
         metric: points_per_game
         place: {x: 8, y: 1, w: 4, h: 2}
       - id: games-by-month

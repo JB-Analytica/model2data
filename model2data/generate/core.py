@@ -7,6 +7,7 @@ from collections.abc import Callable, Mapping
 from datetime import datetime
 from typing import Any, Optional
 
+import numpy as np
 import pandas as pd
 from faker import Faker
 
@@ -33,6 +34,7 @@ from model2data.generate.rollups import (
     Coverage,
     apply_rollups,
     at_least_of,
+    at_most_of,
     cover_parents,
     has_rollups,
     protected_rows,
@@ -379,7 +381,7 @@ def generate_data_from_dbml(
         # it points at: before the row's own later dates are ordered, so they
         # follow it wherever it ends up (see generate.parents).
         table_rules = rules.get(table_name, [])
-        keep = protected_rows(coverage, row_count) if coverage else None
+        keep = _kept_rows(table_def, coverage, row_count)
         floors = {
             rule.column: follow_parents(
                 df,
@@ -417,7 +419,7 @@ def generate_data_from_dbml(
             as_of=as_of,
             time_profile=profile,
             skew=skew,
-            keep=protected_rows(coverage, row_count) if coverage else None,
+            keep=_kept_rows(table_def, coverage, row_count),
         )
 
         # -----------------------------------------------------
@@ -551,8 +553,8 @@ def generate_data_from_dbml(
 def _drawer(**arguments):
     """`generate_column_values` with every argument but the row count bound."""
 
-    def draw(row_count: int) -> list:
-        return generate_column_values(row_count=row_count, **arguments)
+    def draw(row_count: int, **more) -> list:
+        return generate_column_values(row_count=row_count, **arguments, **more)
 
     return draw
 
@@ -566,15 +568,29 @@ def _covered(
     row_count: int,
     coverage: dict[str, Coverage],
 ) -> list:
-    """The column's values: `draw(row_count)`, or with its `at_least` parents covered.
+    """The column's values: `draw(row_count)`, or with its `at_least` parents covered and
+    no parent past its `at_most`.
 
-    A column without `at_least`, or with no parent values to cover, draws
-    exactly as it always has. A shortfall is reported (`get_uncovered_parents`).
+    A column without either, or with no parent values to cover, draws exactly as it
+    always has. A shortfall is reported (`get_uncovered_parents`); more rows than
+    `at_most` lets the parents hold is an error.
     """
     at_least = at_least_of(column)
-    if not at_least or fk_series is None or not bool(fk_series.notna().any()):
+    at_most = at_most_of(column)
+    if not (at_least or at_most) or fk_series is None or not bool(fk_series.notna().any()):
         return draw(row_count)
-    values, cover = cover_parents(draw, fk_series, row_count, at_least)
+    if not at_least:
+        return draw(row_count, at_most=at_most)
+    if at_most:
+        values, cover = cover_parents(
+            lambda count, held: draw(count, at_most=at_most, held=held),
+            fk_series,
+            row_count,
+            at_least,
+            capped=True,
+        )
+    else:
+        values, cover = cover_parents(draw, fk_series, row_count, at_least)
     coverage[column.name] = cover
     if cover.covered < cover.parents:
         assert fk_target is not None
@@ -583,6 +599,19 @@ def _covered(
             f"{fk_target[0]}; at_least {at_least} on {column.name} needs {cover.needed}"
         )
     return values
+
+
+def _kept_rows(
+    table_def: TableDef, coverage: Mapping[str, Coverage], row_count: int
+) -> Optional[dict[str, np.ndarray]]:
+    """Per foreign-key column, the rows that keep their parent whatever comes after the
+    first pass: the rows an `at_least` gave a parent, and every row of a column with
+    `at_most`, whose counts another parent could break. None when there are none."""
+    kept = protected_rows(coverage, row_count) if coverage else {}
+    for column in table_def.columns:
+        if at_most_of(column):
+            kept[column.name] = np.ones(row_count, dtype=bool)
+    return kept or None
 
 
 def _mirror_attributes(

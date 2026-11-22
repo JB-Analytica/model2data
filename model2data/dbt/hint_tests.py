@@ -18,6 +18,7 @@ What becomes a test, and what does not:
 | `generate.when`           | `model2data_when`                      | none      |
 | `generate.days`           | `model2data_weekdays`                  | none      |
 | `generate.times`          | `model2data_times_of_day`              | none      |
+| `generate.at_most`        | `model2data_max_rows_per_value`        | none      |
 | table `grain`             | `model2data_unique_combination`        | none      |
 
 An `after` listing several columns writes one test for each. A parent's column
@@ -34,13 +35,16 @@ Enum columns keep the `accepted_values` test `generate_dbt_yml` always wrote.
 (`business_hours`, `growth`, `seasonality`) describe a statistical shape, not a
 constraint a row can break, so they produce no test. `days` and `times` are
 constraints (a value falls on a listed weekday, at a listed time): their tests
-check that, and not their weights.
+check that, and not their weights. `at_most` is a constraint too (no parent value
+holds more rows than it), and its test counts the rows per foreign-key value. `at_least`
+writes none: a table with fewer rows than it needs falls short by design, and says so.
 
 The generic tests live in `macros/model2data_hint_tests.sql` of the generated
 project (see `write_hint_macros`), and the `when` ones in
 `macros/model2data_when_tests.sql` and the parent one in
 `macros/model2data_parent_tests.sql`, and the `days` and `times` ones in
-`macros/model2data_clock_tests.sql`, each written only for a model that has
+`macros/model2data_clock_tests.sql`, and the `at_most` one in
+`macros/model2data_children_tests.sql`, each written only for a model that has
 one, so a project without either is what it was: plain SQL, no dbt package.
 """
 
@@ -72,6 +76,8 @@ PARENT_MACROS_FILE = "model2data_parent_tests.sql"
 _PARENT_MACROS_SOURCE = Path(__file__).parent / "templates" / "hint_macros" / PARENT_MACROS_FILE
 CLOCK_MACROS_FILE = "model2data_clock_tests.sql"
 _CLOCK_MACROS_SOURCE = Path(__file__).parent / "templates" / "hint_macros" / CLOCK_MACROS_FILE
+CHILDREN_MACROS_FILE = "model2data_children_tests.sql"
+_CHILDREN_MACROS_SOURCE = Path(__file__).parent / "templates" / "hint_macros" / CHILDREN_MACROS_FILE
 
 
 @dataclass(frozen=True)
@@ -82,7 +88,7 @@ class HintTest:
     `column` is None for a table-level test (grain). `test` is the generic
     test's name, `arguments` its parameters as dbt's `arguments:` block, and
     `hint` the hint it comes from (`min`, `max`, `after`, `null_rate`,
-    `distinct`, `when`, `grain`). `min` and `max` of one column share one test.
+    `distinct`, `when`, `days`, `times`, `at_most`, `grain`). `min` and `max` of one column share one test.
     `parent` is the `(table, column)` a test looks rows up in: the parent's key
     for `model2data_not_before_parent`, None for every other test.
     """
@@ -232,6 +238,18 @@ def _column_tests(
             )
         )
 
+    at_most = note.get("at_most")
+    if isinstance(at_most, int) and not isinstance(at_most, bool) and at_most > 0:
+        tests.append(
+            HintTest(
+                table,
+                column.name,
+                "model2data_max_rows_per_value",
+                {"max_count": at_most},
+                "at_most",
+            )
+        )
+
     tests.extend(_clock_tests(table, column, note))
     return tests
 
@@ -308,7 +326,12 @@ def _when_conditions(when: Any, kinds_of: dict[str, ColumnDef]) -> Optional[dict
 
 
 def write_hint_macros(
-    dest: Path, *, when: bool = False, parents: bool = False, clock: bool = False
+    dest: Path,
+    *,
+    when: bool = False,
+    parents: bool = False,
+    clock: bool = False,
+    children: bool = False,
 ) -> Path:
     """Write the generic tests into `dest/macros/`, and return the file's path.
 
@@ -317,7 +340,8 @@ def write_hint_macros(
     file of the `when` tests is written beside it (`WHEN_MACROS_FILE`), which a
     project holding a `model2data_when` test needs too; with `parents`, the
     file of `model2data_not_before_parent` (`PARENT_MACROS_FILE`); with `clock`, the file of
-    `model2data_weekdays` and `model2data_times_of_day` (`CLOCK_MACROS_FILE`).
+    `model2data_weekdays` and `model2data_times_of_day` (`CLOCK_MACROS_FILE`); with
+    `children`, the file of `model2data_max_rows_per_value` (`CHILDREN_MACROS_FILE`).
     """
     macros = dest / "macros"
     macros.mkdir(parents=True, exist_ok=True)
@@ -329,4 +353,6 @@ def write_hint_macros(
         (macros / PARENT_MACROS_FILE).write_text(_PARENT_MACROS_SOURCE.read_text())
     if clock:
         (macros / CLOCK_MACROS_FILE).write_text(_CLOCK_MACROS_SOURCE.read_text())
+    if children:
+        (macros / CHILDREN_MACROS_FILE).write_text(_CHILDREN_MACROS_SOURCE.read_text())
     return target
