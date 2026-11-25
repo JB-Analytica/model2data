@@ -7,10 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-The rows are what 1.25.1 writes for the same model, seed and `--as-of`. In a generated dbt
+The rows are what 1.25.1 writes for the same model, seed and `--as-of`, but for a date with a
+`min` of its own that follows another date of its row: see the first fix. In a generated dbt
 project, a column named by a reserved word is now quoted, so the tests on it have another name.
 
 ### Fixed
+- **A date's own `min` where it follows another date of its row.** `canceled_at: {min: 2026-09-01}`
+  beside a `started_at` of the year before was placed a few days after `started_at`, outside its
+  window, whether the order came from `after`, `when` or the names alone. A date whose window
+  opens after everything it follows now keeps to that window.
 - **`after` naming a parent's date where dbt renames the parent's table.** With
   `after: Users.created_at` or `after: raw.users.created_at`, whose tables are the seeds `users`
   and `raw_users`, `generate` stopped with an AssertionError once the rows were drawn (with or

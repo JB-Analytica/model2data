@@ -308,6 +308,9 @@ def _moment(
 ) -> Any:
     """A date or timestamp for one row of a column, between what it follows and what follows it."""
     lower = order.after(name, row)
+    opens = windows.bounds(order.by_name[name].note, kind)[0]
+    if lower is not None and opens is not None and lower < opens:
+        lower = None  # what it follows lies before its window: a moment of the window will do
     upper = order.before(name, row)
     upper = cap if upper is None else min(upper, cap)
     if floor is not None:
