@@ -255,7 +255,7 @@ def generate_data_from_dbml(
     ordered_tables, deferred_edges = _table_order(tables, fk_refs)
     settlers: dict[str, Callable[[pd.DataFrame], None]] = {}
     # The columns whose `after` names a parent's column (see generate.parents).
-    rules = parent_rules(tables, fk_refs, ordered_tables)
+    rules = parent_rules(tables, fk_refs, ordered_tables, attribute_refs)
     generated: dict[str, pd.DataFrame] = {}
 
     for table_name in ordered_tables:
@@ -398,7 +398,14 @@ def generate_data_from_dbml(
         # composite-key retry regenerates a temporal column's value into a
         # frame that already respects created/updated/closed ordering, rather
         # than one where only the untouched columns do.
-        df = order_row_times(df, table_def, as_of=as_of, time_profile=profile, floors=floors)
+        df = order_row_times(
+            df,
+            table_def,
+            as_of=as_of,
+            time_profile=profile,
+            floors=floors,
+            copies={rule.column: rule.copies for rule in table_rules},
+        )
         df = _resolve_self_referencing_fks(
             df,
             table_def,
@@ -664,9 +671,9 @@ def parent_rules_for(tables: dict[str, TableDef], refs: list[dict]) -> dict[str,
     Each with the foreign keys it follows (see `generate.parents`). What the
     dbt export tests, so it is worked out exactly as generation works it out.
     """
-    fk_refs, _ = classify_refs(tables, refs)
+    fk_refs, attribute_refs = classify_refs(tables, refs)
     order, _broken, _leftover = _plan_table_order(tables, fk_refs)
-    return parent_rules(tables, fk_refs, order)
+    return parent_rules(tables, fk_refs, order, attribute_refs)
 
 
 # ---------------------------------------------------------
@@ -708,7 +715,13 @@ def _hold_parent_rules(
         moved.update(rows)
     if moved:
         df = order_row_times(
-            df, table_def, as_of=as_of, time_profile=profile, rows=sorted(moved), floors=floors
+            df,
+            table_def,
+            as_of=as_of,
+            time_profile=profile,
+            rows=sorted(moved),
+            floors=floors,
+            copies={rule.column: rule.copies for rule in rules},
         )
     return df
 

@@ -261,7 +261,7 @@ def iter_days(
         anchor=anchor,
         seed=seed,
         table_seeds=seeds,
-        rules=parent_rules(tables, fk_refs, order),
+        rules=parent_rules(tables, fk_refs, order, attribute_refs),
     )
     state = dict(frames)
     for day in range(1, days + 1):

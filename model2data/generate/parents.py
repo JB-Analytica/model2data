@@ -14,8 +14,14 @@ may mix in columns of the row itself (`after: [placed_at, customers.created_at]`
   there are several. A self-reference is not a parent: `after` names a column
   of the row itself without a table. A null foreign key constrains nothing on
   its row.
+  A reference onto a plain column beside that foreign key is a copied value
+  (`payments.amount` references `invoices.amount`), not another way to the parent.
 - A date compared with a timestamp compares by day: a date is not before the
   timestamp's day, and a timestamp is not before the date's midnight.
+
+An `after` naming a column of the row that is itself such a copy (`after:
+invoice_issued_at`, which references `invoices.issued_at`) is the same rule: the copy is
+filled in once the row's parents are final, so the parent's own date is what is followed.
 
 How a row is made to hold (`follow_parents`), keeping the child's own shape:
 
@@ -46,11 +52,11 @@ from __future__ import annotations
 
 import random
 from bisect import bisect_right
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime, time, timedelta
 from itertools import accumulate
-from typing import Optional
+from typing import Optional, Union
 
 import numpy as np
 import pandas as pd
@@ -59,7 +65,7 @@ from model2data.generate import kinds, windows
 from model2data.generate.clock import Calendar
 from model2data.generate.faker import _DATE_WINDOW_YEARS, _column_time_profile, _years_before
 from model2data.generate.options import UNIFORM, TimeProfile
-from model2data.generate.relationships import _key_kind
+from model2data.generate.relationships import _key_kind, copied_columns
 from model2data.generate.timeline import (
     _TIMESTAMP_WINDOW_DAYS,
     HOUR_WEIGHTS,
@@ -70,6 +76,7 @@ from model2data.generate.timeline import (
     column_business_hours,
     column_clock,
     parent_after,
+    same_row_after,
 )
 from model2data.parse.dbml import ColumnDef, TableDef
 
@@ -85,7 +92,8 @@ class ParentLink:
     (`"date"` or `"timestamp"`). `unique` is true when the foreign key takes
     each parent at most once (a one-to-one), so a row cannot simply take
     another parent. `by_day` is true when the two
-    columns compare by day (one is a date, the other a timestamp).
+    columns compare by day (one is a date, the other a timestamp). `copied` is the
+    row's own column the `after` named, when that column is a copy of `parent_column`.
     """
 
     fk: str
@@ -95,6 +103,7 @@ class ParentLink:
     parent_kind: str
     unique: bool
     by_day: bool
+    copied: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -106,16 +115,23 @@ class ParentRule:
     kind: str
     links: tuple[ParentLink, ...]
 
+    @property
+    def copies(self) -> set[str]:
+        """The row's own columns `after` names that are followed at the parent they copy."""
+        return {link.copied for link in self.links if link.copied is not None}
+
 
 def parent_link(
     tables: Mapping[str, TableDef],
     fk_refs: list[dict],
     table_name: str,
     entry: tuple[str, str],
+    child: str,
+    attribute_refs: Sequence[dict],
 ) -> tuple[Optional[ParentLink], str]:
     """The foreign key `table_name` reaches `entry`'s parent column through, or why none.
 
-    `entry` is `(parent table, parent column)` from a cross-table `after`.
+    `entry` is `(parent table, parent column)` from the cross-table `after` of `child`.
     Returns the link and an empty reason, or None and the reason, worded to
     follow `names <table>.<column>, `.
     """
@@ -140,6 +156,12 @@ def parent_link(
             f"and {table_name} has no foreign key to {parent}: `after` reaches another table "
             "only through a foreign key of the row"
         )
+    copied = copied_columns(fk_refs, attribute_refs, table_name).get(child)
+    if copied is not None and copied[0]["target_table"] == parent:
+        return None, (
+            f"and {child} is itself copied from the {parent} row: its value is that row's, "
+            "so no `after` places it"
+        )
     if len(refs) > 1:
         names = ", ".join(r["source_column"] for r in refs)
         return None, (
@@ -152,35 +174,74 @@ def parent_link(
             f"and {ref['source_column']} references {parent}.{ref['target_column']}, which is "
             f"not a key: `after` needs the one {parent} row the foreign key points at"
         )
-    fk_column = next(c for c in tables[table_name].columns if c.name == ref["source_column"])
-    link = ParentLink(
+    return _link(tables, ref, column, parent_kind), ""
+
+
+def _link(
+    tables: Mapping[str, TableDef],
+    fk_ref: dict,
+    parent_column: str,
+    parent_kind: str,
+    copied: Optional[str] = None,
+) -> ParentLink:
+    """The link to `parent_column` of the row `fk_ref` points at (`by_day` set by the caller)."""
+    child = tables[fk_ref["source_table"]]
+    fk_column = next(c for c in child.columns if c.name == fk_ref["source_column"])
+    return ParentLink(
         fk=fk_column.name,
-        parent_table=parent,
-        parent_key=ref["target_column"],
-        parent_column=column,
+        parent_table=fk_ref["target_table"],
+        parent_key=fk_ref["target_column"],
+        parent_column=parent_column,
         parent_kind=parent_kind,
         unique="pk" in fk_column.settings or "unique" in fk_column.settings,
         by_day=False,
+        copied=copied,
     )
-    return link, ""
+
+
+def _copied_link(
+    tables: Mapping[str, TableDef], copies: Mapping[str, tuple[dict, dict]], entry: str
+) -> Optional[ParentLink]:
+    """The parent's date that `entry`, a column of the row, is a copy of; None if that is no date.
+
+    A copy within the table itself is not filled in from the row it points at, so there is
+    nothing to follow there.
+    """
+    ref, fk_ref = copies[entry]
+    if ref["target_table"] == ref["source_table"]:
+        return None
+    parent = tables[ref["target_table"]]
+    target = next((c for c in parent.columns if c.name == ref["target_column"]), None)
+    kind = None if target is None else kinds.temporal_kind(target.data_type)
+    if target is None or target.enum_values or kind is None:
+        return None
+    return _link(tables, fk_ref, target.name, kind, copied=entry)
 
 
 def parent_rules(
-    tables: Mapping[str, TableDef], fk_refs: list[dict], order: list[str]
+    tables: Mapping[str, TableDef],
+    fk_refs: list[dict],
+    order: list[str],
+    attribute_refs: Sequence[dict] = (),
 ) -> dict[str, list[ParentRule]]:
-    """The cross-table `after` of every column that has one, by table key.
+    """The parents' dates every column's `after` follows, by table key.
 
-    `fk_refs` are the foreign keys as `generate.relationships.classify_refs`
-    finds them, `order` the order tables are generated in; the hints are the
-    ones `generate.hints.validate_hints` accepted. Raises ValueError for a
-    parent generated after the table (their foreign keys form a cycle, broken
-    at the very key followed).
+    A cross-table `after`, or one naming a column of the row that copies a parent's date
+    (`attribute_refs`). `fk_refs` are the foreign keys as
+    `generate.relationships.classify_refs` finds them, `order` the order tables are
+    generated in; the hints are the ones `generate.hints.validate_hints` accepted. Raises
+    ValueError for a parent generated after the table (their foreign keys form a cycle,
+    broken at the very key followed).
     """
     position = {name: index for index, name in enumerate(order)}
     rules: dict[str, list[ParentRule]] = {}
     for table_name, table_def in tables.items():
+        copies = copied_columns(fk_refs, attribute_refs, table_name)
         for column in table_def.columns:
-            entries = parent_after(column.note)
+            entries: list[Union[str, tuple[str, str]]] = [
+                *parent_after(column.note),
+                *(name for name in same_row_after(column.note) if name in copies),
+            ]
             if not entries:
                 continue
             # `validate_hints` has refused an `after` on any other column, and
@@ -190,9 +251,17 @@ def parent_rules(
             label = f"{table_name}.{column.name}"
             links: list[ParentLink] = []
             for entry in entries:
-                link, _ = parent_link(tables, fk_refs, table_name, entry)
-                assert link is not None
-                named = f"{entry[0]}.{entry[1]}"
+                if isinstance(entry, str):
+                    link = _copied_link(tables, copies, entry)
+                    if link is None:
+                        continue
+                    named = f"{entry}, a copy of {link.parent_table}.{link.parent_column}"
+                else:
+                    link, _ = parent_link(
+                        tables, fk_refs, table_name, entry, column.name, attribute_refs
+                    )
+                    assert link is not None
+                    named = f"{entry[0]}.{entry[1]}"
                 if position[link.parent_table] > position[table_name]:
                     raise ValueError(
                         f'{label}: "after" names {named}, and {link.parent_table} is generated '
@@ -202,9 +271,10 @@ def parent_rules(
                 link = replace(link, by_day=link.parent_kind != kind)
                 if link not in links:
                     links.append(link)
-            rules.setdefault(table_name, []).append(
-                ParentRule(table_name, column.name, kind, tuple(links))
-            )
+            if links:
+                rules.setdefault(table_name, []).append(
+                    ParentRule(table_name, column.name, kind, tuple(links))
+                )
     return rules
 
 

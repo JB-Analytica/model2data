@@ -26,6 +26,10 @@ says it created the project. Fix the **model file**, never the generated project
   `model2data: 0.9.0`, and validate again. If the child may truly predate the parent, leave it.
   An error `reaches users through more than one foreign key (sender_id, receiver_id)` on an
   `after`: choosing between two foreign keys to one parent is not built yet; drop that `after`.
+  A column copied from the parent (`amount: {references: invoices.amount}` beside `invoice_id`)
+  does not count as one. An error `is itself copied from the invoices row`: drop that `after`.
+- An error `cannot sit on a column that is unique` (or `in the primary key`) on a `derive`: a key
+  is drawn, whatever its type. Derive a column that is no key, or drop `pk` / `unique`.
 - An error on a `rollup`: it names the fix. `has 2 foreign keys onto ...`: add `via:` with the
   child's column to group by. `cannot also have "min", ...`: drop the other hint, the rollup
   decides the value. `names ..., a rollup`: a `when`, `after` or reference reads the rolled-up

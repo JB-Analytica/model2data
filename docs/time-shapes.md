@@ -42,7 +42,10 @@ customers.created_at]`). The table must reach each parent through exactly one on
 foreign key onto the parent's primary key or a unique column: a table with `sender_id` and
 `receiver_id` both onto `users` cannot say which user it means, and validation says so, naming
 both. Choosing one of several foreign keys to the same parent is not built yet: until it is, a
-table like that cannot use a cross-table `after` on that parent, and keeps its own dates. A date
+table like that cannot use a cross-table `after` on that parent, and keeps its own dates. A column
+that copies a value from the parent (`amount` references `invoices.amount` beside `invoice_id`
+references `invoices.id`) is not a second foreign key, and `after` on a copied date
+(`invoice_issued_at`) follows the parent's own. A date
 compared with a timestamp compares by day. A null foreign key constrains nothing,
 and a self-reference is not a parent: a column of the same row is named without its table.
 

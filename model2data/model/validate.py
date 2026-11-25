@@ -554,8 +554,11 @@ class _Checks:
                 continue
             # A rollup is computed from the child rows once every table is
             # generated: the row does not come into being with it.
-            if kinds.is_temporal_type(type_text) and "rollup" not in _mapping(
-                column.get("generate")
+            # Nor with a date copied from a parent's row.
+            if (
+                kinds.is_temporal_type(type_text)
+                and "rollup" not in _mapping(column.get("generate"))
+                and self._copied_from(key, name) is None
             ):
                 after = _mapping(column.get("generate")).get("after")
                 entries = after if isinstance(after, list) else [after]
@@ -1578,7 +1581,9 @@ class _Checks:
         applies = hint_kinds()
         gen_path = [*path, "generate"]
         for hint in generate:
-            if hint not in applies or any(kind_of[kind] for kind in applies[hint]):
+            # `derive` sits on an enum or a foreign key, and on neither when it is a key.
+            keyed = hint == "derive" and (in_pk or in_key or unique)
+            if hint not in applies or (not keyed and any(kind_of[k] for k in applies[hint])):
                 continue
             self.add(
                 [*gen_path, hint],
@@ -2281,7 +2286,7 @@ class _Checks:
         for position, entry in enumerate(entries):
             at = [*path, position] if isinstance(after, list) else path
             if "." in entry:
-                problem = self._parent_after_issue(key, entry)
+                problem = self._parent_after_issue(key, name, entry)
                 if problem:
                     self.add(at, f"names {entry}, {problem}")
                 else:
@@ -2325,8 +2330,34 @@ class _Checks:
         # A `foreign_keys` entry has two columns or more: it identifies no row by one.
         return found
 
-    def _parent_after_issue(self, key: str, entry: str) -> Optional[str]:
-        """Why `entry`, a `<table>.<column>` in an `after` of `key`, names no parent's date."""
+    def row_references(self, key: str, parent: str) -> list[tuple[str, str]]:
+        """The `references` of `key` that can say which `parent` row a row belongs to.
+
+        As `generate.relationships.classify_refs` reads them: those onto the parent's primary
+        key (or a column named `id`), else those onto a unique column, else those onto a plain
+        one. Any other reference beside them is a value copied from the row's own parent.
+        """
+        found = self.parent_keys(key).get(parent, [])
+        primary = self.primary_key(parent)
+        onto_primary = [p for p in found if p[1].lower() == "id" or primary == [p[1]]]
+        onto_unique = [p for p in found if {p[1]} in self.key_sets(parent)]
+        return (
+            onto_primary
+            or onto_unique
+            or [p for p in found if not self._mirrored(key, p[0], parent)]
+        )
+
+    def _copied_from(self, key: str, name: str) -> Optional[str]:
+        """The parent whose row `key.name` is a copied value of, None if it is none."""
+        for parent, found in self.parent_keys(key).items():
+            for pair in found:
+                if pair[0] == name and pair not in self.row_references(key, parent):
+                    return parent
+        return None
+
+    def _parent_after_issue(self, key: str, name: str, entry: str) -> Optional[str]:
+        """Why `entry`, a `<table>.<column>` in the `after` of `key.name`, names no parent's
+        date."""
         parent, column = split_column_path(entry)
         if parent not in self.tables:
             return f"and there is no table {_show(parent)}"
@@ -2340,7 +2371,7 @@ class _Checks:
             return f"and {parent} has no column {_show(column)}"
         if not self._is_temporal(target):
             return "which is not a date or timestamp column"
-        keys = self.parent_keys(key).get(parent, [])
+        keys = self.row_references(key, parent)
         if not keys:
             composite = any(
                 _mapping(fk).get("references") == parent
@@ -2354,6 +2385,11 @@ class _Checks:
             return (
                 f"and {key} has no foreign key to {parent}: `after` reaches another table "
                 "only through a foreign key of the row"
+            )
+        if self._copied_from(key, name) == parent:
+            return (
+                f"and {name} is itself copied from the {parent} row: its value is that row's, "
+                "so no `after` places it"
             )
         if len(keys) > 1:
             names = ", ".join(child for child, _ in keys)
@@ -2418,8 +2454,11 @@ class _Checks:
             child = self._creation_column(key)
             if child is None:
                 continue
-            for parent, keys in self.parent_keys(key).items():
-                if parent == key or parent in named or parent not in self.tables or len(keys) != 1:
+            for parent in self.parent_keys(key):
+                if parent == key or parent in named or parent not in self.tables:
+                    continue
+                keys = self.row_references(key, parent)
+                if len(keys) != 1:
                     continue
                 ((fk, parent_column),) = keys
                 if {parent_column} not in self.key_sets(parent):

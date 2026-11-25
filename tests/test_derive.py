@@ -778,3 +778,38 @@ def test_a_derived_foreign_key_on_a_broken_cycle_edge_copies_the_final_key():
     assert len(a) == 6 and a["b_id"].notna().any()
     # The copy is of the key as finally drawn, not of the empty one before its parent existed.
     assert a["b2_id"].equals(a["b_id"])
+
+
+@pytest.mark.parametrize(
+    ("own", "why"),
+    [
+        ({"type": "kind", "pk": True}, "in the primary key"),
+        ({"type": "kind", "unique": True}, "unique"),
+        ({"type": "int", "unique": True, "references": "parents.id"}, "unique"),
+    ],
+)
+def test_an_enum_or_a_foreign_key_that_is_a_key_cannot_be_derived(own, why):
+    document = {
+        "model2data": "0.9.0",
+        "enums": {"kind": ["a", "b"]},
+        "tables": {
+            "parents": {"columns": {"id": {"type": "int", "pk": True}}},
+            "things": {
+                "columns": {
+                    "other_id": {"type": "int", "references": "parents.id"},
+                    "word": "kind",
+                    "code": {
+                        **own,
+                        "generate": {
+                            "derive": {"copy": "other_id" if "references" in own else "word"}
+                        },
+                    },
+                }
+            },
+        },
+    }
+    (issue,) = [i for i in check(document) if i.severity == "error"]
+    assert str(issue) == (
+        f"tables.things.columns.code.generate.derive: cannot sit on a column that is {why}: "
+        "a key holds the values it is drawn"
+    )
