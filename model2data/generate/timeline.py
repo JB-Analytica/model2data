@@ -38,7 +38,7 @@ from pandas import NaT
 from model2data.generate.clock import HOUR_WEIGHTS, Calendar, Clock, clip, clock_of, draw_time
 from model2data.generate.kinds import temporal_kind
 from model2data.generate.options import TimeProfile
-from model2data.generate.windows import has_window, window
+from model2data.generate.windows import bounds, has_window, window
 from model2data.parse.dbml import ColumnDef, TableDef
 
 # Mirrors generate.faker's `AsOf`/`_anchor_date`. Not imported from there: this
@@ -745,9 +745,11 @@ def order_row_times(
         # after `as_of`; one without a window of its own, following a date after `as_of`,
         # lands within `_FOLLOW_AHEAD_DAYS` of it (only a windowed column is ever dated so).
         upper = window(own_note, kind, anchor)[1] if has_window(own_note) else cap
+        opens = bounds(own_note, kind)[0]  # its own `min`
 
         for idx in df.index if rows is None else rows:
-            if _parse_value(df.at[idx, column_name], kind) is None:
+            drawn = _parse_value(df.at[idx, column_name], kind)
+            if drawn is None:
                 # Already null for this row (or holds a non-temporal default):
                 # nothing to reorder, and forcing a value in would undo the
                 # nullability pass that put it there.
@@ -764,6 +766,9 @@ def order_row_times(
             if not earlier:
                 continue
             latest_required = max(earlier)
+            if opens is not None and latest_required < opens <= drawn:
+                # What it follows lies before its window, so where it was drawn in it is after that.
+                continue
 
             ceiling = upper
             if ceiling == cap and latest_required > cap:

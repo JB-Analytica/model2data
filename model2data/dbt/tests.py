@@ -176,7 +176,8 @@ def _column_entries(
     if "unique" in settings or "pk" in settings:
         tests.append("unique")
     if getattr(col, "enum_values", None):
-        tests.append(_generic_test("accepted_values", {"values": list(col.enum_values)}))
+        values = [_accepted_value(value) for value in col.enum_values]
+        tests.append(_generic_test("accepted_values", {"values": values}))
 
     for fk in fk_map.get((table.name, col.name), []):
         tests.append(
@@ -291,6 +292,12 @@ def dbt_tests(
             for entry in _column_entries(table, col, fk_map, hinted, hint_tests, rolled):
                 test_type, body = _entry_parts(entry)
                 arguments = dict(body.get("arguments") or {})
+                name = generic_test_name(
+                    test_type, stg_name, {"column_name": column_ref, **arguments}
+                )
+                if test_type == "accepted_values":
+                    # The members themselves, not as the SQL spells them.
+                    arguments["values"] = list(col.enum_values)
                 parent = None
                 if test_type == "relationships":
                     ref = next(parents)
@@ -302,9 +309,7 @@ def dbt_tests(
                     parent = (rollup.child, rollup.fk)
                 found.append(
                     DbtTest(
-                        name=generic_test_name(
-                            test_type, stg_name, {"column_name": column_ref, **arguments}
-                        ),
+                        name=name,
                         table=table.name,
                         column=col.name,
                         type=test_type,
@@ -478,6 +483,25 @@ def _quote_sql_identifier(name: str) -> str:
 
 _BARE_SQL_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
+# The words DuckDB or Postgres does not read as a column's name unless quoted: their reserved
+# keywords, and the ones each keeps for a type or a function (`by`, `order`, `left`, `user`,
+# which Postgres reads as the role). A keyword both take as a column (`name`, `date`) is not here.
+_RESERVED_WORDS = frozenset(
+    """
+    all analyse analyze and anti any array as asc asof asymmetric at authorization binary
+    both by case cast check collate collation column concurrently constraint create cross
+    current_catalog current_date current_role current_schema current_time
+    current_timestamp current_user default deferrable desc describe distinct do else end
+    except false fetch for foreign freeze from full glob grant group having ilike in
+    initially inner intersect into is isnull join lambda lateral leading left like limit
+    localtime localtimestamp natural not notnull null offset on only or order outer
+    overlaps pivot pivot_longer pivot_wider placing positional primary qualify references
+    returning right select semi session_user show similar some summarize symmetric
+    system_user table tablesample then to trailing true union unique unpack unpivot user
+    using variadic verbose when where window with
+    """.split()
+)
+
 
 def _dbt_column_ref(name: str) -> str:
     """Return a column identifier the way it should appear in generated dbt
@@ -490,9 +514,16 @@ def _dbt_column_ref(name: str) -> str:
     DBML identifier that needed quoting to contain a space or other special
     character (`"display name"`) therefore breaks the compiled SQL unless
     the YAML value is pre-quoted here -- dbt's own documented workaround for
-    exactly this case.
+    exactly this case. A reserved word (`by`, `order`) needs it as much.
     """
-    return name if _BARE_SQL_IDENTIFIER_RE.match(name) else _quote_sql_identifier(name)
+    if _BARE_SQL_IDENTIFIER_RE.match(name) and name.lower() not in _RESERVED_WORDS:
+        return name
+    return _quote_sql_identifier(name)
+
+
+def _accepted_value(value: str) -> str:
+    """An enum member as `accepted_values` takes it: dbt writes `'{{ value }}'` as it is."""
+    return value.replace("'", "''")
 
 
 def _generate_composite_key_tests(dest: Path, tables: dict) -> None:

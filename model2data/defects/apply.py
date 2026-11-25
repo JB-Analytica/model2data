@@ -886,8 +886,6 @@ def break_tables(
             rng = random.Random(defect_stream_seed(base_seed, key, defect))
             outcome = _DEFECTS[defect.type](table, defect, rng, asked)
             table.claim(outcome)
-            if isinstance(outcome.column, str) and outcome.column.lower() in SQL_KEYWORDS:
-                outcome.note = _join(outcome.note, _keyword_note(outcome.column))
             applied.append((target, defect, asked, outcome))
 
     broken = dict(clean)
@@ -1067,21 +1065,6 @@ def _expected(test: DbtTest, keys: Mapping[str, str], defect_types: list[str]) -
 
 # The kinds meant to break no generic test: their note says whether one broke anyway.
 _NO_TEST = ("late_arriving", "late_updates", "messy_text")
-
-# Words the generated not_null / unique tests write unquoted (a pre-existing limit of the
-# dbt export): a defect on such a column may make its test error rather than fail.
-SQL_KEYWORDS = frozenset(
-    "all and any as asc between by case check column create default desc distinct else end "
-    "from group having in into is join like limit not null offset on or order primary "
-    "references select table then union user values when where window with".split()
-)
-
-
-def _keyword_note(column: str) -> str:
-    return (
-        f"{column} is an SQL keyword, which the generated not_null and unique tests do not "
-        "quote: they may error rather than fail"
-    )
 
 
 def _recount(defect: Defect, outcome: _Outcome, frame: Optional[pd.DataFrame]) -> None:

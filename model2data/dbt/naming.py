@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable, Mapping
 from dataclasses import replace
+from typing import Any
 
 from model2data.parse.dbml import ColumnDef, TableDef
 
@@ -53,7 +54,7 @@ def for_dbt(
         names[key]: replace(
             table,
             name=names[key],
-            columns=[_rollup_renamed(column, names) for column in table.columns],
+            columns=[_hints_renamed(column, names) for column in table.columns],
         )
         for key, table in tables.items()
     }
@@ -68,11 +69,25 @@ def for_dbt(
     return dbt_tables, dbt_refs
 
 
-def _rollup_renamed(column: ColumnDef, names: Mapping[str, str]) -> ColumnDef:
-    """`column` with its `rollup`'s child table (`of`) under its dbt name."""
-    note = column.note if isinstance(column.note, dict) else None
-    spec = note.get("rollup") if note else None
-    child = spec.get("of") if isinstance(spec, dict) else None
-    if not isinstance(child, str) or child not in names or names[child] == child:
+def _hints_renamed(column: ColumnDef, names: Mapping[str, str]) -> ColumnDef:
+    """`column` with the tables its hints name (`rollup`'s `of`, `after`) under their dbt names."""
+    if not isinstance(column.note, dict):
         return column
-    return replace(column, note={**note, "rollup": {**spec, "of": names[child]}})
+    note = dict(column.note)
+    spec = note.get("rollup")
+    if isinstance(spec, dict) and spec.get("of") in names:
+        note["rollup"] = {**spec, "of": names[spec["of"]]}
+    after = note.get("after")
+    if isinstance(after, list):
+        note["after"] = [_after_renamed(entry, names) for entry in after]
+    elif after is not None:
+        note["after"] = _after_renamed(after, names)
+    return column if note == column.note else replace(column, note=note)
+
+
+def _after_renamed(entry: Any, names: Mapping[str, str]) -> Any:
+    """An `after` entry naming a parent's column (`raw.users.created_at`), for dbt."""
+    if not isinstance(entry, str) or "." not in entry:
+        return entry
+    table, _, column = entry.rpartition(".")
+    return f"{names[table]}.{column}" if table in names else entry
