@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.25.2] - 2026-11-25
+
 The rows are what 1.25.1 writes for the same model, seed and `--as-of`, but for a date with a
 `min` of its own that follows another date of its row: see the first fix. In a generated dbt
 project, a column named by a reserved word is now quoted, so the tests on it have another name.
