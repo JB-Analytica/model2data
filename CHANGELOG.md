@@ -26,6 +26,10 @@ same model, seed and `--as-of`. The second fix below changes the rows of a table
   a value the copy overwrote, so many rows fell before it. It now follows the parent's own date,
   exactly as `after: invoices.issued_at` does. When a cycle of foreign keys puts that parent after
   the table, generating is an error, as it is for a cross-table `after`.
+- **A `when` naming a value copied from the parent.** `points: {when: {match_status: [finished]}}`,
+  where `match_status` references `matches.status` beside `match_id`, was refused as a foreign key.
+  The copy holds the parent's value, not a key, and the generator already read it after it was
+  copied, so `validate` now takes it. A foreign key itself is still refused.
 - **`validate` refuses `derive` on an enum or foreign-key column that is a key.** It let one
   through when the column was also unique or in a key, and generating then refused it.
 

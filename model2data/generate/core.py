@@ -45,7 +45,7 @@ from model2data.generate.rules import (
     reset_rules_state,
 )
 from model2data.generate.timeline import _resolve_anchor, order_row_times
-from model2data.generate.when import SeedFor, apply_when
+from model2data.generate.when import SeedFor, apply_when, conditions
 from model2data.parse.dbml import ColumnDef, TableDef
 
 # Tables the most recent generate_data_from_dbml() call found stuck in an
@@ -464,6 +464,10 @@ def generate_data_from_dbml(
                 as_of=as_of,
                 time_profile=profile,
             )
+            if _when_reads_a_copy(table_def, table_name, attribute_refs):
+                # Should the key the copy is read through be drawn last (below), the
+                # copy changes and the `when` is applied to what it then holds.
+                settlers[table_name] = settle_table
         if table_rules:
             df = _hold_parent_rules(df, table_def, table_rules, generated, as_of, profile)
         if table_def.rules:
@@ -663,6 +667,12 @@ def _mirror_attributes(
         df[child_column] = df[fk_column].map(lookup)
 
     return df
+
+
+def _when_reads_a_copy(table_def: TableDef, table_name: str, attribute_refs: list[dict]) -> bool:
+    """Does a `when` of the table name a column copied from a parent's attribute?"""
+    copies = {ref["source_column"] for ref in attribute_refs if ref["source_table"] == table_name}
+    return any(copies & set(conditions(column) or {}) for column in table_def.columns)
 
 
 def parent_rules_for(tables: dict[str, TableDef], refs: list[dict]) -> dict[str, list[ParentRule]]:

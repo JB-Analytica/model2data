@@ -1764,7 +1764,8 @@ class _Checks:
                     f"names {other}, which has a `when` of its own: a condition names a column "
                     "generated without one",
                 )
-            elif other in self.fk_columns.get(key, set()):
+            elif other in self.fk_columns.get(key, set()) and self._copied_from(key, other) is None:
+                # One copied from the parent's row (its status, say) holds listed values.
                 self.add(
                     at,
                     f"names {other}, a foreign key: its values are the parent's keys, drawn as "
