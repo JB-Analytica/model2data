@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.25.1] - 2026-11-25
+
+A model that 1.25.0 generated and whose `after` hints were held writes the same files for the
+same model, seed and `--as-of`. The second fix below changes the rows of a table it applies to.
+
+### Fixed
+- **A cross-table `after` beside a value copied from the same parent.** `payments.paid_at: {after:
+  invoices.issued_at}` was refused when the table also copied a value from its invoice (`amount`
+  references `invoices.amount` beside `invoice_id` references `invoices.id`): "reaches invoices
+  through more than one foreign key (invoice_id, amount)". Only a reference onto a key says which
+  row is meant, as the generator already read it, so `validate` now leaves the copies out. Two
+  references onto a key (`sender_id` and `receiver_id`) are still refused. The warning that a
+  child's date can fall before its parent's is raised for such a table too, and never asks a
+  copied date to move: an `after` on it that names the parent it is copied from is an error.
+- **An `after` naming a copied date is held.** `paid_at: {after: invoice_issued_at}`, where
+  `invoice_issued_at` references `invoices.issued_at`, passed `validate` and was then placed after
+  a value the copy overwrote, so many rows fell before it. It now follows the parent's own date,
+  exactly as `after: invoices.issued_at` does. When a cycle of foreign keys puts that parent after
+  the table, generating is an error, as it is for a cross-table `after`.
+- **A `when` naming a value copied from the parent.** `points: {when: {match_status: [finished]}}`,
+  where `match_status` references `matches.status` beside `match_id`, was refused as a foreign key.
+  The copy holds the parent's value, not a key, and the generator already read it after it was
+  copied, so `validate` now takes it. A foreign key itself is still refused.
+- **`validate` refuses `derive` on an enum or foreign-key column that is a key.** It let one
+  through when the column was also unique or in a key, and generating then refused it.
+
 ## [1.25.0] - 2026-11-22
 
 A model that uses neither a `poisson` distribution nor `at_most` writes the same files as 1.24.0

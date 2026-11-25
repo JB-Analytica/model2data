@@ -294,6 +294,8 @@ def _parent_tests(table: str, rule: ParentRule) -> list[HintTest]:
     """One `model2data_not_before_parent` test per parent column the `after` names."""
     tests = []
     for link in rule.links:
+        if link.copied is not None:
+            continue  # `after` names the row's own column: tested as a same-row one
         arguments: dict[str, Any] = {
             "foreign_key": link.fk,
             "to": f"ref('stg_{link.parent_table}')",

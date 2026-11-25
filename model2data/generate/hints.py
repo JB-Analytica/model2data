@@ -57,7 +57,7 @@ def validate_hints(tables: Mapping[str, TableDef], refs: list[dict]) -> None:
     are classified the same way the main generation pass classifies them, so
     the two never disagree about what counts as a foreign key.
     """
-    fk_refs, _ = classify_refs(dict(tables), refs)
+    fk_refs, attribute_refs = classify_refs(dict(tables), refs)
     fk_lookup = build_fk_lookup(fk_refs)
 
     for table_name, table_def in tables.items():
@@ -91,7 +91,9 @@ def validate_hints(tables: Mapping[str, TableDef], refs: list[dict]) -> None:
                 columns_by_name=columns_by_name,
             )
             for entry in parent_after(note):
-                link, reason = parent_link(tables, fk_refs, table_name, entry)
+                link, reason = parent_link(
+                    tables, fk_refs, table_name, entry, column.name, attribute_refs
+                )
                 if link is None:
                     raise ValueError(
                         f'{table_name}.{column.name}: "after" names {".".join(entry)}, {reason}.'

@@ -199,7 +199,10 @@ same edit. If the child may legitimately predate the parent, leave the warning.
 *Not built yet:* a table with two foreign keys to the same parent (`sender_id` and `receiver_id`
 onto `users`) cannot use `after: users.created_at`: model2data cannot tell which row is meant,
 so validation refuses it with an error naming both keys. There is no way yet to pick one; drop
-the hint (the warning is not raised for such a table either).
+the hint (the warning is not raised for such a table either). A column that only copies a value
+from the parent (`amount` references `invoices.amount` beside `invoice_id` references
+`invoices.id`) is not a second key: `paid_at: {after: invoices.issued_at}` follows the invoice
+`invoice_id` points at. No need to copy the parent's date to follow it.
 
 **Tie lifecycle columns to the status they belong to with `when`.** Without it, every nullable
 column is filled or nulled independently of the others, so a `todo` task gets a `completed_at`

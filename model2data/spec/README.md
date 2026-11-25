@@ -298,7 +298,10 @@ is not before. A parent's column is read on the row the child's foreign key poin
   primary key, a one-column key, or a unique column. A table with two foreign keys to the parent
   (`sender_id` and `receiver_id` onto `users`) cannot say which row it means, and it is an
   error naming them; so is a parent reached only through a foreign key of several columns, or
-  through a reference onto a column that is no key;
+  through a reference onto a column that is no key. A column copied from the parent (a reference
+  onto a plain column beside that foreign key) is a value and not a second foreign key; its own
+  `after` cannot name that parent. A copied date may be named by another column's `after`, which
+  then follows the parent's own date;
 - the named column is a date or timestamp; a date compared with a timestamp compares by day;
 - a row whose foreign key is null is not constrained;
 - the named table is not the column's own: a column of the same row is named without a table,
@@ -347,7 +350,9 @@ tasks:
       generate: {after: created_at, when: {status: [done]}}
 ```
 
-Several columns listed must all match. A row whose named column is null does not match. On the
+Several columns listed must all match. A row whose named column is null does not match. A foreign
+key cannot be named; a column copied from the parent (`match_status` references `matches.status`
+beside `match_id`) can, and is read as the row's own parent has it. On the
 matching rows the column is generated as it would be without `when`, and none of them is null
 unless the column has a `null_rate`, which then counts only those rows. How the values a model
 without `when` generates are kept is the engine's (see `model2data.generate.when`).

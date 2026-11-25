@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 from model2data.parse.dbml import ColumnDef, TableDef
 
@@ -57,6 +57,24 @@ def classify_refs(
             attribute_refs.append(ref)
 
     return fk_refs, attribute_refs
+
+
+def copied_columns(
+    fk_refs: Sequence[Dict], attribute_refs: Sequence[Dict], table_name: str
+) -> Dict[str, Tuple[Dict, Dict]]:
+    """`table_name`'s columns copied from a parent's attribute, each with its Ref and the
+    foreign key the copy is read through (the first one onto that parent)."""
+    found: Dict[str, Tuple[Dict, Dict]] = {}
+    for ref in attribute_refs:
+        if ref["source_table"] != table_name:
+            continue
+        for fk_ref in fk_refs:
+            if fk_ref["source_table"] == table_name and (
+                fk_ref["target_table"] == ref["target_table"]
+            ):
+                found[ref["source_column"]] = (ref, fk_ref)
+                break
+    return found
 
 
 def _key_kind(tables: Dict[str, TableDef], ref: Dict) -> Optional[str]:

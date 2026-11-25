@@ -45,7 +45,7 @@ from model2data.generate.rules import (
     reset_rules_state,
 )
 from model2data.generate.timeline import _resolve_anchor, order_row_times
-from model2data.generate.when import SeedFor, apply_when
+from model2data.generate.when import SeedFor, apply_when, conditions
 from model2data.parse.dbml import ColumnDef, TableDef
 
 # Tables the most recent generate_data_from_dbml() call found stuck in an
@@ -255,7 +255,7 @@ def generate_data_from_dbml(
     ordered_tables, deferred_edges = _table_order(tables, fk_refs)
     settlers: dict[str, Callable[[pd.DataFrame], None]] = {}
     # The columns whose `after` names a parent's column (see generate.parents).
-    rules = parent_rules(tables, fk_refs, ordered_tables)
+    rules = parent_rules(tables, fk_refs, ordered_tables, attribute_refs)
     generated: dict[str, pd.DataFrame] = {}
 
     for table_name in ordered_tables:
@@ -398,7 +398,14 @@ def generate_data_from_dbml(
         # composite-key retry regenerates a temporal column's value into a
         # frame that already respects created/updated/closed ordering, rather
         # than one where only the untouched columns do.
-        df = order_row_times(df, table_def, as_of=as_of, time_profile=profile, floors=floors)
+        df = order_row_times(
+            df,
+            table_def,
+            as_of=as_of,
+            time_profile=profile,
+            floors=floors,
+            copies={rule.column: rule.copies for rule in table_rules},
+        )
         df = _resolve_self_referencing_fks(
             df,
             table_def,
@@ -457,6 +464,10 @@ def generate_data_from_dbml(
                 as_of=as_of,
                 time_profile=profile,
             )
+            if _when_reads_a_copy(table_def, table_name, attribute_refs):
+                # Should the key the copy is read through be drawn last (below), the
+                # copy changes and the `when` is applied to what it then holds.
+                settlers[table_name] = settle_table
         if table_rules:
             df = _hold_parent_rules(df, table_def, table_rules, generated, as_of, profile)
         if table_def.rules:
@@ -658,15 +669,21 @@ def _mirror_attributes(
     return df
 
 
+def _when_reads_a_copy(table_def: TableDef, table_name: str, attribute_refs: list[dict]) -> bool:
+    """Does a `when` of the table name a column copied from a parent's attribute?"""
+    copies = {ref["source_column"] for ref in attribute_refs if ref["source_table"] == table_name}
+    return any(copies & set(conditions(column) or {}) for column in table_def.columns)
+
+
 def parent_rules_for(tables: dict[str, TableDef], refs: list[dict]) -> dict[str, list[ParentRule]]:
     """The columns whose cross-table `after` `generate_data_from_dbml` keeps, by table key.
 
     Each with the foreign keys it follows (see `generate.parents`). What the
     dbt export tests, so it is worked out exactly as generation works it out.
     """
-    fk_refs, _ = classify_refs(tables, refs)
+    fk_refs, attribute_refs = classify_refs(tables, refs)
     order, _broken, _leftover = _plan_table_order(tables, fk_refs)
-    return parent_rules(tables, fk_refs, order)
+    return parent_rules(tables, fk_refs, order, attribute_refs)
 
 
 # ---------------------------------------------------------
@@ -708,7 +725,13 @@ def _hold_parent_rules(
         moved.update(rows)
     if moved:
         df = order_row_times(
-            df, table_def, as_of=as_of, time_profile=profile, rows=sorted(moved), floors=floors
+            df,
+            table_def,
+            as_of=as_of,
+            time_profile=profile,
+            rows=sorted(moved),
+            floors=floors,
+            copies={rule.column: rule.copies for rule in rules},
         )
     return df
 

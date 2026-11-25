@@ -28,6 +28,7 @@ import random
 import re
 from bisect import bisect_right
 from collections import deque
+from collections.abc import Mapping
 from datetime import date, datetime, time, timedelta
 from itertools import accumulate
 from typing import Optional, Union
@@ -671,6 +672,7 @@ def order_row_times(
     time_profile: Optional[TimeProfile] = None,
     rows: Optional[list] = None,
     floors: Optional[dict] = None,
+    copies: Optional[Mapping[str, set[str]]] = None,
 ):
     """Fix up temporal columns so an earlier-stage column never lands later.
 
@@ -691,7 +693,8 @@ def order_row_times(
     table was ordered); every row otherwise. `floors` maps a column to a
     `datetime64` Series of the latest parent moment each row must not precede
     (a cross-table `after`, see generate.parents): a column placed here lands
-    after that too.
+    after that too. `copies` names, per column, the columns of its `after` that copy a
+    parent's date: they hold no final value yet, and its floor already stands for them.
     """
     columns_by_name = {column.name: column for column in table_def.columns}
     temporal_columns = [
@@ -710,6 +713,11 @@ def order_row_times(
         return df
 
     deps = _build_dependencies(table_def, columns_by_name, temporal_columns)
+    for name, copied in (copies or {}).items():
+        if name in deps:
+            deps[name] = deps[name] - copied
+            if not deps[name]:
+                del deps[name]  # placed already, after the parents it copies
     if not deps:
         return df
 
