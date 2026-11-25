@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+The rows are what 1.25.1 writes for the same model, seed and `--as-of`. In a generated dbt
+project, a column named by a reserved word is now quoted, so the tests on it have another name.
+
+### Fixed
+- **`after` naming a parent's date where dbt renames the parent's table.** With
+  `after: Users.created_at` or `after: raw.users.created_at`, whose tables are the seeds `users`
+  and `raw_users`, `generate` stopped with an AssertionError once the rows were drawn (with or
+  without `--defects`). The dbt tests now follow the renamed table.
+- **Columns named by a reserved word.** Every dbt test on a column called `by`, `order`, `select`
+  and the like was a syntax error, and Postgres read `user` as the role. The schema YAML now
+  quotes the words DuckDB or Postgres reserves, as it already did for a name with a space. The
+  note in the defects report that such a test may error is gone with it.
+- **Enum members with an apostrophe.** The `accepted_values` test of `["it's", ...]` was a syntax
+  error. The YAML now holds the member as SQL writes it (`it''s`).
+
 ## [1.25.1] - 2026-11-25
 
 A model that 1.25.0 generated and whose `after` hints were held writes the same files for the

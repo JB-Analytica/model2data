@@ -163,7 +163,8 @@ def test_a_late_defect_says_what_it_breaks():
     assert messy.note is None
 
 
-def test_a_defect_on_an_sql_keyword_says_so():
+def test_a_defect_on_an_sql_keyword_fails_its_test():
+    # The tests quote a reserved word, so nothing warns that they may error.
     model = load(
         "model2data: 0.3.0\ntables:\n  t:\n    columns:\n      id: {type: int, pk: true}\n"
         "      select: {type: text, not_null: true}\n"
@@ -171,7 +172,8 @@ def test_a_defect_on_an_sql_keyword_says_so():
     _, report = apply_defects(
         model, _frames(model, rows=10), {"t": [Defect("nulls", column="select", count=1)]}, seed=1
     )
-    assert "select is an SQL keyword" in report.defects[0].note
+    assert report.defects[0].note is None
+    assert [t.test for t in report.expected_failures] == ["not_null_stg_t__select_"]
 
 
 def test_a_preset_with_nothing_to_break_says_so(tmp_path, monkeypatch):

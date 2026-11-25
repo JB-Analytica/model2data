@@ -565,6 +565,15 @@ def test_dbt_column_ref_quotes_only_when_needed():
     assert _dbt_column_ref('has"quote') == '"has""quote"'
 
 
+def test_dbt_column_ref_quotes_reserved_words_and_no_other_keyword():
+    """`by` is a plain identifier to the regular expression and a syntax error in SQL; `user`
+    is the role in Postgres. `name`, `date` and `values` are keywords both engines take."""
+    for word in ("by", "order", "Group", "select", "left", "user", "pivot"):
+        assert _dbt_column_ref(word) == f'"{word}"'
+    for word in ("name", "date", "timestamp", "values", "type", "value", "key"):
+        assert _dbt_column_ref(word) == word
+
+
 def test_relationships_test_field_is_quoted_for_special_target_column(tmp_path):
     """The `field:` of a generated `relationships` test is the *target*
     (parent) column name -- also spliced raw into compiled SQL by dbt's
