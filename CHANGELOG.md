@@ -5,6 +5,8 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
 ## [1.25.2] - 2026-11-25
 
 The rows are what 1.25.1 writes for the same model, seed and `--as-of`, but for a date with a
