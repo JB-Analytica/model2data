@@ -88,16 +88,6 @@ class Streams:
         if stream is not None:
             seed_both(stream)
 
-    @contextmanager
-    def own(self, kind: str, name: str) -> Iterator[None]:
-        """`reseed` for the block only: the streams drawn from before are put back after it."""
-        stream = self.seed_for(kind, name)
-        if stream is None:
-            yield
-            return
-        with own_stream(stream):
-            yield
-
 
 @contextmanager
 def own_stream(seed: Optional[int]) -> Iterator[None]:
@@ -155,6 +145,3 @@ class Resumable:
     def drop(self, predicate: Callable[[Any], bool]) -> None:
         for key in [key for key in self._held if predicate(key)]:
             del self._held[key]
-
-    def clear(self) -> None:
-        self._held.clear()
