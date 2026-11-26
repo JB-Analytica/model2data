@@ -74,8 +74,14 @@ def set_locale(locale: Optional[str]) -> None:
     """
     global fake, _locale, _locale_is_set
     target = locale or DEFAULT_LOCALE
-    _locale_is_set = bool(locale)
+    named = bool(locale)
+    changed = named != _locale_is_set
+    _locale_is_set = named
     if target == _locale:
+        if changed:
+            # The same locale, now named (or not): its country is spelled in its language
+            # only when it is named.
+            _resolve_country()
         return
     try:
         fake = Faker(target)
@@ -277,11 +283,88 @@ def _resolve_locale() -> None:
     # `current_country` is the locale's own country, and it is what stops a US
     # street from landing in Japan. Locales too generic to have one (plain "en")
     # fall back to a single country picked once, so at least every row agrees.
-    if _first_provider("current_country"):
-        _country_name = str(fake.current_country())
-    else:
-        _country_name = fake.country()
+    _country_name = _home_country()
     _state_provider = _first_provider("state", "province", "administrative_unit", "region")
+
+
+def _resolve_country() -> None:
+    global _country_name
+    _country_name = _home_country()
+
+
+# What Faker's English `current_country` calls a country is not always what a locale's own
+# list calls it (`United States` against `United States of America`). Other English names of
+# the countries whose locales Faker ships, tried when the list does not hold the first.
+_COUNTRY_ALIASES: dict[str, tuple[str, ...]] = {
+    "US": ("United States of America",),
+    "GB": ("United Kingdom of Great Britain and Northern Ireland", "Great Britain"),
+    "IE": ("Ireland", "Republic of Ireland"),
+    "NL": ("Netherlands", "The Netherlands"),
+    "CN": ("China", "People's Republic of China"),
+    "TW": ("Taiwan", "Republic of China"),
+    "RU": ("Russian Federation", "Russia"),
+    "KR": ("South Korea", "Korea, South", "Republic of Korea"),
+    "IR": ("Iran, Islamic Republic of", "Iran"),
+    "CZ": ("Czechia", "Czech Republic"),
+    "VN": ("Viet Nam", "Vietnam"),
+}
+
+
+def _babel_names(lang: str, code: str) -> tuple[Optional[str], Optional[str]]:
+    """The country `code` as the locale writes it, and in English, from CLDR (through Babel,
+    which dbt brings along); `(None, None)` when Babel or the locale is not there."""
+    try:
+        from babel import Locale
+    except ImportError:
+        return None, None
+    native: Optional[str] = None
+    for name in (lang, lang.split("_")[0]):
+        try:
+            native = Locale.parse(name).territories.get(code)
+        except Exception:  # noqa: BLE001 - an unknown locale is no CLDR name, nothing more
+            continue
+        if native:
+            break
+    try:
+        english = Locale.parse("en").territories.get(code)
+    except Exception:  # noqa: BLE001
+        english = None
+    return native, english
+
+
+def _home_country() -> str:
+    """The locale's own country, spelled as the locale spells every other country.
+
+    Faker's `current_country` is always English, while `fake.country()` draws from the
+    locale's list in its language: with `de_DE` the home country was `Germany` among
+    `Alandinseln`. When a locale is named, the home country is the member of that locale's
+    own list that names it; a list that is English (some locales have none translated)
+    has the English name, and one that lacks the country altogether gets its name in the
+    locale's language. With no locale named the English name stays, as it always was.
+    """
+    if not _first_provider("current_country"):
+        return fake.country()
+    english = str(fake.current_country())
+    if not _locale_is_set:
+        return english
+    try:
+        code = str(fake.current_country_code())
+    except AttributeError:
+        return english
+    owner = getattr(fake.country, "__self__", None)
+    names = list(getattr(owner, "countries", ()) or ())
+    native, english_babel = _babel_names(_locale, code)
+    wanted = [
+        name for name in (native, english, english_babel, *_COUNTRY_ALIASES.get(code, ())) if name
+    ]
+    for name in wanted:
+        if name in names:
+            return name
+    folded = {name.casefold(): name for name in names}
+    for name in wanted:
+        if name.casefold() in folded:
+            return folded[name.casefold()]
+    return native or english
 
 
 def _new_person() -> _Person:
@@ -630,6 +713,19 @@ _ROW_TYPE_FIELDS = {
 }
 
 
+# `name_male` and the like are Faker's own full names, which several locales dress with
+# titles and degrees (`Prof. Dr. Hans Müller`, `Anna Schmidt B.Sc.`). They are built as
+# `full_name` is: a first name and a last name, nothing else.
+_GENDERED_NAMES = {"name_male": "male", "name_female": "female", "name_nonbinary": "nonbinary"}
+
+
+def _gendered_name(gender: str) -> str:
+    """A first name and a last name of the locale, for `gender`, with no title or degree."""
+    first = getattr(fake, f"first_name_{gender}", None) or fake.first_name
+    last = getattr(fake, f"last_name_{gender}", None) or fake.last_name
+    return f"{first()} {last()}"
+
+
 def _infer_by_type(base_type: str) -> Optional[_Provider]:
     """The provider a column's declared type names, if it names one deliberately.
 
@@ -647,6 +743,9 @@ def _infer_by_type(base_type: str) -> Optional[_Provider]:
         return _FromRow(*row_field)
     # An alias of a provider (`company_name` for `company`) draws what its target does.
     base_type = ALIASES.get(base_type, base_type)
+    gendered = _GENDERED_NAMES.get(base_type)
+    if gendered is not None:
+        return lambda: _gendered_name(gendered)
     try:
         fake.format(base_type)
     except (AttributeError, TypeError):

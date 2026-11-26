@@ -39,9 +39,9 @@ class TestLoneCountryColumn:
         counts = df["country"].value_counts(normalize=True)
         assert len(counts) >= 5
 
-        home_share = counts.get("Belgium", 0.0)
+        home_share = counts.get("België", 0.0)
         assert 0.5 <= home_share <= 0.7
-        assert counts.idxmax() == "Belgium"
+        assert counts.idxmax() == "België"
 
     def test_a_sibling_place_column_keeps_the_country_single(self):
         df = generate_data_from_dbml(
@@ -56,7 +56,7 @@ class TestLoneCountryColumn:
             locale="nl_BE",
         )["customers"]
 
-        assert set(df["country"]) == {"Belgium"}
+        assert set(df["country"]) == {"België"}
 
     def test_declared_country_type_behaves_like_the_name(self):
         df = generate_data_from_dbml(
@@ -79,7 +79,7 @@ class TestLoneCountryColumn:
 
         counts = df["hq"].value_counts(normalize=True)
         assert len(counts) >= 5
-        assert 0.5 <= counts.get("Belgium", 0.0) <= 0.7
+        assert 0.5 <= counts.get("België", 0.0) <= 0.7
 
     def test_distinct_hint_still_bounds_the_pool(self):
         df = generate_data_from_dbml(

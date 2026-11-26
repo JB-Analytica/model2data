@@ -59,21 +59,43 @@ def classify_refs(
     return fk_refs, attribute_refs
 
 
+def copy_paths(fk_refs: Sequence[Dict], table_name: str, parent: str) -> List[Dict]:
+    """The foreign keys a column of `table_name` copied from `parent` can be read through,
+    in the order the model lists them: those of the table onto the parent's key. Another
+    copy is not one of them (it is an attribute ref, not in `fk_refs`)."""
+    return [
+        ref
+        for ref in fk_refs
+        if ref["source_table"] == table_name and ref["target_table"] == parent
+    ]
+
+
+def copy_fk(fk_refs: Sequence[Dict], ref: Dict) -> Optional[Dict]:
+    """The foreign key the copy `ref` is read through, None when the row has none.
+
+    The one `ref["via"]` names; without a `via`, the first foreign key of the table onto the
+    parent (a model with two is refused, so that is the only one).
+    """
+    onto = copy_paths(fk_refs, ref["source_table"], ref["target_table"])
+    via = ref.get("via")
+    if via is not None:
+        onto = [r for r in onto if r["source_column"] == via] or onto
+    return onto[0] if onto else None
+
+
 def copied_columns(
     fk_refs: Sequence[Dict], attribute_refs: Sequence[Dict], table_name: str
 ) -> Dict[str, Tuple[Dict, Dict]]:
     """`table_name`'s columns copied from a parent's attribute, each with its Ref and the
-    foreign key the copy is read through (the first one onto that parent)."""
+    foreign key the copy is read through: the one its `via` names, else the first one onto
+    that parent."""
     found: Dict[str, Tuple[Dict, Dict]] = {}
     for ref in attribute_refs:
         if ref["source_table"] != table_name:
             continue
-        for fk_ref in fk_refs:
-            if fk_ref["source_table"] == table_name and (
-                fk_ref["target_table"] == ref["target_table"]
-            ):
-                found[ref["source_column"]] = (ref, fk_ref)
-                break
+        chosen = copy_fk(fk_refs, ref)
+        if chosen is not None:
+            found[ref["source_column"]] = (ref, chosen)
     return found
 
 

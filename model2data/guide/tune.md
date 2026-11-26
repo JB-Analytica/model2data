@@ -5,7 +5,7 @@
 | Command | Does | Exit |
 |---|---|---|
 | `model2data --file M` | same as `model2data generate --file M` | see below |
-| `model2data validate M...` | check models against spec 0.9.0, `*.metrics.yml` files against the metrics spec and their model (`--model M`, else the model beside it with the same stem), and `*.dashboard.yml` files as `dashboard check` does | 0 conforms (warnings allowed), 1 any error |
+| `model2data validate M...` | check models against spec 0.10.0, `*.metrics.yml` files against the metrics spec and their model (`--model M`, else the model beside it with the same stem), and `*.dashboard.yml` files as `dashboard check` does | 0 conforms (warnings allowed), 1 any error |
 | `model2data convert M` | print M as `.model2data.yml`; `-o FILE` writes it, `--force` overwrites | 0 ok, 1 unreadable model or output exists |
 | `model2data metrics list -f M [--metrics F]` | every metric: the file's, then the inferred ones | 0, 1 on a model or metrics error |
 | `model2data metrics export -f M [--metrics F] --to ossie\|lightdash` | the model and its metrics as Apache Ossie 0.1.1, or as Lightdash meta in one dbt properties file for the staging models; `-o FILE` writes it, `--force` overwrites | 0, 1 on an error or an existing output, 2 on another `--to` |
@@ -72,7 +72,7 @@ columns. Add `not_null` to every column that must always have a value.
 Each key in use (this model validates):
 
 ```yaml
-model2data: 0.9.0
+model2data: 0.10.0
 name: saas
 enums:
   plan_tier: [free, pro, enterprise]
@@ -169,12 +169,12 @@ the dbt test `model2data_rollup`, always at severity error. A rollup over a tabl
 `at_least: N` on a foreign key gives every parent at least N child rows (`account_id` above:
 no account without an invoice). Pair it with a rollup so no total is 0 by accident. With fewer
 rows than N × parents the summary lists the shortfall; raise the table's rows. Not on a unique
-foreign key. `at_most: N` (spec 0.9.0) caps every parent at N child rows (`account_id` above: 1 to
+foreign key. `at_most: N` (added in spec version 0.9.0) caps every parent at N child rows (`account_id` above: 1 to
 12 invoices an account): a parent at N is not drawn again. More rows than N × parents is an
 error, never a cap: lower the rows or raise N. Not below `at_least`, not on a unique foreign
 key, not with `incremental` and `--days`. It writes the dbt test `model2data_max_rows_per_value`.
 
-`distribution: {kind: poisson, mean: 2}` (spec 0.9.0, integer columns only) draws counts:
+`distribution: {kind: poisson, mean: 2}` (added in spec version 0.9.0, integer columns only) draws counts:
 `support_tickets` above, goals in a match, orders a day. `mean` is also the variance; left out,
 the midpoint of the column's range. `min`/`max` clip it.
 
@@ -233,7 +233,15 @@ final values of what it names, and every rule that can be met; a table with `der
 
 A reference onto a parent's plain column next to a foreign key to the same parent
 (`unit_price: {references: products.price}` beside `product_id: {references: products.id}`)
-copies the value from the row's own product.
+copies the value from the row's own product. With two foreign keys onto that parent
+(`home_team_id` and `away_team_id` onto `teams`), say which one the value follows, as spec
+0.10.0 allows: `venue_id: {references: {to: teams.venue_id, via: home_team_id}}`. Without `via`
+that is an error naming both. A model written before `via` that is refused for this: add the
+first foreign key as `via`, which is what was read before, and the rows stay the same.
+
+A foreign key that is not `not_null` is empty on some rows (up to a fifth, fewer in a large
+table, or its `null_rate`): `nullable_foreign_keys(model)` in `model2data.model` lists them with
+their share. Add `not_null` where every row must have a parent.
 
 The full spec and JSON Schema ship in the package: `model2data/spec/README.md`,
 `model2data/spec/model.schema.json`.

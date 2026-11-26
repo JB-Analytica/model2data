@@ -23,11 +23,16 @@ says it created the project. Fix the **model file**, never the generated project
   on `tables.orders.columns.order_date`: a child's date can precede its parent's creation (an
   order before its customer). Add exactly that `after` to the column's `generate` (a column with
   an `after` already takes a list: `after: [placed_at, customers.created_at]`), set
-  `model2data: 0.9.0`, and validate again. If the child may truly predate the parent, leave it.
+  `model2data: 0.10.0`, and validate again. If the child may truly predate the parent, leave it.
   An error `reaches users through more than one foreign key (sender_id, receiver_id)` on an
   `after`: choosing between two foreign keys to one parent is not built yet; drop that `after`.
   A column copied from the parent (`amount: {references: invoices.amount}` beside `invoice_id`)
   does not count as one. An error `is itself copied from the invoices row`: drop that `after`.
+- An error `can reach teams through home_team_id or away_team_id; add via:` on a column that
+  copies a parent's value (`venue_id: {references: teams.venue_id}`): the table has two
+  foreign keys to that parent. Write `references: {to: teams.venue_id, via: home_team_id}` with
+  the one the value should follow (spec 0.10.0; the first listed is what older versions read,
+  so it keeps the rows of an existing model).
 - An error `cannot sit on a column that is unique` (or `in the primary key`) on a `derive`: a key
   is drawn, whatever its type. Derive a column that is no key, or drop `pk` / `unique`.
 - An error on a `rollup`: it names the fix. `has 2 foreign keys onto ...`: add `via:` with the

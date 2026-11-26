@@ -56,6 +56,8 @@ def to_engine(model: Model) -> EngineInputs:
             }
             if column.references.one_to_one:
                 ref["one_to_one"] = True
+            if column.references.via is not None:
+                ref["via"] = column.references.via
             refs.append(ref)
         for fk in table.foreign_keys:
             for child, parent in zip(fk.columns, fk.to_columns, strict=True):

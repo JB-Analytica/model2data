@@ -1,4 +1,4 @@
-"""The model as typed values: what a spec 0.9.0 (or 0.2.x-0.8.x) document says, read.
+"""The model as typed values: what a spec 0.10.0 (or 0.2.x-0.9.x) document says, read.
 
 Every class is a plain, comparable dataclass, so `load(dump(m)) == m` means
 what it says. A value left out of the document is the class default (`None`,
@@ -26,6 +26,9 @@ class Reference:
 
     to: str
     one_to_one: bool = False
+    # Which foreign key of the table onto the parent's key a copied value is read through
+    # (spec 0.10.0); only for a column that copies a parent's column.
+    via: Optional[str] = None
 
     @property
     def table(self) -> str:

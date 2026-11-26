@@ -1,7 +1,7 @@
 # The model file
 
 A model is one YAML document, `<name>.model2data.yml` — or the same document as JSON. Its
-format is [spec 0.9.0](../model2data/spec/README.md), with a JSON Schema
+format is [spec 0.10.0](../model2data/spec/README.md), with a JSON Schema
 ([`model.schema.json`](../model2data/spec/model.schema.json)) your editor can autocomplete and check
 against:
 
@@ -71,7 +71,9 @@ order.
 A reference onto a parent's column that is no key warns that nothing makes its values one row
 each, unless the table also has a foreign key to that parent's key: then the value is copied from
 the row's own parent (`unit_price: {references: products.price}` beside `product_id: {references:
-products.id}` gives every line its product's price), and nothing is said.
+products.id}` gives every line its product's price), and nothing is said. With two foreign keys
+onto that parent, `via` (spec 0.10.0) names the one the copy follows: `venue_id: {references: {to:
+teams.venue_id, via: home_team_id}}`. Without it the model is refused, naming every choice.
 
 ## Totals that match their lines
 
@@ -116,7 +118,7 @@ tables:
   and draws the rest as usual. Too few rows is not an error: the summary lists `order_items: 100
   rows cover 100 of 250 orders; at_least 1 on order_id needs 250`. A row so placed keeps its
   parent; an `after` on the parent's date moves the row's date instead.
-- **`at_most: N`** (spec 0.9.0) caps every parent at N rows: a value is drawn as usual, and a
+- **`at_most: N`** (spec version 0.9.0) caps every parent at N rows: a value is drawn as usual, and a
   parent already holding N is drawn again among the parents with room. `{at_least: 18, at_most:
   25}` on `players.club_id` gives every club a squad of 18 to 25. More rows than N × parents is
   an error, from `validate` when `run` gives both tables' rows, from the generator otherwise

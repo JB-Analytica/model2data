@@ -190,7 +190,7 @@ app = typer.Typer(
     cls=_GenerateByDefault,
     help=(
         "model2data: Generate analytics-ready datasets from a data model.\n\n"
-        "Given a model -- a .model2data.yml document (spec 0.9.0), the same as JSON,\n"
+        "Given a model -- a .model2data.yml document (spec 0.10.0), the same as JSON,\n"
         "or a DBML file -- this tool produces:\n"
         "• Synthetic but realistic data\n"
         "• A runnable dbt project scaffold\n"
@@ -868,12 +868,15 @@ def main(
 
 
 def _spec_of(file: Path) -> str:
-    """The spec a conforming model is written against: 0.9.0, 0.8.0, 0.7.0, 0.6.0, 0.5.0, 0.4.0, 0.3.0, or
+    """The spec a conforming model is written against: 0.10.0, 0.9.0, 0.8.0, 0.7.0, 0.6.0, 0.5.0, 0.4.0, 0.3.0, or
     0.2.0 (DBML without `when`, a 0.5.0 `after`, `rollup` or `at_least` included)."""
     version = str(load(file).version)
-    for minor in ("0.9", "0.8", "0.7", "0.6", "0.5", "0.4", "0.3"):
-        if version.startswith(minor):
-            return f"{minor}.0"
+    # Compared as numbers: 0.10 is after 0.9.
+    parts = version.split(".")[:2]
+    if len(parts) == 2 and all(part.isdigit() for part in parts):
+        major, minor = int(parts[0]), int(parts[1])
+        if major == 0 and 3 <= minor <= 10:
+            return f"0.{minor}.0"
     return "0.2.0"
 
 
@@ -967,7 +970,7 @@ def validate_command(
         ),
     ),
 ):
-    """Check that models conform to spec 0.9.0 (or 0.2.x-0.8.x), printing every issue with its path.
+    """Check that models conform to spec 0.10.0 (or 0.2.x-0.9.x), printing every issue with its path.
 
     Takes one or more files and/or --glob patterns. A metrics file (*.metrics.yml) is checked
     against metrics spec 0.2.0 and against its model; a dashboard (*.dashboard.yml) against
@@ -1087,7 +1090,7 @@ def convert_command(
 ):
     """Convert a model -- DBML, typically -- to a .model2data.yml document (spec 0.2.0, or
     0.3.0 when it has defects, 0.4.0 when it has `when`, 0.5.0 when an `after` is a list or
-    names a parent's column, 0.6.0 when it has `rollup` or `at_least`, 0.7.0 when a table has `rules`, 0.8.0 when a column has `days` or `times`, 0.9.0 when it has a `poisson` distribution or `at_most`)."""
+    names a parent's column, 0.6.0 when it has `rollup` or `at_least`, 0.7.0 when a table has `rules`, 0.8.0 when a column has `days` or `times`, 0.9.0 when it has a `poisson` distribution or `at_most`, 0.10.0 when a copied value says `via`)."""
     try:
         model = load(file)
     except ModelError as error:

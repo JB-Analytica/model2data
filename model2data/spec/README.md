@@ -1,4 +1,4 @@
-# The model2data model — spec 0.9.0
+# The model2data model — spec 0.10.0
 
 A model2data model is one document: the tables of a data model, their columns and keys, the
 relationships between them, the enums a column can be typed as, and how every column's values
@@ -83,7 +83,7 @@ The spec is versioned on its own, apart from the engine and the studio, with
 [semantic versioning](https://semver.org). The version is in the schema's `$id`:
 
 ```
-https://www.jbanalytica.com/model2data/spec/0.9.0/model.schema.json
+https://www.jbanalytica.com/model2data/spec/0.10.0/model.schema.json
 ```
 
 A patch release changes wording only. A minor release adds something optional. A major release
@@ -135,6 +135,15 @@ with, and 0.8.0 once it uses one.
 uses neither, and reads as it always read. A document that uses either says
 `model2data: 0.9.0`, and either in a document that says an earlier version is an error. A writer
 writes the version the document was read with, and 0.9.0 once it uses one.
+
+0.10.0 adds `via` to a copied value's `references` (see [References](#references)), and nothing
+else: a 0.2 to 0.9 document is a 0.10.0 document that does not use it, and reads as it always
+read, with one exception that holds for a document of any version: a copied value that can be
+read through two or more foreign keys and does not say which is an error (see below). A document
+that uses `via` says `model2data: 0.10.0`, and `via` in a document that says an earlier version
+is an error. A writer writes the version the document was read with, and 0.10.0 once it uses
+`via`. Versions compare as numbers, not as text: 0.10 comes after 0.9. Write it `0.10.0`: the
+YAML number 0.10 is the number 0.1.
 
 0.2.0 replaced 0.1.0, which carried hints as JSON inside DBML notes. See
 [From 0.1](#from-01).
@@ -287,6 +296,16 @@ A reference onto a plain column of a parent the table also has a foreign key to 
 primary key, a one-column key, or a unique column) is not drawn at all: the value is copied from
 the row's own parent. `unit_price: {references: products.price}` beside `product_id: {references:
 products.id}` gives every line its product's price. Such a reference is no warning.
+
+When the table has two or more foreign keys onto that parent (`home_team_id` and `away_team_id`
+onto `teams`), the copy must say which row it is copied from: `venue_id: {references: {to:
+teams.venue_id, via: home_team_id}}` (spec 0.10.0). `via` names a column of the same table that
+is a foreign key of one column onto the parent's key; a copy and a foreign key of several
+columns are not such a column. With one such foreign key `via` is optional. Two or more and no
+`via` is an error, for a document of any version, because engines before 0.10.0 took the first
+in document order without saying so; adding `via` with that first one keeps the values a model
+had. `via` on a reference that is not a copy (it is the key itself), or naming a column that is
+not one of the foreign keys, is an error.
 
 A date can be kept on or after a date of the parent row it points at: `after:
 customers.created_at` on `orders.order_date` places no order before its customer signed up
@@ -1042,6 +1061,10 @@ reports each failure with the path of the value (`tables.orders.columns.status.g
     rows with a value (all of them for a `not_null` column; for a nullable one, the rows its null
     rate leaves, counted as the generator does) are at most `at_most` × the parent's rows. Only in
     a document of spec 0.9.0 or later.
+25. A copied value (a `references` onto a plain column of a parent the table also has a foreign
+    key to) with two or more foreign keys of one column onto that parent has a `via` naming one
+    of them; a `via` names such a foreign key and sits on a copied value only. `via` only in a
+    document of spec 0.10.0 or later; the missing `via` is an error whatever the version.
 
 ### Warnings
 

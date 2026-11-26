@@ -290,7 +290,7 @@ def test_with_no_locale_a_lone_country_comes_from_the_whole_world():
 
 def test_with_a_locale_a_lone_country_still_favours_its_home():
     counts = _countries("nl_BE").value_counts(normalize=True)
-    assert counts.index[0] == "Belgium" and counts.iloc[0] > 0.5
+    assert counts.index[0] == "België" and counts.iloc[0] > 0.5
 
 
 def test_an_explicit_default_locale_is_a_locale():
