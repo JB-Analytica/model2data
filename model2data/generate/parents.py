@@ -44,8 +44,9 @@ A column that also follows a column of its own row (by `after` or by its
 name's stage) is then placed after both by `timeline.order_row_times`, which
 reads the parents' moments as one more thing to follow.
 
-All draws come from the table's own stream (seeded by `generate.core`), so the
-hint is as reproducible as the rest of the table.
+Each column's draws come from a stream of its own (see `generate.streams`), so
+the hint is as reproducible as the rest of the table, and a column's dates do not
+move when another column is added to the table.
 """
 
 from __future__ import annotations
@@ -66,6 +67,7 @@ from model2data.generate.clock import Calendar
 from model2data.generate.faker import _DATE_WINDOW_YEARS, _column_time_profile, _years_before
 from model2data.generate.options import UNIFORM, TimeProfile
 from model2data.generate.relationships import _key_kind, copied_columns
+from model2data.generate.streams import Streams
 from model2data.generate.timeline import (
     _TIMESTAMP_WINDOW_DAYS,
     HOUR_WEIGHTS,
@@ -338,6 +340,8 @@ def follow_parents(
     time_profile: Optional[TimeProfile] = None,
     repick: bool = True,
     keep: Optional[Mapping[str, np.ndarray]] = None,
+    streams: Optional[Streams] = None,
+    stream_kind: str = "follow",
 ) -> tuple[pd.Series, list]:
     """Make every row of `df` hold `rule`, in place.
 
@@ -348,8 +352,12 @@ def follow_parents(
     another parent), for a pass that must leave the foreign keys as they are.
     `keep` masks, per foreign-key column, the rows that keep their parent
     whatever their date (the rows an `at_least` gave a parent, see
-    generate.rollups): such a late row moves its date (step 3).
+    generate.rollups): such a late row moves its date (step 3). `streams` gives the
+    column's draws a stream of their own, keyed by the column (`stream_kind` tells the
+    first pass from the one that holds the rule afterwards).
     """
+    if streams is not None:
+        streams.reseed(stream_kind, rule.column)
     own = moments(df[rule.column], rule.kind)
     floors: list[pd.Series] = []
     for link in rule.links:

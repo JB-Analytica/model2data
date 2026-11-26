@@ -18,13 +18,15 @@ already holds; a table without it never changes.
 Day 0 is exactly what `generate_data_from_dbml` returns for the same settings
 (it calls it), so asking for days changes no byte of the first day.
 
-Determinism. Day *n* of a table draws from its own RNG stream, derived from
+Determinism. Day *n* of a table draws from RNG streams derived from
 `(seed, table, table_seed, n)` the way `generate.core._table_stream_seed`
-derives a table's stream for day 0, so it depends on the seed, `as_of`, *n*,
-the model and the table's state after day *n-1* (and, through its foreign keys,
-on the parents' state) -- never on which other tables exist or the order the
-tables are generated in. Adding an unrelated table to the model leaves every
-other table's days untouched.
+derives a table's stream for day 0, one for each column (and each step that works
+on the whole table: see `generate.streams`), so it depends on the seed, `as_of`,
+*n*, the model and the table's state after day *n-1* (and, through its foreign
+keys, on the parents' state) -- never on which other tables exist or the order
+the tables are generated in. Adding an unrelated table to the model leaves every
+other table's days untouched; adding a column leaves the other columns' values
+as they were.
 
 Details the spec leaves to the engine (they are also in the spec README):
 
@@ -57,7 +59,6 @@ Details the spec leaves to the engine (they are also in the spec README):
 
 from __future__ import annotations
 
-import hashlib
 import math
 import random
 from collections.abc import Iterator, Mapping
@@ -85,6 +86,7 @@ from model2data.generate.faker import (
     generate_column_values,
     release_row_pools,
     reset_row_pools,
+    seed_row_pools,
     set_locale,
 )
 from model2data.generate.hints import validate_hints
@@ -92,6 +94,7 @@ from model2data.generate.options import UNIFORM, TimeProfile, validate_skew
 from model2data.generate.parents import ParentRule, floor_on_day, parent_rules
 from model2data.generate.relationships import build_fk_lookup, classify_refs
 from model2data.generate.rollups import rollups_of
+from model2data.generate.streams import Streams, digest_seed, stream_seed
 from model2data.generate.timeline import HOUR_WEIGHTS, _build_dependencies, _topological_order
 from model2data.generate.when import SeedFor, apply_when, end_of_day, update_when
 from model2data.generate.windows import has_window
@@ -420,9 +423,7 @@ def _temporal_kind_of(table: TableDef, name: str) -> Optional[str]:
 
 def _day_stream_seed(seed: int, table_name: str, table_seed: Optional[int], day: int) -> int:
     """The RNG seed one table draws from on one day (blake2b, stable across processes)."""
-    payload = f"{seed}|{table_name}|{'' if table_seed is None else table_seed}|day|{day}"
-    digest = hashlib.blake2b(payload.encode("utf-8"), digest_size=8).digest()
-    return int.from_bytes(digest, "big")
+    return digest_seed(f"{seed}|{table_name}|{'' if table_seed is None else table_seed}|day|{day}")
 
 
 def _is_enum(column: ColumnDef) -> bool:
@@ -445,6 +446,8 @@ class _Engine:
     warnings: list[str] = field(default_factory=list)
     states: dict[str, pd.DataFrame] = field(default_factory=dict)
     rules: dict[str, list[ParentRule]] = field(default_factory=dict)
+    # The streams of the table being advanced (set by `advance`).
+    streams: Streams = field(default_factory=lambda: Streams(None, ""))
 
     # -- one table, one day ---------------------------------------------
     def advance(
@@ -452,11 +455,20 @@ class _Engine:
     ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, list[int]]:
         table = self.tables[key]
         state = self.states[key]
+        table_seed = self.table_seeds.get(key)
+        self.streams = Streams(self.seed, key, table_seed, scope=f"day{self.day}|")
         if self.seed is not None:
-            stream = _day_stream_seed(self.seed, key, self.table_seeds.get(key), self.day)
+            stream = _day_stream_seed(self.seed, key, table_seed, self.day)
             random.seed(stream)
             Faker.seed(stream)
         reset_row_pools()
+        if (run_seed := self.seed) is not None:
+            # People and addresses are drawn from streams of their own, so which column
+            # asks for them first does not matter.
+            scope = f"day{self.day}|pool"
+            seed_row_pools(
+                lambda pool: stream_seed(run_seed, key, table_seed, scope, f"{pool[0]}|{pool[1]}")
+            )
         inserted = self._insert(key, table, inc, state)
         positions, changes = self._update(key, table, inc, state)
         release_row_pools(key)
@@ -517,6 +529,7 @@ class _Engine:
                 force_not_null=column.name in composite_pk or column.name == inc.updated_at,
                 lone=column.name in lone,
                 fresh_keys=True,
+                step="insert",
             )
         for column in deferred:
             parent_column = self.fk_lookup[(key, column.name)][1]
@@ -534,9 +547,11 @@ class _Engine:
                 pool=own,
                 force_not_null=column.name in composite_pk,
                 fresh_keys=False,
+                step="insert",
             )
         frame = pd.DataFrame({name: data[name] for name in names})
         for column in table.columns:
+            self.streams.reseed("start", column.name)
             _start_in_initial_states(frame, column)
         frame = self._mirror(key, frame)
         self._composite_keys(key, table, frame, state)
@@ -609,6 +624,7 @@ class _Engine:
             columns = composite.get("columns") or []
             if not columns or any(c not in frame.columns for c in columns):
                 continue
+            self.streams.reseed("composite", ",".join(columns))
             seen = set(map(tuple, state[columns].itertuples(index=False, name=None)))
             unresolved = 0
             for index in frame.index:
@@ -650,6 +666,7 @@ class _Engine:
         )
         if rows <= 0 or not (changed or inc.updated_at):
             return [], state.iloc[0:0][[]]
+        self.streams.reseed("update-rows", "")
         positions = sorted(random.sample(range(existing), rows))
         current = state.iloc[positions]
         out: dict[str, list] = {}
@@ -657,6 +674,7 @@ class _Engine:
             column = by_name[name]
             transitions = (column.note or {}).get("transitions")
             if transitions:
+                self.streams.reseed("update", name)
                 allowed = {str(k): [str(v) for v in vs] for k, vs in transitions.items()}
                 out[name] = [
                     random.choice(allowed[str(v)]) if not pd.isna(v) and allowed.get(str(v)) else v
@@ -668,7 +686,14 @@ class _Engine:
                 if target is not None and target[0] == key:
                     pool = state[target[1]].dropna()
                 out[name] = self._draw(
-                    key, column, rows, state, pool=pool, force_not_null=False, fresh_keys=False
+                    key,
+                    column,
+                    rows,
+                    state,
+                    pool=pool,
+                    force_not_null=False,
+                    fresh_keys=False,
+                    step="update",
                 )
         if inc.updated_at and inc.updated_at not in out:
             out[inc.updated_at] = self._draw(
@@ -678,6 +703,7 @@ class _Engine:
                 state,
                 force_not_null=True,
                 fresh_keys=False,
+                step="update",
             )
         frame = pd.DataFrame(out, index=current.index)
         temporal = [
@@ -713,8 +739,10 @@ class _Engine:
         force_not_null: bool,
         lone: bool = False,
         fresh_keys: bool,
+        step: str,
     ) -> list:
-        """`count` values for one column of the table's next rows."""
+        """`count` values for one column of the table's next rows, from the column's own stream."""
+        self.streams.reseed(step, column.name)
         unique = _is_unique(column)
         note = column.note or {}
         if pool is not None and len(pool) == 0:
@@ -825,6 +853,7 @@ class _Engine:
                 frame[name] = values.where(present, None)
                 continue
             profile = _column_time_profile(column, self.profile) or UNIFORM
+            self.streams.reseed("only-updated" if only_updated_at else "place", name)
             moments = self._timestamps(len(frame), profile)
             stamps[name] = pd.Series(moments, index=frame.index).where(present, pd.NaT)
         if not only_updated_at:
@@ -854,6 +883,7 @@ class _Engine:
         for rule in self.rules.get(table.name, []):
             if rule.column not in stamps:
                 continue
+            self.streams.reseed("after-parents", rule.column)
             floor = floor_on_day(frame, rule, self.states)
             current = stamps[rule.column]
             late = current.notna() & floor.notna() & (current < floor)

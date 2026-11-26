@@ -212,7 +212,8 @@ optional unit test fixtures (`--unit-tests`), and a DuckDB or Postgres profile.
 → [The generated dbt project](docs/dbt-project.md)
 
 **The same files, byte for byte.** Same model, `--seed`, `--as-of` and options, same files, with
-the same model2data version. `--table-seed orders=7` re-rolls one table and leaves the rest alone.
+the same model2data version, and a model can grow without its existing columns changing.
+`--table-seed orders=7` re-rolls one table and leaves the rest alone.
 → [The determinism promise](docs/generating.md#the-determinism-promise)
 
 **Days after the first.** `--days 7` or `--next` adds new rows and updates existing ones; enum

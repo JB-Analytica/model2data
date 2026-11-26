@@ -37,10 +37,13 @@ The same model, seed and `--as-of` — with the same options (`--rows`, `--rows-
 - with any Faker or pandas version model2data accepts;
 - with the same model2data version, whenever you run it.
 
+A column's values depend only on the run's settings and the column's own definition, plus what it
+is derived from, ordered after, ruled with or pointed at. Adding, removing or moving a column, or
+adding a table, leaves every other column's values as they were.
+
 A new release may change what a seed produces, to fix a bug or make the data more realistic.
-When it does, the changelog says which models are affected and why (1.16.0, for one, numbers
-integer primary keys 1..N, which changes the bytes of every model that has one, and moves dates
-only where a model uses a parent's column in `after`). Pin the version (`model2data==1.14.0`)
+When it does, the changelog says which models are affected and why (1.26.0, for one, gives every
+column a random stream of its own, which changes the bytes of every model once). Pin the version (`model2data==1.14.0`)
 when fixtures must stay the same across upgrades.
 
 `tests/test_determinism.py` holds the file hashes of a spread of models, presets, multi-day runs

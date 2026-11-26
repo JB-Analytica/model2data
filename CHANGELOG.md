@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.26.0] - 2026-11-26
+
+**A one-time change of the rows every model generates for a given seed.** Every column of every
+table with a `--seed` now draws from a random stream of its own, so the rows differ from 1.25.3's
+for the same model, seed and `--as-of`, whatever the model holds. A dbt project that keeps known
+values saved in its tests (an expected total, a fixture compared to the seed CSVs) needs them
+regenerated once; rows written by 1.26.0 are what every later release writes, unless its
+changelog says otherwise.
+
+### Changed
+- **A column's values no longer depend on the other columns of its table.** The run's settings and
+  the column's own definition decide them, plus the columns and parents it depends on: one
+  derived from, ordered `after` or ruled with another changes when that one does, and a foreign
+  key draws from the rows of the parent it points at. Before, a table drew all its columns from
+  one stream in order, so inserting a column in the middle of `orders` changed every column after
+  it. Now adding, removing or moving a column, adding a table, a rule or a composite key
+  (on other columns) moves none of the columns they do not touch, on the first day and on the
+  days after it. The people and addresses a row's name, e-mail, city and country columns share
+  are drawn from a stream of their own for each table, so which of those columns comes first no
+  longer matters. `--table-seed` still re-rolls one whole table.
+- **Table shape still matters in two documented places**: a lone `country` column becomes the
+  locale's own country when a `city`, `street`, `state` or postcode column joins it, and a new
+  date column joins the ordering of a table's created, updated and closed dates by its name.
+- Rules draw from a stream of their own for each rule, named by its content, so adding a rule
+  moves no other rule's redraws.
+
 ## [1.25.3] - 2026-11-25
 
 There is no 1.25.2: its release could not be built.

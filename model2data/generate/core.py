@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import random
 from collections import defaultdict, deque
 from collections.abc import Callable, Mapping
@@ -20,6 +19,7 @@ from model2data.generate.faker import (
     reset_duplicate_unique_columns,
     reset_row_pools,
     resolve_address_pool_field,
+    seed_row_pools,
     set_locale,
 )
 from model2data.generate.hints import validate_hints
@@ -44,6 +44,7 @@ from model2data.generate.rules import (
     get_unsatisfied_rules,  # noqa: F401  (the CLI reads it from here, beside the other reports)
     reset_rules_state,
 )
+from model2data.generate.streams import Streams, stream_seed
 from model2data.generate.timeline import _resolve_anchor, order_row_times
 from model2data.generate.when import SeedFor, apply_when, conditions
 from model2data.parse.dbml import ColumnDef, TableDef
@@ -282,25 +283,35 @@ def generate_data_from_dbml(
             if cap_reason is not None:
                 _capped_tables.append(f"{table_name}: {row_count} rows, not {asked} ({cap_reason})")
 
-        # Give this table its own RNG stream before a single value of it is
+        # Give this table its own RNG streams before a single value of it is
         # drawn. One stream for the whole run meant re-rolling a table
         # re-rolled everything generated after it too -- fine for a one-shot
         # CLI run, useless for a "regenerate just this table" button, which is
         # exactly the thing users ask for once they like four tables out of
         # five. Same locale-then-seed order as the run-level seeding above.
+        # Within the table, each column (and each step that works on the whole
+        # table) draws from a stream of its own, started right before it draws:
+        # see generate.streams.
+        table_seed = table_seeds.get(table_name) if table_seeds else None
+        streams = Streams(seed, table_name, table_seed)
         if seed is not None:
-            stream_seed = _table_stream_seed(
-                seed, table_name, table_seeds.get(table_name) if table_seeds else None
-            )
-            random.seed(stream_seed)
-            Faker.seed(stream_seed)
+            random.seed(_table_stream_seed(seed, table_name, table_seed))
+            Faker.seed(_table_stream_seed(seed, table_name, table_seed))
 
         # A table's identities are its own. `release_row_pools` below already
         # drops the pool keyed by this table's name; this also drops the
         # un-named bucket the composite-key repair shares, so nothing a
         # previous table left behind can reach this one's rows and make its
-        # stream depend on what came before it.
+        # stream depend on what came before it. The people and addresses a
+        # column may ask for are drawn from streams of their own, so which
+        # column asks first does not matter.
         reset_row_pools()
+        if seed is not None:
+            seed_row_pools(
+                lambda pool, name=table_name, table_seed=table_seed: stream_seed(
+                    seed, name, table_seed, "pool", f"{pool[0]}|{pool[1]}"
+                )
+            )
 
         data: dict[str, list] = {}
 
@@ -372,6 +383,7 @@ def generate_data_from_dbml(
                 skew=skew,
                 lone_country=column.name in lone_country_columns,
             )
+            streams.reseed("column", column.name)
             data[column.name] = _covered(
                 draw, column, table_name, fk_target, fk_series, row_count, coverage
             )
@@ -391,6 +403,7 @@ def generate_data_from_dbml(
                 as_of=as_of,
                 time_profile=profile,
                 keep=keep,
+                streams=streams,
             )[0]
             for rule in table_rules
         }
@@ -405,6 +418,7 @@ def generate_data_from_dbml(
             time_profile=profile,
             floors=floors,
             copies={rule.column: rule.copies for rule in table_rules},
+            streams=streams,
         )
         df = _resolve_self_referencing_fks(
             df,
@@ -416,6 +430,7 @@ def generate_data_from_dbml(
             time_profile=profile,
             skew=skew,
             coverage=coverage,
+            streams=streams,
         )
         df = _deduplicate_composite_keys(
             df,
@@ -427,6 +442,7 @@ def generate_data_from_dbml(
             time_profile=profile,
             skew=skew,
             keep=_kept_rows(table_def, coverage, row_count),
+            streams=streams,
         )
 
         # -----------------------------------------------------
@@ -469,7 +485,7 @@ def generate_data_from_dbml(
                 # copy changes and the `when` is applied to what it then holds.
                 settlers[table_name] = settle_table
         if table_rules:
-            df = _hold_parent_rules(df, table_def, table_rules, generated, as_of, profile)
+            df = _hold_parent_rules(df, table_def, table_rules, generated, as_of, profile, streams)
         if table_def.rules:
             df = apply_rules(
                 df,
@@ -477,15 +493,7 @@ def generate_data_from_dbml(
                 table_name=table_name,
                 fk_pools=_fk_pools(df, table_def, table_name, fk_lookup, generated),
                 locked=_rule_locked_columns(table_def, table_name, attribute_refs),
-                seed=(
-                    _table_stream_seed(
-                        seed,
-                        f"{table_name}|rules",
-                        table_seeds.get(table_name) if table_seeds else None,
-                    )
-                    if seed is not None
-                    else None
-                ),
+                streams=streams,
                 as_of=as_of,
                 run_anchor=_midnight(as_of),
                 time_profile=profile,
@@ -514,13 +522,13 @@ def generate_data_from_dbml(
         table_def = tables[table_name]
         parent_table, parent_column = fk_lookup[(table_name, column.name)]
         if seed is not None:
-            stream_seed = _table_stream_seed(
+            column_stream = _table_stream_seed(
                 seed,
                 f"{table_name}.{column.name}",
                 table_seeds.get(table_name) if table_seeds else None,
             )
-            random.seed(stream_seed)
-            Faker.seed(stream_seed)
+            random.seed(column_stream)
+            Faker.seed(column_stream)
         reset_row_pools()
         df = generated[table_name]
         fk_series = generated[parent_table][parent_column]
@@ -700,6 +708,7 @@ def _hold_parent_rules(
     generated: dict[str, pd.DataFrame],
     as_of: AsOf,
     profile: TimeProfile,
+    streams: Streams,
 ) -> pd.DataFrame:
     """Keep the cross-table `after` after the passes that run once it was applied.
 
@@ -720,6 +729,8 @@ def _hold_parent_rules(
             as_of=as_of,
             time_profile=profile,
             repick=False,
+            streams=streams,
+            stream_kind="hold",
         )
         floors[rule.column] = floor
         moved.update(rows)
@@ -732,6 +743,8 @@ def _hold_parent_rules(
             rows=sorted(moved),
             floors=floors,
             copies={rule.column: rule.copies for rule in rules},
+            streams=streams,
+            stream_kind="hold-order",
         )
     return df
 
@@ -870,6 +883,7 @@ def _deduplicate_composite_keys(
     time_profile: Optional[TimeProfile] = None,
     skew: float = 0.0,
     keep: Optional[Mapping[str, Any]] = None,
+    streams: Optional[Streams] = None,
 ) -> pd.DataFrame:
     """
     Regenerate colliding rows for any pk/unique composite key declared via an
@@ -893,6 +907,9 @@ def _deduplicate_composite_keys(
             continue  # one row for each combination: already unique
 
         regen_columns = [(c, columns_by_name[c]) for c in key_columns]
+        if streams is not None:
+            # Keyed by the columns the key is made of, not by its place in the table.
+            streams.reseed("composite", ",".join(key_columns))
 
         # A composite key's columns are very often FKs (the standard way to
         # model a join/bridge table's PK). Regenerating those blind, via the
@@ -977,6 +994,7 @@ def _resolve_self_referencing_fks(
     time_profile: Optional[TimeProfile] = None,
     skew: float = 0.0,
     coverage: Optional[dict[str, Coverage]] = None,
+    streams: Optional[Streams] = None,
 ) -> pd.DataFrame:
     """
     Re-generate any FK column that references its own table (e.g. a
@@ -1017,6 +1035,8 @@ def _resolve_self_referencing_fks(
             time_profile=time_profile,
             skew=skew,
         )
+        if streams is not None:
+            streams.reseed("self_ref", column.name)
         df[column.name] = _covered(
             draw,
             column,
@@ -1064,14 +1084,11 @@ def _validate_table_seeds(
 def _table_stream_seed(seed: int, table_name: str, table_seed: Optional[int]) -> int:
     """The RNG seed one table draws from, derived from the run seed and its name.
 
-    Hashed with blake2b rather than Python's built-in `hash()`, which is salted
-    per interpreter process for strings: a "deterministic" seed built on it
-    would reproduce only within a single run of the program, which is the one
-    place determinism was never in doubt.
+    Hashed with blake2b (see `generate.streams`), not Python's built-in `hash()`, which
+    is salted per interpreter process for strings. Every column of the table
+    then draws from a stream of its own, derived the same way from this one's inputs.
     """
-    payload = f"{seed}|{table_name}|{'' if table_seed is None else table_seed}"
-    digest = hashlib.blake2b(payload.encode("utf-8"), digest_size=8).digest()
-    return int.from_bytes(digest, "big")
+    return stream_seed(seed, table_name, table_seed)
 
 
 def _determine_row_count(

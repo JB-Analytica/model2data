@@ -33,17 +33,16 @@ are put back as they were afterwards. A model without `when` never reaches this 
 from __future__ import annotations
 
 import random
-from collections.abc import Collection, Iterator, Mapping
-from contextlib import contextmanager
+from collections.abc import Collection, Mapping
 from datetime import datetime, timedelta
 from typing import Any, Callable, Optional
 
-import faker.generator
 import pandas as pd
 
 from model2data.generate import kinds, windows
 from model2data.generate.faker import AsOf, generate_column_values
 from model2data.generate.options import TimeProfile
+from model2data.generate.streams import own_stream
 from model2data.generate.timeline import (
     _build_dependencies,
     _format_value,
@@ -111,26 +110,6 @@ def _null_count(column: ColumnDef, rows: int) -> int:
     """How many of `rows` matching rows stay null: floor(rows * null_rate), else none."""
     rate = (column.note or {}).get("null_rate")
     return int(rows * rate + 1e-9) if rate is not None else 0
-
-
-@contextmanager
-def own_stream(seed: Optional[int]) -> Iterator[None]:
-    """Draw from a stream of `seed` inside the block, and put the shared streams back after.
-
-    Both streams generation draws from -- the `random` module's and the one
-    every Faker instance shares -- are seeded on the way in and restored on the
-    way out, so what is drawn here never shifts a draw made outside.
-    """
-    shared = random.getstate()
-    faker_random = faker.generator.random
-    faker_state = faker_random.getstate()
-    try:
-        random.seed(seed)
-        faker_random.seed(seed)
-        yield
-    finally:
-        random.setstate(shared)
-        faker_random.setstate(faker_state)
 
 
 def _temporal_kind(column: ColumnDef) -> Optional[str]:
