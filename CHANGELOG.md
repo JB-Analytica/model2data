@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [1.26.0] - Unreleased
+## [1.26.0] - 2026-11-26
 
 **A one-time change of the rows every model generates for a given seed.** Every column of every
 table with a `--seed` now draws from a random stream of its own, so the rows differ from 1.25.3's
