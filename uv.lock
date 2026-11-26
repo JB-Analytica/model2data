@@ -789,6 +789,7 @@ name = "model2data"
 version = "1.26.0"
 source = { editable = "." }
 dependencies = [
+    { name = "babel" },
     { name = "dbt-core" },
     { name = "dbt-duckdb" },
     { name = "faker" },
@@ -815,6 +816,7 @@ postgres = [
 
 [package.metadata]
 requires-dist = [
+    { name = "babel", specifier = ">=2.12" },
     { name = "dbt-core", specifier = ">=1.11" },
     { name = "dbt-duckdb", specifier = ">=1.11" },
     { name = "dbt-postgres", marker = "extra == 'postgres'", specifier = ">=1.11" },

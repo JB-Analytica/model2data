@@ -29,6 +29,7 @@ from model2data.generate.parents import ParentRule, follow_parents, parent_rules
 from model2data.generate.relationships import (
     build_fk_lookup,
     classify_refs,
+    copy_fk,
 )
 from model2data.generate.rollups import (
     Coverage,
@@ -654,14 +655,7 @@ def _mirror_attributes(
             continue
 
         # find FK linking child → parent
-        fk_ref = next(
-            (
-                r
-                for r in fk_refs
-                if r["source_table"] == table_name and r["target_table"] == parent_table
-            ),
-            None,
-        )
+        fk_ref = copy_fk(fk_refs, ref)
         if fk_ref is None:
             continue
 

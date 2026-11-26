@@ -161,6 +161,8 @@ class _Converter:
         self.issues: list[Issue] = []
         self.tables: dict[str, dict] = {}
         self.keys_of: dict[int, str] = {}
+        # A column's `via` hint, which belongs to its reference: {(table key, column): via}.
+        self.vias: dict[tuple[str, str], Any] = {}
 
     def fail(self, path: str, message: str) -> None:
         self.issues.append(Issue(path, message))
@@ -205,7 +207,7 @@ class _Converter:
         document["tables"] = self.tables
         # A note hint `when` is spec 0.4.0, an `after` that is a list or names a
         # parent's column 0.5.0, `rollup` or `at_least` 0.6.0, `derive` or a date `min`/`max` 0.7.0,
-        # `days` or `times` 0.8.0, and a `poisson` distribution or `at_most` 0.9.0: the document
+        # `days` or `times` 0.8.0, a `poisson` distribution or `at_most` 0.9.0, and a `via` 0.10.0: the document
         # says so, and any other stays 0.2.0.
         generates = [
             column.get("generate") or {}
@@ -227,6 +229,18 @@ class _Converter:
             document["model2data"] = "0.4.0"
 
         relationships = self._refs()
+        for (table_key, name), via in self.vias.items():
+            reference = (
+                self.tables.get(table_key, {}).get("columns", {}).get(name, {}).get("references")
+            )
+            if isinstance(reference, dict) and "via" in reference:
+                document["model2data"] = "0.10.0"
+            else:
+                self.fail(
+                    f"tables.{table_key}.columns.{name}",
+                    f"the note hint `via` ({via!r}) names the foreign key a copied value is "
+                    "read through, and the column has no ref onto a parent's column to copy",
+                )
         if relationships:
             document["relationships"] = relationships
 
@@ -322,6 +336,10 @@ class _Converter:
             hints = dict(hints)
             if "measure" in hints:
                 out["measure"] = hints.pop("measure")
+            if "via" in hints:
+                # `via` says which foreign key a copied value is read through: it is the
+                # column's `references` that carries it (spec 0.10.0).
+                self.vias[(self.table_key(column.table), column.name)] = hints.pop("via")
             if hints:
                 out["generate"] = _generate(hints)
         elif note:
@@ -378,7 +396,14 @@ class _Converter:
         if column is None:
             return
         to = self._path(parent)
-        reference: Any = {"to": to, "one_to_one": True} if one_to_one else to
+        via = self.vias.get((table_key, child.name))
+        reference: Any = to
+        if via is not None or one_to_one:
+            reference = {"to": to}
+            if via is not None:
+                reference["via"] = via
+            if one_to_one:
+                reference["one_to_one"] = True
         existing = column.get("references")
         if existing is None:
             column["references"] = reference

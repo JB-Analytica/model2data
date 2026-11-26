@@ -6,7 +6,7 @@ import copy
 from collections.abc import Mapping
 from typing import Any
 
-from model2data.model.errors import Issue, ModelError, format_path
+from model2data.model.errors import Issue, ModelError, Suggestion, format_path
 from model2data.model.types import (
     Column,
     Defect,
@@ -22,7 +22,7 @@ from model2data.model.types import (
     Shape,
     Table,
 )
-from model2data.model.validate import _json_keys, check
+from model2data.model.validate import _json_keys, check, minor_numbers
 
 
 def from_dict(data: Mapping[str, Any]) -> Model:
@@ -39,12 +39,111 @@ def from_dict(data: Mapping[str, Any]) -> Model:
         raise ModelError(errors, warnings)
     model = _build(_json_keys(data))
     found = _rollup_issues(model)
+    found += _copy_issues(model)
     errors = [issue for issue in found if issue.is_error]
     warnings += [issue for issue in found if not issue.is_error]
     if errors:
         raise ModelError(errors, warnings)
     model.warnings = warnings
     return model
+
+
+def _names(names: list[str]) -> str:
+    """`a`, `a or b`, `a, b or c`."""
+    return names[0] if len(names) == 1 else f"{', '.join(names[:-1])} or {names[-1]}"
+
+
+def copy_paths_of(model: Model) -> dict[tuple[str, str], list[str]]:
+    """For each column that copies a parent's column, the foreign keys of its table it can be
+    read through (spec 0.10.0, `via`): one-column foreign keys onto the parent's key, in the
+    order the model lists them. Keyed by `(table, column)`; a copy read through one foreign
+    key has a one-item list.
+    """
+    from model2data.generate.relationships import classify_refs, copy_paths
+    from model2data.model.engine import to_engine
+
+    inputs = to_engine(model)
+    fk_refs, attribute_refs = classify_refs(inputs.tables, inputs.refs)
+    found: dict[tuple[str, str], list[str]] = {}
+    for ref in attribute_refs:
+        key, name, parent = ref["source_table"], ref["source_column"], ref["target_table"]
+        table = model.tables.get(key)
+        column = table.columns.get(name) if table is not None else None
+        if table is None or column is None or column.references is None:
+            continue
+        # A foreign key of one column is a column's `references` (`foreign_keys` is composite).
+        single = {
+            n
+            for n, c in table.columns.items()
+            if c.references is not None and c.references.table == parent
+        }
+        paths = [
+            r["source_column"]
+            for r in copy_paths(fk_refs, key, parent)
+            if r["source_column"] in single
+        ]
+        found[(key, name)] = paths
+    return found
+
+
+def _copy_issues(model: Model) -> list[Issue]:
+    """What is wrong with the model's copied values (spec 0.10.0, `via`): a copy that can be
+    read through more than one foreign key and does not say which, a `via` that names none
+    of them, and a `via` on a column that copies nothing."""
+    wants = False
+    for table in model.tables.values():
+        parents: dict[str, int] = {}
+        for column in table.columns.values():
+            if column.references is not None:
+                if column.references.via is not None:
+                    wants = True
+                parents[column.references.table] = parents.get(column.references.table, 0) + 1
+        wants = wants or any(count >= 2 for count in parents.values())
+    if not wants:
+        return []
+    found = copy_paths_of(model)
+    spec = None if minor_numbers(model.version) >= (0, 10) else "0.10.0"
+    issues: list[Issue] = []
+    for key, table in model.tables.items():
+        for name, column in table.columns.items():
+            reference = column.references
+            if reference is None:
+                continue
+            path = f"tables.{key}.columns.{name}.references"
+            paths = found.get((key, name))
+            if reference.via is not None:
+                if paths is None:
+                    issues.append(
+                        Issue(
+                            f"{path}.via",
+                            f"`via` names the foreign key a copied value is read through, and "
+                            f"{key}.{name} is not a copy: it references {reference.to} as a "
+                            "foreign key itself",
+                        )
+                    )
+                elif reference.via not in paths:
+                    valid = (
+                        f"use {_names(paths)}"
+                        if paths
+                        else f"{key} has no foreign key of one column onto {reference.table}"
+                    )
+                    issues.append(
+                        Issue(
+                            f"{path}.via",
+                            f"`via` names {reference.via!r}, which is not a foreign key of one "
+                            f"column of {key} onto {reference.table}: {valid}",
+                        )
+                    )
+            elif paths is not None and len(paths) >= 2:
+                issues.append(
+                    Issue(
+                        path,
+                        f"{key}.{name} can reach {reference.table} through {_names(paths)}; "
+                        "add via:",
+                        suggestion=Suggestion(f"{path}.via", paths[0], spec),
+                    )
+                )
+    return issues
 
 
 def _rollup_issues(model: Model) -> list[Issue]:
@@ -195,7 +294,9 @@ def _column(column: Any) -> Column:
         return Column(type=column)
     reference = column.get("references")
     if isinstance(reference, Mapping):
-        reference = Reference(reference["to"], bool(reference.get("one_to_one", False)))
+        reference = Reference(
+            reference["to"], bool(reference.get("one_to_one", False)), reference.get("via")
+        )
     elif isinstance(reference, str):
         reference = Reference(reference)
     return Column(
@@ -355,6 +456,15 @@ def uses_0_9_hint(generate: Mapping[str, Any]) -> bool:
     return "at_most" in generate or kind == "poisson"
 
 
+def uses_0_10(model: Model) -> bool:
+    """Whether the model uses what spec 0.10.0 added: a `via` on a copied value's `references`."""
+    return any(
+        column.references is not None and column.references.via is not None
+        for table in model.tables.values()
+        for column in table.columns.values()
+    )
+
+
 def uses_0_5_after(after: Any) -> bool:
     """Whether an `after` is in a form spec 0.5.0 added: a list, or `<table>.<column>`."""
     return isinstance(after, list) or (isinstance(after, str) and "." in after)
@@ -363,46 +473,30 @@ def uses_0_5_after(after: Any) -> bool:
 def document_version(model: Model) -> Any:
     """The version the model's document is written against.
 
-    The version the model was read with, unless the model uses what that
-    version does not have: 0.9.0 when it uses a `poisson` distribution or `at_most` and was read
-    as 0.2-0.8, 0.8.0 when it uses `days` or `times` and was read as 0.2-0.7,
-    0.7.0 when it uses `rules`, `combinations`, `derive` or a date `min`/`max` and was read as 0.2-0.6,
-    0.6.0 when it uses `rollup` or `at_least` and was read as 0.2-0.5, 0.5.0 when it uses a list or a parent's column in
-    `after` and was read as
-    0.2-0.4, 0.4.0 when it uses `when` and was read as 0.2 or 0.3, 0.3.0 when it uses `defects` or `incremental.history` and was read as
-    0.2. A document without them is written as the version it was, as always.
+    The version the model was read with, unless the model uses what that version does not
+    have: the newest version whose additions it uses, when it was read as an older one
+    (0.10.0 for a `via` on a copied value, 0.9.0 for a `poisson` distribution or `at_most`,
+    0.8.0 for `days` or `times`, 0.7.0 for `rules`, `combinations`, `derive` or a date
+    `min`/`max`, 0.6.0 for `rollup` or `at_least`, 0.5.0 for a list or a parent's column in
+    `after`, 0.4.0 for `when`, 0.3.0 for `defects` or `incremental.history`). A document
+    without them is written as the version it was, as always.
     """
     version = model.version
-    minor = str(version).split(".")[:2]
-    if uses_0_9(model) and minor in (
-        ["0", "2"],
-        ["0", "3"],
-        ["0", "4"],
-        ["0", "5"],
-        ["0", "6"],
-        ["0", "7"],
-        ["0", "8"],
+    minor = minor_numbers(version)
+    if len(minor) < 2 or minor[0] != 0 or minor[1] < 2:
+        return version
+    for needed, uses in (
+        (10, uses_0_10),
+        (9, uses_0_9),
+        (8, uses_0_8),
+        (7, uses_0_7),
+        (6, uses_0_6),
+        (5, uses_0_5),
+        (4, uses_0_4),
+        (3, uses_0_3),
     ):
-        return "0.9.0"
-    if uses_0_8(model) and minor in (
-        ["0", "2"],
-        ["0", "3"],
-        ["0", "4"],
-        ["0", "5"],
-        ["0", "6"],
-        ["0", "7"],
-    ):
-        return "0.8.0"
-    if uses_0_7(model) and minor in (["0", "2"], ["0", "3"], ["0", "4"], ["0", "5"], ["0", "6"]):
-        return "0.7.0"
-    if uses_0_6(model) and minor in (["0", "2"], ["0", "3"], ["0", "4"], ["0", "5"]):
-        return "0.6.0"
-    if uses_0_5(model) and minor in (["0", "2"], ["0", "3"], ["0", "4"]):
-        return "0.5.0"
-    if uses_0_4(model) and minor in (["0", "2"], ["0", "3"]):
-        return "0.4.0"
-    if uses_0_3(model) and minor == ["0", "2"]:
-        return "0.3.0"
+        if minor[1] < needed and uses(model):
+            return f"0.{needed}.0"
     return version
 
 
@@ -450,11 +544,15 @@ def column_to_dict(column: Column) -> dict[str, Any]:
         out["default"] = column.default
     _put(out, "description", column.description)
     if column.references is not None:
-        out["references"] = (
-            {"to": column.references.to, "one_to_one": True}
-            if column.references.one_to_one
-            else column.references.to
-        )
+        reference = column.references
+        if reference.one_to_one or reference.via is not None:
+            out["references"] = {"to": reference.to}
+            if reference.via is not None:
+                out["references"]["via"] = reference.via
+            if reference.one_to_one:
+                out["references"]["one_to_one"] = True
+        else:
+            out["references"] = reference.to
     if column.measure is not None:
         out["measure"] = column.measure
     _put(out, "generate", copy.deepcopy(column.generate))

@@ -266,7 +266,7 @@ class TestLocale:
         be_country, be_cities = country_and_cities("nl_BE")
 
         assert us_country == {"United States"}
-        assert be_country == {"Belgium"}
+        assert be_country == {"België"}
         assert not us_cities & be_cities
 
     def test_locale_applies_to_people_too(self):

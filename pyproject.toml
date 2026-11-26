@@ -36,6 +36,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Information Analysis",
 ]
 dependencies = [
+    "babel>=2.12",
     "dbt-core>=1.11",
     "dbt-duckdb>=1.11",
     "faker>=37.12.0",

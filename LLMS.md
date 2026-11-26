@@ -23,7 +23,7 @@ install. If the person you're helping wants to *look at* or share the model rath
 its generation, point them there; the DBML guidance below applies to both.
 
 > **Two input formats.** Since 1.8, model2data reads a model as one YAML document,
-> `<name>.model2data.yml` ([spec 0.9.0](model2data/spec/README.md), with a JSON Schema at
+> `<name>.model2data.yml` ([spec 0.10.0](model2data/spec/README.md), with a JSON Schema at
 > `model2data/spec/model.schema.json` and a complete example at
 > `model2data/spec/examples/coffee_webshop.model2data.yml`, and `sports_league.model2data.yml` for
 > derived columns, rules, date windows, combinations, Poisson goals and `at_most`), and DBML as supported input that it
@@ -147,7 +147,7 @@ total_amount numeric [note: '{"distribution": "exponential", "mean": 30}']  ' mo
 home_goals int [note: '{"distribution": "poisson", "mean": 1.5, "max": 9}']  ' a count: whole numbers around the mean
 ```
 `distribution` (numeric columns only) is `"uniform"` (default, unchanged), `"normal"`, `"lognormal"`,
-`"exponential"`, or `"poisson"` (integer columns only, spec 0.9.0: counts such as goals, orders a
+`"exponential"`, or `"poisson"` (integer columns only, added in spec version 0.9.0: counts such as goals, orders a
 day, tickets an hour; its `mean` is also its variance). `mean`/`stddev` go with `normal`,
 `median`/`spread` with `lognormal`, `mean` with `exponential` and `poisson`; any left unset default to the midpoint of the column's `min`/`max` (or the
 range's own defaults, 0-100 for integers and 0-10,000 for decimals). `min`/`max` still clip the result.
@@ -202,7 +202,10 @@ so validation refuses it with an error naming both keys. There is no way yet to 
 the hint (the warning is not raised for such a table either). A column that only copies a value
 from the parent (`amount` references `invoices.amount` beside `invoice_id` references
 `invoices.id`) is not a second key: `paid_at: {after: invoices.issued_at}` follows the invoice
-`invoice_id` points at. No need to copy the parent's date to follow it.
+`invoice_id` points at. No need to copy the parent's date to follow it. A copy with two foreign
+keys onto its parent (`venue_id: {references: teams.venue_id}` beside `home_team_id` and
+`away_team_id`) names the one it follows: `references: {to: teams.venue_id, via: home_team_id}`
+(spec 0.10.0); without it, validation is an error naming both.
 
 **Tie lifecycle columns to the status they belong to with `when`.** Without it, every nullable
 column is filled or nulled independently of the others, so a `todo` task gets a `completed_at`
@@ -274,7 +277,7 @@ The rolled-up column takes no other value hint, is no key or foreign key, and no
 of a decimal column a decimal one. Each rollup writes the dbt test `model2data_rollup` (always
 on). `at_least: N` needs N × parents rows in the child table; with fewer, the summary lists the
 shortfall. In YAML both are spec 0.6.0 (`model2data: 0.6.0`). A rollup over a table with
-`incremental` cannot be generated with `--days`. `at_most: N` (spec 0.9.0) caps every parent at
+`incremental` cannot be generated with `--days`. `at_most: N` (added in spec version 0.9.0) caps every parent at
 N children: `{"at_least": 18, "at_most": 25}` on `players.club_id` gives squads of 18 to 25. A
 parent already at N is not drawn again; more rows than N × parents is an error (from `validate`
 when `run` gives both tables' rows, else at generation), never a silent cap. `at_least` must not

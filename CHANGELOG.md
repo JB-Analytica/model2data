@@ -7,14 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [1.26.0] - 2026-11-26
+## [1.26.0] - Unreleased
 
 **A one-time change of the rows every model generates for a given seed.** Every column of every
 table with a `--seed` now draws from a random stream of its own, so the rows differ from 1.25.3's
 for the same model, seed and `--as-of`, whatever the model holds. A dbt project that keeps known
 values saved in its tests (an expected total, a fixture compared to the seed CSVs) needs them
 regenerated once; rows written by 1.26.0 are what every later release writes, unless its
-changelog says otherwise.
+changelog says otherwise. On top of that, models that name a locale, use `name_male` or
+`name_female`, or copy a value from a parent through one of several foreign keys generate other
+rows for reasons of their own: see the entries on `via`, country names and titles below.
 
 ### Changed
 - **A column's values no longer depend on the other columns of its table.** The run's settings and
@@ -32,6 +34,34 @@ changelog says otherwise.
   date column joins the ordering of a table's created, updated and closed dates by its name.
 - Rules draw from a stream of their own for each rule, named by its content, so adding a rule
   moves no other rule's redraws.
+- **`via` on a copied value (model spec 0.10.0).** A column that references a parent's plain
+  column beside a foreign key to that parent copies the value from the row's own parent. With
+  two or more such foreign keys the engine silently took the first in document order. The
+  object form of `references` now takes `via`: `venue_id: {references: {to: teams.venue_id, via:
+  home_team_id}}`. Two or more foreign keys and no `via` is a validation error, for a document of
+  any spec version: `fixtures.venue_id can reach teams through home_team_id or away_team_id; add
+  via:`. A `via` that is not one of those foreign keys, or sits on a reference that is no copy,
+  is an error too. **Models whose copy is ambiguous no longer load**; add the first foreign key
+  as `via` and the rows are the ones the engine copied before. `model2data.model.fill_copy_paths(model)`
+  does that for a model or a document (it returns the changed copy and a note per change, and
+  moves the spec version to 0.10.0 only when it changed something), and the error carries the
+  same fix as an `Issue.suggestion`. `via` in a DBML column note (`{"via": "away_team_id"}`)
+  works as it does in a model. `0.10.0` needs a text version: the YAML number `0.10` is `0.1`.
+- **Country names follow the locale.** With `locale: de_DE` the home country (60% of a lone
+  `country` column, every row of an address) was the English `Germany` beside German names for
+  the rest. It is now the locale's own spelling, as its list spells it (`Deutschland`), or its
+  name in the locale's language when the list lacks it. A locale whose list is English keeps
+  English. **Rows change for every model with a `locale` on a country column or an address.**
+  Without a locale nothing changes.
+- **`name_male`, `name_female` and `name_nonbinary` have no titles.** Faker's own gave
+  `Prof. Dr. Hans Müller` and `Anna Schmidt B.Sc.` in some locales (about a third of de_DE).
+  They are now a first name and a last name, as `name` is. **Rows change for a model that uses
+  them.**
+
+### Added
+- `model2data.model.nullable_foreign_keys(model)` lists every nullable foreign key as
+  `(table, column, parent, share)`, the share being what the engine leaves empty (the column's
+  `null_rate`, else the default for the table's rows). It is a helper, not a warning.
 
 ## [1.25.3] - 2026-11-25
 

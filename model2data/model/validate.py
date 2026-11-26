@@ -1,4 +1,4 @@
-"""Does a document conform to spec 0.9.0 (or 0.2.x-0.8.x): the schema, then the checks beyond it.
+"""Does a document conform to spec 0.10.0 (or 0.2.x-0.9.x): the schema, then the checks beyond it.
 
 `check(document)` returns every issue it finds, each with the document path of
 the value at fault and a severity; it never stops at the first. The schema is
@@ -33,7 +33,7 @@ from model2data.generate.derive import CONFLICTS as DERIVE_CONFLICTS
 from model2data.generate.timeline import creation_column_name
 from model2data.model.errors import Issue, PathPart, Suggestion, format_path
 
-SPEC_VERSION = "0.9.0"
+SPEC_VERSION = "0.10.0"
 # The columns `incremental.history` adds to `<table>_history`.
 HISTORY_COLUMNS = ("valid_from", "valid_to", "is_current")
 # The minor versions this reader implements. 0.3.0 only adds `defects` and
@@ -41,9 +41,10 @@ HISTORY_COLUMNS = ("valid_from", "valid_to", "is_current")
 # `<table>.<column>` in `after`, 0.6.0 only `rollup` and `at_least`, 0.7.0 only a table's
 # `rules` and `combinations`, a column's `derive` and a date window, 0.8.0 only a column's
 # `days` and `times`, 0.9.0 only a `distribution` of kind `poisson` and a foreign key's
-# `at_most`, so an older
-# document reads exactly as it did; it just cannot use them.
-READS = ("0.2", "0.3", "0.4", "0.5", "0.6", "0.7", "0.8", "0.9")
+# `at_most`, 0.10.0 only a `via` on a copied value's `references`, so an older
+# document reads exactly as it did; it just cannot use them. Versions are compared as
+# numbers (`minor_numbers`): 0.10 comes after 0.9.
+READS = ("0.2", "0.3", "0.4", "0.5", "0.6", "0.7", "0.8", "0.9", "0.10")
 _URL = "https://www.jbanalytica.com/model2data/spec/{}/model.schema.json"
 SCHEMA_URL = _URL.format(SPEC_VERSION)
 
@@ -51,7 +52,8 @@ SCHEMA_URL = _URL.format(SPEC_VERSION)
 def schema_url(version: Any) -> str:
     """The schema URL a document of `version` points editors at: 0.2.0's for a 0.2 one,
     0.3.0's for a 0.3 one, 0.4.0's for a 0.4 one, 0.5.0's for a 0.5 one, 0.6.0's for a 0.6 one,
-    0.7.0's for a 0.7 one, 0.8.0's for a 0.8 one, the current one otherwise."""
+    0.7.0's for a 0.7 one, 0.8.0's for a 0.8 one, 0.9.0's for a 0.9 one, the current one
+    otherwise."""
     older = {
         "0.2": "0.2.0",
         "0.3": "0.3.0",
@@ -60,11 +62,14 @@ def schema_url(version: Any) -> str:
         "0.6": "0.6.0",
         "0.7": "0.7.0",
         "0.8": "0.8.0",
+        "0.9": "0.9.0",
     }.get(_minor(version) or "")
     return _URL.format(older) if older else SCHEMA_URL
 
 
 def _minor(version: Any) -> Optional[str]:
+    """The `MAJOR.MINOR` a document's version says. A bare YAML number reads as the decimal it
+    is, so `0.10` (the number 0.1) cannot say 0.10: write `0.10.0`."""
     if isinstance(version, float):
         return {
             0.2: "0.2",
@@ -81,9 +86,17 @@ def _minor(version: Any) -> Optional[str]:
     return None
 
 
+def minor_numbers(version: Any) -> tuple[int, ...]:
+    """`"0.10"` or `"0.10.0"` as `(0, 10)`, so that versions compare as numbers, not as text
+    (0.10 is after 0.9). `()` for no version."""
+    if version is None:
+        return ()
+    return tuple(int(part) if part.isdigit() else -1 for part in str(version).split(".")[:2])
+
+
 @lru_cache(maxsize=1)
 def schema() -> dict[str, Any]:
-    """The packaged, normative JSON Schema of spec 0.9.0, which also reads 0.2-0.8 documents."""
+    """The packaged, normative JSON Schema of spec 0.10.0, which also reads 0.2-0.9 documents."""
     text = resources.files("model2data").joinpath("spec/model.schema.json").read_text("utf-8")
     return json.loads(text)
 
@@ -138,7 +151,7 @@ def _version_issues(document: Mapping) -> list[Issue]:
                 Issue(
                     "model2data",
                     f"the document is written against spec {version}, and this reader "
-                    f"implements spec {SPEC_VERSION} (0.2.x to 0.9.x). "
+                    f"implements spec {SPEC_VERSION} (0.2.x to 0.10.x). "
                     + (
                         "Convert a 0.1 model, which is DBML, with `model2data convert`."
                         if parts[:2] == ["0", "1"]
@@ -1195,6 +1208,18 @@ class _Checks:
         )
         return True
 
+    def _needs_0_10(self, path: list[PathPart], what: str) -> bool:
+        """Report what 0.10.0 added (`what`) in a 0.2-0.9 document; True when it was reported."""
+        numbers = minor_numbers(self.minor)
+        if not numbers or numbers >= (0, 10):
+            return False
+        self.add(
+            path,
+            f"`{what}` is spec 0.10.0, and the document is written against {self.minor}: "
+            "write `model2data: 0.10.0`",
+        )
+        return True
+
     def table_rows(self, key: str) -> Optional[int]:
         """The rows the document's `run` gives a table, or None when it leaves them to the reader."""
         if _mapping(self.tables.get(key)).get("combinations"):
@@ -1463,6 +1488,8 @@ class _Checks:
             path.append("to")
         else:
             to = reference
+        if isinstance(reference, Mapping) and "via" in reference:
+            self._needs_0_10([*path[:-1], "via"], "via")
         if not isinstance(to, str) or "." not in to:
             return  # the schema has reported it
         problem = self._parent_issue(to, (key, name))
@@ -2484,7 +2511,7 @@ class _Checks:
                             format_path(path),
                             value,
                             None
-                            if self.minor in (None, "0.5", "0.6", "0.7", "0.8", "0.9")
+                            if self.minor in (None, "0.5", "0.6", "0.7", "0.8", "0.9", "0.10")
                             else "0.5.0",
                         ),
                     )

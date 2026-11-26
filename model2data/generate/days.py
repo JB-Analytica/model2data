@@ -92,7 +92,7 @@ from model2data.generate.faker import (
 from model2data.generate.hints import validate_hints
 from model2data.generate.options import UNIFORM, TimeProfile, validate_skew
 from model2data.generate.parents import ParentRule, floor_on_day, parent_rules
-from model2data.generate.relationships import build_fk_lookup, classify_refs
+from model2data.generate.relationships import build_fk_lookup, classify_refs, copy_fk
 from model2data.generate.rollups import rollups_of
 from model2data.generate.streams import Streams, digest_seed, stream_seed
 from model2data.generate.timeline import HOUR_WEIGHTS, _build_dependencies, _topological_order
@@ -596,14 +596,7 @@ class _Engine:
             if ref["source_table"] != key:
                 continue
             parent = self.states.get(ref["target_table"])
-            fk_ref = next(
-                (
-                    r
-                    for r in self.fk_refs
-                    if r["source_table"] == key and r["target_table"] == ref["target_table"]
-                ),
-                None,
-            )
+            fk_ref = copy_fk(self.fk_refs, ref)
             if parent is None or fk_ref is None:
                 continue
             fk_column, parent_key = fk_ref["source_column"], fk_ref["target_column"]
