@@ -30,10 +30,11 @@ within a retry budget.
   (`ne` between two columns that can each only hold one value) leaves rows that
   break it, which `get_unsatisfied_rules()` reports, and the CLI prints.
 
-Determinism. Every draw is from a stream of its own, derived from the run's seed, the
-table and the word `rules`, and the shared streams are put back as they were, so
-a table without `rules` draws exactly what it drew before the rules existed and a
-table with them changes only in the rows they redraw.
+Determinism. Every rule draws from a stream of its own, derived from the run's seed, the
+table and the rule itself (its columns, operator and operand, not its place in the list),
+and the shared streams are put back as they were. A table without `rules` draws exactly
+what it drew before the rules existed, a table with them changes only in the rows they
+redraw, and adding a rule on other columns moves no other rule's draws.
 """
 
 from __future__ import annotations
@@ -50,7 +51,7 @@ from model2data.generate import comparison as cmp
 from model2data.generate import kinds
 from model2data.generate.faker import AsOf, generate_column_values
 from model2data.generate.options import TimeProfile
-from model2data.generate.when import own_stream
+from model2data.generate.streams import Resumable, Streams
 from model2data.parse.dbml import ColumnDef, TableDef
 
 MAX_ATTEMPTS = 20
@@ -97,7 +98,7 @@ def apply_rules(
     table_name: str,
     fk_pools: Mapping[str, Optional[pd.Series]],
     locked: set[str],
-    seed: Optional[int],
+    streams: Streams,
     as_of: AsOf,
     run_anchor: datetime,
     time_profile: Optional[TimeProfile],
@@ -108,7 +109,7 @@ def apply_rules(
 
     `fk_pools` maps each foreign-key column to the parent values it draws from (None
     for one with no parent rows: it is not drawn again), `locked` names the columns that must not be
-    drawn again, `seed` seeds the rules' own stream (None leaves it to chance) and
+    drawn again, `streams` gives each rule a stream of its own (with no seed, chance) and
     `run_anchor` is the value of `{run: as_of}`. `refresh(df)`, given when the table has
     derived columns, brings them (and the `when`s that read them) up to date in place after a
     round that drew values again, so the next round reads what the columns hold.
@@ -130,19 +131,19 @@ def apply_rules(
             held = held | cmp.null_operand(df, comparison, kind_of)
         return np.flatnonzero(~held.to_numpy())
 
-    with own_stream(seed):
-        for attempt in range(MAX_ATTEMPTS):
-            drawn = False
-            for index, (_, comparison) in enumerate(found):
-                rows = offending(comparison)
-                if not len(rows) or not redraw[index]:
-                    continue
-                # The later column for the first half of the budget; a row still breaking
-                # the rule after that has the other candidates drawn again in turn.
-                options = redraw[index]
-                name = (
-                    options[0] if attempt < MAX_ATTEMPTS // 2 else options[attempt % len(options)]
-                )
+    # One stream per rule, which carries on from round to round.
+    rule_streams = Resumable(lambda text: streams.seed_for("rule", text))
+    for attempt in range(MAX_ATTEMPTS):
+        drawn = False
+        for index, (_, comparison) in enumerate(found):
+            rows = offending(comparison)
+            if not len(rows) or not redraw[index]:
+                continue
+            # The later column for the first half of the budget; a row still breaking
+            # the rule after that has the other candidates drawn again in turn.
+            options = redraw[index]
+            name = options[0] if attempt < MAX_ATTEMPTS // 2 else options[attempt % len(options)]
+            with rule_streams.use(cmp.label(comparison)):
                 df = _redraw(
                     df,
                     columns[name],
@@ -154,11 +155,11 @@ def apply_rules(
                     time_profile=time_profile,
                     skew=skew,
                 )
-                drawn = True
-            if not drawn:
-                break
-            if refresh is not None:
-                refresh(df)
+            drawn = True
+        if not drawn:
+            break
+        if refresh is not None:
+            refresh(df)
     for rule, comparison in found:
         left = len(offending(comparison))
         if left:

@@ -16,9 +16,9 @@ about *time*, unlike every other column type the generator draws:
   before it was created is wrong no matter how timestamps were drawn, so it
   runs unconditionally, right after a table's DataFrame is built.
 
-Both draw from the shared `random` module only, which `generate.core` already
-seeds per table, so a run stays reproducible under `--seed` without this
-module doing any seeding of its own.
+Both draw from the shared `random` module only; `generate.core` seeds it, for
+each column this module places, so a run stays reproducible under `--seed` and a
+column's dates do not depend on the other columns of the table.
 """
 
 from __future__ import annotations
@@ -38,6 +38,7 @@ from pandas import NaT
 from model2data.generate.clock import HOUR_WEIGHTS, Calendar, Clock, clip, clock_of, draw_time
 from model2data.generate.kinds import temporal_kind
 from model2data.generate.options import TimeProfile
+from model2data.generate.streams import Streams
 from model2data.generate.windows import bounds, has_window, window
 from model2data.parse.dbml import ColumnDef, TableDef
 
@@ -673,6 +674,8 @@ def order_row_times(
     rows: Optional[list] = None,
     floors: Optional[dict] = None,
     copies: Optional[Mapping[str, set[str]]] = None,
+    streams: Optional[Streams] = None,
+    stream_kind: str = "order",
 ):
     """Fix up temporal columns so an earlier-stage column never lands later.
 
@@ -695,6 +698,8 @@ def order_row_times(
     (a cross-table `after`, see generate.parents): a column placed here lands
     after that too. `copies` names, per column, the columns of its `after` that copy a
     parent's date: they hold no final value yet, and its floor already stands for them.
+    With `streams`, each column it places draws from a stream of its own, so adding a
+    column to the table moves none of them (`stream_kind` names the pass).
     """
     columns_by_name = {column.name: column for column in table_def.columns}
     temporal_columns = [
@@ -746,6 +751,8 @@ def order_row_times(
         # lands within `_FOLLOW_AHEAD_DAYS` of it (only a windowed column is ever dated so).
         upper = window(own_note, kind, anchor)[1] if has_window(own_note) else cap
         opens = bounds(own_note, kind)[0]  # its own `min`
+        if streams is not None:
+            streams.reseed(stream_kind, column_name)
 
         for idx in df.index if rows is None else rows:
             drawn = _parse_value(df.at[idx, column_name], kind)

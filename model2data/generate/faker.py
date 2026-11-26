@@ -9,6 +9,7 @@ import uuid
 from bisect import bisect_right
 from collections import OrderedDict
 from collections.abc import Mapping
+from contextlib import nullcontext
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
 from itertools import accumulate
@@ -30,6 +31,7 @@ from model2data.generate.kinds import (
     temporal_kind,
 )
 from model2data.generate.options import UNIFORM, TimeProfile
+from model2data.generate.streams import Resumable
 from model2data.generate.timeline import (
     clocked_values,
     column_clock,
@@ -381,14 +383,34 @@ def _new_address() -> _Address:
 
 
 def reset_row_pools() -> None:
-    """Drop every table's person and address pool.
+    """Drop every table's person and address pool, and the seeding of the next ones.
 
     Called per run by generate_data_from_dbml alongside the other per-run state.
     Without it a second run in the same process reuses the first run's people,
     which looks harmless right up until a seeded run stops reproducing.
     """
+    global _pool_streams
     _person_state.clear()
     _address_state.clear()
+    _pool_streams = None
+
+
+# Where a seeded run's pools draw from: a stream of their own for each pool of each
+# table, which carries on as the pool grows. A pool is made by whichever column asks for
+# its rows first, so were it drawn from that column's stream, the column would change
+# with the columns beside it. None (no seed, or no run) draws from whatever stream is
+# running, as before.
+_pool_streams: Optional[Resumable] = None
+
+
+def seed_row_pools(seed_for: Optional[Callable[[tuple[str, str]], Optional[int]]]) -> None:
+    """Draw the pools made from here on from streams of their own: `seed_for((table, pool))`
+    is the seed of one. None draws them from the running stream again.
+
+    Call it after `reset_row_pools`, which forgets it, with the table about to be drawn.
+    """
+    global _pool_streams
+    _pool_streams = Resumable(seed_for) if seed_for is not None else None
 
 
 def release_row_pools(table_name: str) -> None:
@@ -401,6 +423,8 @@ def release_row_pools(table_name: str) -> None:
     """
     _person_state.pop(table_name, None)
     _address_state.pop(table_name, None)
+    if _pool_streams is not None:
+        _pool_streams.drop(lambda key: key[0] == table_name)
 
 
 def _row_pool(pool: str, table_name: Optional[str], row_count: int) -> list:
@@ -418,14 +442,25 @@ def _row_pool(pool: str, table_name: Optional[str], row_count: int) -> list:
     # pool is exactly the thing a reader (and a type checker) wants to see.
     if pool == "person":
         people = _person_state.setdefault(key, [])
-        while len(people) < row_count:
-            people.append(_new_person())
+        if len(people) < row_count:
+            with _pool_stream(key, pool):
+                while len(people) < row_count:
+                    people.append(_new_person())
         return people
 
     addresses = _address_state.setdefault(key, [])
-    while len(addresses) < row_count:
-        addresses.append(_new_address())
+    if len(addresses) < row_count:
+        with _pool_stream(key, pool):
+            while len(addresses) < row_count:
+                addresses.append(_new_address())
     return addresses
+
+
+def _pool_stream(table_name: str, pool: str):
+    """The stream a pool grows from, put back as it was found when the block ends."""
+    if _pool_streams is None:
+        return nullcontext()
+    return _pool_streams.use((table_name, pool))
 
 
 # ---------------------------------------------------------

@@ -92,63 +92,63 @@ def test_uniform_generation_reproduces_pre_1_5_frames():
     orders = data["orders"]
 
     assert orders["id"].tolist() == list(range(1, 13))
-    assert orders["user_id"].tolist() == [9, 1, 2, 3, 11, 7, 11, 6, 10, 10, 2, 11]
+    assert orders["user_id"].tolist() == [2, 1, 12, 4, 11, 3, 11, 11, 7, 8, 1, 8]
     assert orders["status"].tolist() == [
-        "cancelled",
-        "cancelled",
         "pending",
-        "pending",
-        "cancelled",
-        "delivered",
-        "pending",
-        "cancelled",
-        "delivered",
         "cancelled",
         "pending",
         "delivered",
+        "pending",
+        "pending",
+        "delivered",
+        "shipped",
+        "pending",
+        "delivered",
+        "cancelled",
+        "cancelled",
     ]
     assert orders["is_paid"].tolist() == [
-        False,
-        False,
-        True,
-        False,
         True,
         True,
+        False,
         None,
         True,
+        True,
+        False,
         None,
+        False,
         True,
         True,
         False,
     ]
-    assert pd.isna(orders["total"].tolist()[0])
-    assert pd.isna(orders["total"].tolist()[2])
+    assert pd.isna(orders["total"].tolist()[3])
+    assert pd.isna(orders["total"].tolist()[11])
     non_null_totals = [v for v in orders["total"].tolist() if not pd.isna(v)]
     assert non_null_totals == [
-        2530.43,
-        6586.53,
-        8365.73,
-        9516.01,
-        3703.4,
-        3187.15,
-        3350.27,
-        3432.97,
-        1887.32,
-        2337.57,
+        611.56,
+        2411.36,
+        1280.61,
+        2249.76,
+        1575.82,
+        1473.21,
+        9037.22,
+        2476.16,
+        7993.79,
+        2058.5,
     ]
     assert orders["note"].tolist() == [
-        "Argue we pretty.",
-        "One big indicate.",
-        "Range billion.",
+        "Author every against.",
         None,
-        "Agreement pattern yet.",
-        "Radio trip administration.",
-        "Machine tell big.",
-        "Sort audience during.",
-        "More song education.",
-        "Probably student.",
+        "Majority a mean.",
+        "Role radio deep.",
+        "Himself owner surface.",
+        "Phone story glass.",
+        "Reveal now.",
+        "Beautiful officer member election.",
         None,
-        "Company also.",
+        "Team.",
+        "South section.",
+        "Performance the.",
     ]
 
 

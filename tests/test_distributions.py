@@ -38,19 +38,19 @@ def test_no_distribution_hint_reproduces_pre_1_7_frames():
         )
     }
     data = generate_data_from_dbml(tables, [], base_rows=8, seed=777)
-    # Re-pinned in 1.16.0: the primary key numbers the rows 1..N rather than
-    # drawing a shuffled sample, so the columns after it start elsewhere in the stream.
+    # Re-pinned in 1.26.0: every column draws from a stream of its own, derived from
+    # the seed, the table and the column's name.
     assert data["t"]["amount"].tolist() == [
-        7784.79,
-        37.17,
-        9617.56,
-        4384.36,
-        6564.75,
-        4169.09,
-        3848.52,
-        5163.13,
+        3320.23,
+        6030.66,
+        4860.96,
+        6579.17,
+        6313.41,
+        298.97,
+        3572.12,
+        9950.62,
     ]
-    assert data["t"]["qty"].tolist() == [38, 80, 0, 33, 55, 8, 50, 57]
+    assert data["t"]["qty"].tolist() == [2, 98, 14, 8, 1, 39, 4, 56]
 
 
 # ---------------------------------------------------------
