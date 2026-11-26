@@ -165,3 +165,19 @@ def test_gendered_names_are_seeded():
     one = _values([_column("name_female")], 50, "fr_FR", seed=4)["c"].tolist()
     two = _values([_column("name_female")], 50, "fr_FR", seed=4)["c"].tolist()
     assert one == two
+
+
+def test_a_locale_without_a_country_code_keeps_the_english_home_country(monkeypatch):
+    def no_code() -> str:
+        raise AttributeError("Country code cannot be determined from locale")
+
+    gen.set_locale("de_DE")
+    monkeypatch.setattr(gen.fake, "current_country_code", no_code)
+    assert gen._home_country() == gen.fake.current_country()
+
+
+def test_the_home_country_matches_its_list_whatever_the_case(monkeypatch):
+    gen.set_locale("de_DE")
+    owner = gen.fake.country.__self__
+    monkeypatch.setattr(owner, "countries", ["DEUTSCHLAND", "Frankreich"])
+    assert gen._home_country() == "DEUTSCHLAND"

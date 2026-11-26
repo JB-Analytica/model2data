@@ -130,3 +130,36 @@ def test_a_foreign_key_in_a_composite_primary_key_is_left_out():
         },
     }
     assert nullable_foreign_keys(from_dict(document)) == []
+
+
+def _composite(**column: object) -> dict:
+    return {
+        "model2data": "0.10.0",
+        "tables": {
+            "grid": {
+                "columns": {"a": {"type": "int", "pk": True}, "b": {"type": "int", "pk": True}}
+            },
+            "cell": {
+                "columns": {
+                    "id": {"type": "int", "pk": True},
+                    "a": {"type": "int", **column},
+                    "b": {"type": "int"},
+                },
+                "foreign_keys": [
+                    {"columns": ["a", "b"], "references": "grid", "to_columns": ["a", "b"]}
+                ],
+            },
+        },
+    }
+
+
+def test_a_column_named_by_references_and_a_foreign_key_is_reported_once():
+    document = _composite(references="grid.a")
+    found = nullable_foreign_keys(from_dict(document))
+    assert [(table, column) for table, column, _, _ in found] == [("cell", "a"), ("cell", "b")]
+
+
+def test_a_derived_foreign_key_column_is_left_out():
+    document = _composite(generate={"derive": {"copy": "b"}})
+    found = nullable_foreign_keys(from_dict(document))
+    assert [(table, column) for table, column, _, _ in found] == [("cell", "b")]

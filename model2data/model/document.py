@@ -71,15 +71,11 @@ def copy_paths_of(model: Model) -> dict[tuple[str, str], list[str]]:
         column = table.columns.get(name) if table is not None else None
         if table is None or column is None or column.references is None:
             continue
-        # A foreign key of one column: a column's `references`, or a one-column `foreign_keys`.
+        # A foreign key of one column is a column's `references` (`foreign_keys` is composite).
         single = {
             n
             for n, c in table.columns.items()
             if c.references is not None and c.references.table == parent
-        } | {
-            fk.columns[0]
-            for fk in table.foreign_keys
-            if fk.references == parent and len(fk.columns) == 1
         }
         paths = [
             r["source_column"]
@@ -102,9 +98,6 @@ def _copy_issues(model: Model) -> list[Issue]:
                 if column.references.via is not None:
                     wants = True
                 parents[column.references.table] = parents.get(column.references.table, 0) + 1
-        for fk in table.foreign_keys:
-            if len(fk.columns) == 1:
-                parents[fk.references] = parents.get(fk.references, 0) + 1
         wants = wants or any(count >= 2 for count in parents.values())
     if not wants:
         return []

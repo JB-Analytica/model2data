@@ -44,9 +44,9 @@ def nullable_foreign_keys(
                 found.append((key, name, column.references.table, _share(column, count)))
         for fk in table.foreign_keys:
             for name in fk.columns:
-                column = table.columns.get(name)
-                if column is None or name in seen:
+                if name in seen:
                     continue
+                column = table.columns[name]
                 seen.add(name)
                 if _nullable(table, name, column):
                     found.append((key, name, fk.references, _share(column, count)))

@@ -16,6 +16,7 @@ from itertools import accumulate
 from typing import Any, Callable, Optional, Union
 
 import pandas as pd
+from babel import Locale
 from faker import Faker
 from faker.providers import BaseProvider as _BaseProvider
 from faker.providers.lorem import Provider as _LoremProvider
@@ -311,12 +312,8 @@ _COUNTRY_ALIASES: dict[str, tuple[str, ...]] = {
 
 
 def _babel_names(lang: str, code: str) -> tuple[Optional[str], Optional[str]]:
-    """The country `code` as the locale writes it, and in English, from CLDR (through Babel,
-    which dbt brings along); `(None, None)` when Babel or the locale is not there."""
-    try:
-        from babel import Locale
-    except ImportError:
-        return None, None
+    """The country `code` as the locale writes it, and in English, from CLDR (through Babel);
+    `None` for the locale's name when the locale is not there."""
     native: Optional[str] = None
     for name in (lang, lang.split("_")[0]):
         try:
@@ -325,11 +322,7 @@ def _babel_names(lang: str, code: str) -> tuple[Optional[str], Optional[str]]:
             continue
         if native:
             break
-    try:
-        english = Locale.parse("en").territories.get(code)
-    except Exception:  # noqa: BLE001
-        english = None
-    return native, english
+    return native, Locale.parse("en").territories.get(code)
 
 
 def _home_country() -> str:

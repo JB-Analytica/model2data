@@ -24,7 +24,7 @@ from model2data.model import (
     to_dict,
     to_engine,
 )
-from model2data.model.document import document_version
+from model2data.model.document import copy_paths_of, document_version
 from model2data.model.validate import check, minor_numbers, schema_url
 
 AS_OF = date(2026, 11, 25)
@@ -312,3 +312,53 @@ def test_days_follow_via():
     teams = state["teams"].set_index("id")["venue_id"]
     fixtures = state["fixtures"]
     assert (fixtures["venue_id"] == fixtures["away_team_id"].map(teams)).all()
+
+
+def test_a_composite_foreign_key_is_no_path_to_a_copy():
+    document = {
+        "model2data": "0.10.0",
+        "tables": {
+            "teams": {
+                "columns": {
+                    "id": {"type": "int", "pk": True},
+                    "venue_id": {"type": "int"},
+                    "zone": {"type": "int"},
+                }
+            },
+            "fixtures": {
+                "columns": {
+                    "id": {"type": "int", "pk": True},
+                    "team_id": {"type": "int", "references": "teams.id"},
+                    "venue_id": {"type": "int"},
+                    "zone": {"type": "int"},
+                },
+                "foreign_keys": [
+                    {
+                        "columns": ["venue_id", "zone"],
+                        "references": "teams",
+                        "to_columns": ["venue_id", "zone"],
+                    }
+                ],
+            },
+        },
+    }
+    assert copy_paths_of(from_dict(document)) == {}
+
+
+def test_a_version_before_0_2_is_kept_as_it_is():
+    model = from_dict(_via("home_team_id"))
+    for version in ("0.1.0", "next", None):
+        model.version = version
+        assert document_version(model) == version
+    assert minor_numbers(None) == ()
+
+
+def test_a_reference_with_via_and_one_to_one_is_written_with_both():
+    document = _via("away_team_id")
+    document["tables"]["fixtures"]["columns"]["venue_id"]["references"]["one_to_one"] = True
+    written = to_dict(from_dict(document))["tables"]["fixtures"]["columns"]["venue_id"]
+    assert written["references"] == {
+        "to": "teams.venue_id",
+        "via": "away_team_id",
+        "one_to_one": True,
+    }
