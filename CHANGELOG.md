@@ -7,13 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [1.27.0] - Unreleased
+## [1.26.0] - Unreleased
 
-This ships after 1.26.0. Models that name a locale, use `name_male` or `name_female`, or copy a
-value from a parent through one of several foreign keys can generate other rows than in 1.26.0:
-see the first three entries.
+**A one-time change of the rows every model generates for a given seed.** Every column of every
+table with a `--seed` now draws from a random stream of its own, so the rows differ from 1.25.3's
+for the same model, seed and `--as-of`, whatever the model holds. A dbt project that keeps known
+values saved in its tests (an expected total, a fixture compared to the seed CSVs) needs them
+regenerated once; rows written by 1.26.0 are what every later release writes, unless its
+changelog says otherwise. On top of that, models that name a locale, use `name_male` or
+`name_female`, or copy a value from a parent through one of several foreign keys generate other
+rows for reasons of their own: see the entries on `via`, country names and titles below.
 
 ### Changed
+- **A column's values no longer depend on the other columns of its table.** The run's settings and
+  the column's own definition decide them, plus the columns and parents it depends on: one
+  derived from, ordered `after` or ruled with another changes when that one does, and a foreign
+  key draws from the rows of the parent it points at. Before, a table drew all its columns from
+  one stream in order, so inserting a column in the middle of `orders` changed every column after
+  it. Now adding, removing or moving a column, adding a table, a rule or a composite key
+  (on other columns) moves none of the columns they do not touch, on the first day and on the
+  days after it. The people and addresses a row's name, e-mail, city and country columns share
+  are drawn from a stream of their own for each table, so which of those columns comes first no
+  longer matters. `--table-seed` still re-rolls one whole table.
+- **Table shape still matters in two documented places**: a lone `country` column becomes the
+  locale's own country when a `city`, `street`, `state` or postcode column joins it, and a new
+  date column joins the ordering of a table's created, updated and closed dates by its name.
+- Rules draw from a stream of their own for each rule, named by its content, so adding a rule
+  moves no other rule's redraws.
 - **`via` on a copied value (model spec 0.10.0).** A column that references a parent's plain
   column beside a foreign key to that parent copies the value from the row's own parent. With
   two or more such foreign keys the engine silently took the first in document order. The
@@ -22,7 +42,7 @@ see the first three entries.
   any spec version: `fixtures.venue_id can reach teams through home_team_id or away_team_id; add
   via:`. A `via` that is not one of those foreign keys, or sits on a reference that is no copy,
   is an error too. **Models whose copy is ambiguous no longer load**; add the first foreign key
-  as `via` and the rows are the ones 1.26.0 generated. `model2data.model.fill_copy_paths(model)`
+  as `via` and the rows are the ones the engine copied before. `model2data.model.fill_copy_paths(model)`
   does that for a model or a document (it returns the changed copy and a note per change, and
   moves the spec version to 0.10.0 only when it changed something), and the error carries the
   same fix as an `Issue.suggestion`. `via` in a DBML column note (`{"via": "away_team_id"}`)
@@ -42,32 +62,6 @@ see the first three entries.
 - `model2data.model.nullable_foreign_keys(model)` lists every nullable foreign key as
   `(table, column, parent, share)`, the share being what the engine leaves empty (the column's
   `null_rate`, else the default for the table's rows). It is a helper, not a warning.
-
-## [1.26.0] - 2026-11-26
-
-**A one-time change of the rows every model generates for a given seed.** Every column of every
-table with a `--seed` now draws from a random stream of its own, so the rows differ from 1.25.3's
-for the same model, seed and `--as-of`, whatever the model holds. A dbt project that keeps known
-values saved in its tests (an expected total, a fixture compared to the seed CSVs) needs them
-regenerated once; rows written by 1.26.0 are what every later release writes, unless its
-changelog says otherwise.
-
-### Changed
-- **A column's values no longer depend on the other columns of its table.** The run's settings and
-  the column's own definition decide them, plus the columns and parents it depends on: one
-  derived from, ordered `after` or ruled with another changes when that one does, and a foreign
-  key draws from the rows of the parent it points at. Before, a table drew all its columns from
-  one stream in order, so inserting a column in the middle of `orders` changed every column after
-  it. Now adding, removing or moving a column, adding a table, a rule or a composite key
-  (on other columns) moves none of the columns they do not touch, on the first day and on the
-  days after it. The people and addresses a row's name, e-mail, city and country columns share
-  are drawn from a stream of their own for each table, so which of those columns comes first no
-  longer matters. `--table-seed` still re-rolls one whole table.
-- **Table shape still matters in two documented places**: a lone `country` column becomes the
-  locale's own country when a `city`, `street`, `state` or postcode column joins it, and a new
-  date column joins the ordering of a table's created, updated and closed dates by its name.
-- Rules draw from a stream of their own for each rule, named by its content, so adding a rule
-  moves no other rule's redraws.
 
 ## [1.25.3] - 2026-11-25
 
