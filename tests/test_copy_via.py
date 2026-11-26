@@ -80,11 +80,6 @@ def _errors(document: dict[str, Any]) -> list[str]:
     return []
 
 
-# What engine 1.25.3 generated for LEAGUE (60 rows, seed 5, as of 2026-11-25), where the
-# copy was read through the first foreign key, the home team's.
-OLD_DIGEST = "abaeeacf1b60e433fcc77b015775de1884fd25c78fd9d28324cda64859865382"
-
-
 def test_two_paths_and_no_via_is_an_error_naming_both():
     for version in ("0.9.0", "0.10.0", "0.5.0"):
         (message,) = _errors(_league(version=version))
@@ -258,7 +253,11 @@ def test_fill_copy_paths_writes_the_first_foreign_key_and_keeps_the_data():
     assert document["tables"]["fixtures"]["columns"]["venue_id"]["references"] == "teams.venue_id"
     assert document["model2data"] == "0.9.0"
     assert _errors(filled) == []
-    assert _digest(_rows(filled)) == OLD_DIGEST
+    # The same rows as naming the home team by hand: what earlier versions read.
+    assert _digest(_rows(filled)) == _digest(_rows(_via("home_team_id")))
+    data = _rows(filled)
+    teams = data["teams"].set_index("id")["venue_id"]
+    assert (data["fixtures"]["venue_id"] == data["fixtures"]["home_team_id"].map(teams)).all()
 
 
 def test_fill_copy_paths_on_a_model_and_when_there_is_nothing_to_do():
